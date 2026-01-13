@@ -3,12 +3,18 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface IUser extends Document {
   discordId: string;
   username: string;
+  nickname?: string; // Guild nickname from ADMIN_GUILD_ID
   discriminator: string;
   avatar: string | null;
   email?: string;
   accessToken?: string;
   refreshToken?: string;
   isAdmin: boolean;
+  role: 'user' | 'admin' | 'super-admin';
+  guildId?: string; // Guild membership (MongoDB ObjectId)
+  assetPoints: number;
+  techTokens: number;
+  voiceMinutesToday: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -24,6 +30,10 @@ const UserSchema = new Schema<IUser>(
     username: {
       type: String,
       required: true
+    },
+    nickname: {
+      type: String,
+      default: undefined
     },
     discriminator: {
       type: String,
@@ -48,6 +58,27 @@ const UserSchema = new Schema<IUser>(
     isAdmin: {
       type: Boolean,
       default: false
+    },
+    role: {
+      type: String,
+      enum: ['user', 'admin', 'super-admin'],
+      default: 'user'
+    },
+    guildId: {
+      type: String,
+      default: undefined
+    },
+    assetPoints: {
+      type: Number,
+      default: 0
+    },
+    techTokens: {
+      type: Number,
+      default: 0
+    },
+    voiceMinutesToday: {
+      type: Number,
+      default: 0
     }
   },
   {

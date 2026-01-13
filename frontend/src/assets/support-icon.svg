@@ -1,0 +1,39 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="redGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#F87171;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#DC2626;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Head -->
+  <circle cx="50" cy="45" r="25" fill="url(#redGradient)" />
+  
+  <!-- Hair outline on top -->
+  <path d="M 30 35 Q 35 25, 45 25 Q 50 25, 55 28 Q 60 30, 65 35" 
+        fill="url(#redGradient)" stroke="none" />
+  
+  <!-- Headband -->
+  <path d="M 25 38 Q 25 30, 30 28 L 50 20 L 70 28 Q 75 30, 75 38" 
+        stroke="url(#redGradient)" stroke-width="4" fill="none" />
+  
+  <!-- Left earpiece -->
+  <rect x="20" y="38" width="8" height="12" rx="2" fill="url(#redGradient)" />
+  
+  <!-- Right earpiece -->
+  <rect x="72" y="38" width="8" height="12" rx="2" fill="url(#redGradient)" />
+  
+  <!-- Microphone boom -->
+  <rect x="76" y="46" width="3" height="15" rx="1" fill="url(#redGradient)" />
+  
+  <!-- Eyes -->
+  <circle cx="42" cy="42" r="2.5" fill="#000000" />
+  <circle cx="58" cy="42" r="2.5" fill="#000000" />
+  
+  <!-- Smile -->
+  <path d="M 40 52 Q 50 58, 60 52" 
+        stroke="#000000" stroke-width="2" fill="none" stroke-linecap="round" />
+  
+  <!-- Body/shoulders -->
+  <path d="M 30 65 L 30 75 Q 30 80, 35 80 L 40 80 L 40 72 Q 40 68, 50 68 Q 60 68, 60 72 L 60 80 L 65 80 Q 70 80, 70 75 L 70 65 Q 65 62, 50 62 Q 35 62, 30 65" 
+        fill="url(#redGradient)" />
+</svg>

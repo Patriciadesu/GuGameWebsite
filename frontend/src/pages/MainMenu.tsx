@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from '../config/axios';
 import './MainMenu.css';
+import guildIcon from '../assets/Guild.svg';
+import leaderboardIcon from '../assets/Leaderboard.svg';
+import supportIcon from '../assets/Tech Support.svg';
 
 interface User {
   id: string;
@@ -10,21 +13,36 @@ interface User {
   avatar: string | null;
   email?: string;
   isAdmin: boolean;
+  role: 'user' | 'admin' | 'super-admin';
 }
 
-interface SkillNode {
-  id: number;
-  x: number;
-  y: number;
-  color: string;
-  connections: number[];
+interface Skill {
+  _id: string;
+  title: string;
+  description: string;
+  cost: number;
+  previewClip?: string;
+  contentYouTube?: string;
+  contentGoogleDrive?: string;
+  layer: number;
+  position: number;
+  isActive: boolean;
+  nodeColor: 'yellow' | 'blue' | 'green' | 'white' | 'purple';
+  connections?: Array<{
+    targetSkillId: string;
+    connectionType: 'normal' | 'special';
+    hasArrowhead: boolean;
+    breakPoints?: Array<{ layer: number; position: number }>;
+  }>;
+  prerequisites?: string[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 function MainMenu() {
   const navigate = useNavigate();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'adventure' | 'skilltree'>('adventure');
   const [customPhrase] = useState<string>('"The only way to do great work is to love what you do. If you haven\'t found it yet, keep looking. Don\'t settle."');
 
   // Mock data
@@ -32,42 +50,36 @@ function MainMenu() {
   const [techTokens] = useState(300);
   const [voiceToday] = useState(300);
 
-  // Skill tree nodes matching reference image
-  const [skillNodes] = useState<SkillNode[]>([
-    // Green nodes (left column)
-    { id: 1, x: 15, y: 15, color: '#4ade80', connections: [9] },
-    { id: 2, x: 15, y: 25, color: '#4ade80', connections: [9] },
-    { id: 3, x: 15, y: 35, color: '#4ade80', connections: [10] },
-    { id: 4, x: 15, y: 45, color: '#4ade80', connections: [10] },
-    { id: 5, x: 15, y: 55, color: '#4ade80', connections: [11] },
-    { id: 6, x: 15, y: 65, color: '#4ade80', connections: [11] },
-    { id: 7, x: 15, y: 75, color: '#4ade80', connections: [12] },
-    { id: 8, x: 15, y: 85, color: '#4ade80', connections: [12] },
-    
-    // Yellow/Orange connector nodes
-    { id: 9, x: 35, y: 20, color: '#fbbf24', connections: [13] },
-    { id: 10, x: 35, y: 40, color: '#fbbf24', connections: [13] },
-    { id: 11, x: 35, y: 60, color: '#fbbf24', connections: [14] },
-    { id: 12, x: 35, y: 80, color: '#fbbf24', connections: [14] },
-    { id: 13, x: 55, y: 30, color: '#fbbf24', connections: [15, 16, 17] },
-    
-    // Red nodes (right side - top branch)
-    { id: 14, x: 55, y: 70, color: '#fbbf24', connections: [18, 19, 20] },
-    { id: 15, x: 75, y: 15, color: '#ef4444', connections: [] },
-    { id: 16, x: 75, y: 25, color: '#ef4444', connections: [] },
-    { id: 17, x: 75, y: 35, color: '#ef4444', connections: [] },
-    
-    // Red nodes (right side - bottom branch)
-    { id: 18, x: 75, y: 60, color: '#ef4444', connections: [] },
-    { id: 19, x: 75, y: 70, color: '#ef4444', connections: [] },
-    { id: 20, x: 75, y: 80, color: '#ef4444', connections: [] },
-    { id: 21, x: 85, y: 65, color: '#ef4444', connections: [] },
-    { id: 22, x: 85, y: 75, color: '#ef4444', connections: [] },
-  ]);
+  // Skill Tree states
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [zoom, setZoom] = useState(1);
+  const [panX, setPanX] = useState(0);
+  const [panY, setPanY] = useState(0);
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStartX, setPanStartX] = useState(0);
+  const [panStartY, setPanStartY] = useState(0);
+  const [layerGap] = useState(120); // Same as admin panel
 
   useEffect(() => {
     checkAuth();
   }, []);
+
+  useEffect(() => {
+    if (user) {
+      loadSkills();
+    }
+  }, [user]);
+
+  const loadSkills = async () => {
+    try {
+      const response = await axios.get('/api/skills');
+      if (response.data.success) {
+        setSkills(response.data.skills);
+      }
+    } catch (error) {
+      console.error('Error loading skills:', error);
+    }
+  };
 
   const checkAuth = async () => {
     try {
@@ -101,6 +113,64 @@ function MainMenu() {
     return `https://cdn.discordapp.com/embed/avatars/${Math.abs(parseInt(user?.id || '0', 10)) % 5}.png`;
   };
 
+  // Skill Tree helper functions
+  const getNodeColor = (color: string) => {
+    const colors: { [key: string]: string } = {
+      yellow: '#eab308',
+      blue: '#3b82f6',
+      green: '#22c55e',
+      white: '#ffffff',
+      purple: '#9333ea'
+    };
+    return colors[color] || colors.blue;
+  };
+
+  const getNodeStrokeColor = (color: string) => {
+    const colors: { [key: string]: string } = {
+      yellow: '#ca8a04',
+      blue: '#2563eb',
+      green: '#16a34a',
+      white: '#000000',
+      purple: '#7e22ce'
+    };
+    return colors[color] || colors.blue;
+  };
+
+  // Zoom handlers
+  const handleWheel = (e: React.WheelEvent<SVGSVGElement>) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    setZoom(prev => Math.max(0.3, Math.min(3, prev * delta)));
+  };
+
+  const zoomIn = () => setZoom(prev => Math.min(prev * 1.2, 3));
+  const zoomOut = () => setZoom(prev => Math.max(prev * 0.8, 0.3));
+  const resetView = () => {
+    setZoom(1);
+    setPanX(0);
+    setPanY(0);
+  };
+
+  // Pan handlers
+  const handleMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (e.shiftKey || e.button === 1) {
+      setIsPanning(true);
+      setPanStartX(e.clientX - panX);
+      setPanStartY(e.clientY - panY);
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (isPanning) {
+      setPanX(e.clientX - panStartX);
+      setPanY(e.clientY - panStartY);
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsPanning(false);
+  };
+
   if (loading) {
     return (
       <div className="main-container">
@@ -129,6 +199,9 @@ function MainMenu() {
               <h2 className="user-name">{user?.username || 'Username'}</h2>
               <p className="user-details">
                 {user?.email || 'Username@gmail.com'} | User ID : {user?.id || 'asdafgaljhgalghoigio'}
+                {user?.role && <span style={{ marginLeft: '10px', fontWeight: 'bold', textTransform: 'uppercase' }}>
+                  | Role: {user.role === 'super-admin' ? '🔐 SUPER-ADMIN' : user.role === 'admin' ? '⚡ ADMIN' : '👤 USER'}
+                </span>}
               </p>
             </div>
           </div>
@@ -154,9 +227,7 @@ function MainMenu() {
           {/* Guild Card */}
           <div className="nav-item guild">
             <div className="nav-icon-wrapper">
-              <svg className="nav-icon" viewBox="0 0 100 100" fill="currentColor">
-                <text x="50" y="70" textAnchor="middle" fontSize="70" fontWeight="bold" fontFamily="serif">G</text>
-              </svg>
+              <img src={guildIcon} alt="Guild" className="nav-icon" />
             </div>
             <span className="nav-text">Guild</span>
           </div>
@@ -164,12 +235,7 @@ function MainMenu() {
           {/* Tech Support Card */}
           <div className="nav-item support">
             <div className="nav-icon-wrapper">
-              <svg className="nav-icon" viewBox="0 0 100 100" fill="currentColor">
-                <circle cx="50" cy="35" r="15"/>
-                <path d="M 50 50 Q 35 55 35 70 L 35 85 Q 35 90 40 90 L 45 90 L 45 75 Q 45 70 50 70 Q 55 70 55 75 L 55 90 L 60 90 Q 65 90 65 85 L 65 70 Q 65 55 50 50"/>
-                <path d="M 25 25 Q 20 25 20 30 L 20 50 Q 20 55 25 55 L 35 55 L 35 40 L 25 40 Z"/>
-                <path d="M 75 25 Q 80 25 80 30 L 80 50 Q 80 55 75 55 L 65 55 L 65 40 L 75 40 Z"/>
-              </svg>
+              <img src={supportIcon} alt="Tech Support" className="nav-icon" />
             </div>
             <span className="nav-text">Tech Support</span>
           </div>
@@ -177,36 +243,30 @@ function MainMenu() {
           {/* Leaderboard Card */}
           <div className="nav-item leaderboard">
             <div className="nav-icon-wrapper">
-              <svg className="nav-icon" viewBox="0 0 100 100" fill="currentColor">
-                <rect x="15" y="60" width="20" height="35" rx="3"/>
-                <rect x="40" y="40" width="20" height="55" rx="3"/>
-                <rect x="65" y="25" width="20" height="70" rx="3"/>
-              </svg>
+              <img src={leaderboardIcon} alt="Leaderboard" className="nav-icon" />
             </div>
             <span className="nav-text">Leaderboard</span>
           </div>
+
+          {/* Admin Card - Only visible to admin and super-admin */}
+          {user && (user.role === 'admin' || user.role === 'super-admin') && (
+            <div className="nav-item admin" onClick={() => navigate('/admin')}>
+              <div className="nav-icon-wrapper">
+                <span className="nav-icon-text">
+                  {user.role === 'super-admin' ? '🔐' : '⚡'}
+                </span>
+              </div>
+              <span className="nav-text">Admin Panel</span>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Main Content Panel */}
       <div className="main-panel">
-        {/* Slider Toggle and Logout */}
+        {/* Header with Logout */}
         <div className="panel-header">
-          <div className="toggle-slider">
-            <div className={`toggle-slider-bg ${activeTab === 'skilltree' ? 'right' : ''}`}></div>
-            <button 
-              className={`toggle-option ${activeTab === 'adventure' ? 'active' : ''}`}
-              onClick={() => setActiveTab('adventure')}
-            >
-              Adventure
-            </button>
-            <button 
-              className={`toggle-option ${activeTab === 'skilltree' ? 'active' : ''}`}
-              onClick={() => setActiveTab('skilltree')}
-            >
-              Skill Tree
-            </button>
-          </div>
+          <h2 className="panel-title">Skill Tree</h2>
           <button className="logout-btn" onClick={handleLogout}>
             Logout
           </button>
@@ -214,46 +274,239 @@ function MainMenu() {
 
         {/* Content */}
         <div className="panel-content">
-          {activeTab === 'adventure' ? (
-            <div className="adventure-view">
-              <p>Adventure content coming soon...</p>
+          <div className="skill-tree-view">
+            {/* Zoom Controls */}
+            <div className="zoom-controls">
+              <button className="zoom-btn" onClick={zoomIn} title="Zoom In">➕</button>
+              <button className="zoom-btn" onClick={resetView} title="Reset View">🎯</button>
+              <button className="zoom-btn" onClick={zoomOut} title="Zoom Out">➖</button>
+              <span className="zoom-level">{Math.round(zoom * 100)}%</span>
             </div>
-          ) : (
-            <div className="skilltree-view">
-              <svg className="skill-tree" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
-                {/* Draw connections */}
-                {skillNodes.map(node => 
-                  node.connections.map(targetId => {
-                    const target = skillNodes.find(n => n.id === targetId);
-                    if (!target) return null;
-                    return (
-                      <line
-                        key={`${node.id}-${targetId}`}
-                        x1={node.x}
-                        y1={node.y}
-                        x2={target.x}
-                        y2={target.y}
-                        stroke="#d1d5db"
-                        strokeWidth="0.4"
+
+            <div className="skill-tree-container">
+              <svg 
+                className="skill-tree-svg" 
+                viewBox="-900 -900 1800 1800" 
+                style={{ background: 'white', cursor: isPanning ? 'grabbing' : 'grab' }}
+                onWheel={handleWheel}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+              >
+                <defs>
+                  {/* Arrow marker for normal connections (purple) */}
+                  <marker
+                    id="arrowhead-normal"
+                    markerWidth="10"
+                    markerHeight="10"
+                    refX="9"
+                    refY="3"
+                    orient="auto"
+                  >
+                    <polygon points="0 0, 10 3, 0 6" fill="#9333ea" />
+                  </marker>
+                  {/* Arrow marker for special connections (red) */}
+                  <marker
+                    id="arrowhead-special"
+                    markerWidth="10"
+                    markerHeight="10"
+                    refX="9"
+                    refY="3"
+                    orient="auto"
+                  >
+                    <polygon points="0 0, 10 3, 0 6" fill="#ef4444" />
+                  </marker>
+                </defs>
+
+                <g transform={`translate(${panX / zoom}, ${panY / zoom}) scale(${zoom})`}>
+                  {/* Draw connections between skills */}
+                  {skills.flatMap(skill => {
+                    if (!skill.connections || skill.connections.length === 0) return [];
+                    
+                    const sourceLayer = skill.layer;
+                    const sourceRadius = sourceLayer * layerGap;
+                    const sourceAngle = (skill.position * Math.PI / 180) - Math.PI / 2;
+                    const sourceX = sourceRadius * Math.cos(sourceAngle);
+                    const sourceY = sourceRadius * Math.sin(sourceAngle);
+
+                    return skill.connections.map((conn) => {
+                      const targetSkill = skills.find(s => s._id === conn.targetSkillId);
+                      if (!targetSkill) return null;
+
+                      const targetRadius = targetSkill.layer * layerGap;
+                      const targetAngle = (targetSkill.position * Math.PI / 180) - Math.PI / 2;
+                      const targetX = targetRadius * Math.cos(targetAngle);
+                      const targetY = targetRadius * Math.sin(targetAngle);
+
+                      const color = conn.connectionType === 'special' ? '#ef4444' : '#9333ea';
+                      const marker = conn.hasArrowhead !== false 
+                        ? (conn.connectionType === 'special' ? 'url(#arrowhead-special)' : 'url(#arrowhead-normal)')
+                        : 'none';
+
+                      // Helper function to calculate point on circle
+                      const getPointOnCircle = (layer: number, position: number) => {
+                        const radius = layer * layerGap;
+                        const angle = (position * Math.PI / 180) - Math.PI / 2;
+                        return {
+                          x: radius * Math.cos(angle),
+                          y: radius * Math.sin(angle)
+                        };
+                      };
+                      
+                      // Helper function to create arc path between two points on same circle
+                      const createArc = (layer: number, startPos: number, endPos: number) => {
+                        const radius = layer * layerGap;
+                        let angleDiff = endPos - startPos;
+                        if (angleDiff > 180) angleDiff -= 360;
+                        if (angleDiff < -180) angleDiff += 360;
+                        
+                        const largeArc = Math.abs(angleDiff) > 180 ? 1 : 0;
+                        const sweep = angleDiff > 0 ? 1 : 0;
+                        
+                        const endPoint = getPointOnCircle(layer, endPos);
+                        return ` A ${radius} ${radius} 0 ${largeArc} ${sweep} ${endPoint.x} ${endPoint.y}`;
+                      };
+                      
+                      // Create path with break points
+                      let pathD: string = `M ${sourceX},${sourceY}`;
+                      const breakPoints = conn.breakPoints || [];
+                      
+                      if (breakPoints.length > 0) {
+                        let currentLayer = skill.layer;
+                        let currentPos = skill.position;
+                        
+                        breakPoints.forEach((bp) => {
+                          const bpPoint = getPointOnCircle(bp.layer, bp.position);
+                          
+                          if (bp.layer === currentLayer) {
+                            pathD += createArc(currentLayer, currentPos, bp.position);
+                          } else {
+                            pathD += ` L ${bpPoint.x} ${bpPoint.y}`;
+                          }
+                          
+                          currentLayer = bp.layer;
+                          currentPos = bp.position;
+                        });
+                        
+                        if (targetSkill.layer === currentLayer) {
+                          pathD += createArc(currentLayer, currentPos, targetSkill.position);
+                        } else {
+                          pathD += ` L ${targetX} ${targetY}`;
+                        }
+                      } else {
+                        pathD += ` L ${targetX} ${targetY}`;
+                      }
+
+                      return (
+                        <path
+                          key={`conn-${skill._id}-${conn.targetSkillId}`}
+                          d={pathD}
+                          stroke={color}
+                          strokeWidth="5"
+                          fill="none"
+                          markerEnd={marker}
+                          opacity="0.9"
+                          strokeLinecap="round"
+                        />
+                      );
+                    });
+                  }).filter(Boolean)}
+
+                  {/* Center node (layer 0) */}
+                  {skills.filter(s => s.layer === 0).map((skill) => (
+                    <g key={skill._id}>
+                      <circle
+                        cx="0"
+                        cy="0"
+                        r="50"
+                        fill={getNodeColor(skill.nodeColor)}
+                        stroke={getNodeStrokeColor(skill.nodeColor)}
+                        strokeWidth="4"
+                        className="skill-node-center"
+                        style={{ cursor: 'pointer' }}
                       />
-                    );
-                  })
-                )}
-                
-                {/* Draw nodes */}
-                {skillNodes.map(node => (
-                  <circle
-                    key={node.id}
-                    cx={node.x}
-                    cy={node.y}
-                    r="2.5"
-                    fill={node.color}
-                    className="node"
-                  />
-                ))}
+                      <text
+                        x="0"
+                        y="6"
+                        textAnchor="middle"
+                        fill={skill.nodeColor === 'white' ? '#000000' : '#ffffff'}
+                        fontSize="18"
+                        fontWeight="bold"
+                        style={{ pointerEvents: 'none' }}
+                      >
+                        {skill.title.length > 14 ? skill.title.substring(0, 14) + '...' : skill.title}
+                      </text>
+                      {skill.cost > 0 && (
+                        <text
+                          x="0"
+                          y="25"
+                          textAnchor="middle"
+                          fill={skill.nodeColor === 'white' ? '#000000' : '#ffffff'}
+                          fontSize="12"
+                          fontWeight="bold"
+                          style={{ pointerEvents: 'none' }}
+                        >
+                          {skill.cost} AP
+                        </text>
+                      )}
+                    </g>
+                  ))}
+
+                  {/* Skills on circular layers (1-6) */}
+                  {[1, 2, 3, 4, 5, 6].map(layer => {
+                    const layerSkills = skills.filter(s => s.layer === layer);
+                    const radius = layer * layerGap;
+
+                    return layerSkills.map((skill) => {
+                      const angle = (skill.position * Math.PI / 180) - Math.PI / 2;
+                      const x = radius * Math.cos(angle);
+                      const y = radius * Math.sin(angle);
+
+                      return (
+                        <g key={skill._id}>
+                          <circle
+                            cx={x}
+                            cy={y}
+                            r="40"
+                            fill={getNodeColor(skill.nodeColor)}
+                            stroke={getNodeStrokeColor(skill.nodeColor)}
+                            strokeWidth="3"
+                            className="skill-node"
+                            style={{ cursor: 'pointer' }}
+                          />
+                          <text
+                            x={x}
+                            y={y + 5}
+                            textAnchor="middle"
+                            fill={skill.nodeColor === 'white' || skill.nodeColor === 'yellow' ? '#000000' : '#ffffff'}
+                            fontSize="16"
+                            fontWeight="bold"
+                            style={{ pointerEvents: 'none' }}
+                          >
+                            {skill.title.length > 12 ? skill.title.substring(0, 12) + '...' : skill.title}
+                          </text>
+                          {skill.cost > 0 && (
+                            <text
+                              x={x}
+                              y={y + 20}
+                              textAnchor="middle"
+                              fill={skill.nodeColor === 'white' || skill.nodeColor === 'yellow' ? '#000000' : '#ffffff'}
+                              fontSize="11"
+                              fontWeight="bold"
+                              style={{ pointerEvents: 'none' }}
+                            >
+                              {skill.cost} AP
+                            </text>
+                          )}
+                        </g>
+                      );
+                    });
+                  })}
+                </g>
               </svg>
             </div>
-          )}
+          </div>
         </div>
       </div>
     </div>

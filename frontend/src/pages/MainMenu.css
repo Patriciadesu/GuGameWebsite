@@ -31,12 +31,12 @@ body {
 .topbar {
   background-color: rgba(255, 247, 254, 1);
   background-image: none;
-  border-radius: 40px;
+  border-radius: 378px;
   padding: 20px 36px;
   display: flex;
   align-items: center;
   gap: 40px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0px 6px 7.8px 0px rgba(78, 134, 255, 0.25);
 }
 
 .topbar-title {
@@ -66,10 +66,10 @@ body {
 
 /* ===== USER CARD ===== */
 .user-card {
-  background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 1) 0%, rgba(215, 231, 255, 1) 100%);
   border-radius: 30px;
   padding: 24px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0px 6px 7.8px 0px rgba(0, 0, 0, 0.25);
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -112,7 +112,7 @@ body {
   font-size: 2.2rem;
   font-weight: 700;
   margin: 0;
-  color: white;
+  color: rgba(78, 152, 255, 1);
   font-family: 'Dongle', sans-serif;
   line-height: 1;
 }
@@ -121,7 +121,7 @@ body {
   font-size: 1.3rem;
   margin: 0;
   opacity: 0.95;
-  color: white;
+  color: rgba(20, 48, 109, 1);
   font-family: 'Dongle', sans-serif;
 }
 
@@ -132,7 +132,7 @@ body {
 }
 
 .stat-item {
-  background: rgba(255, 255, 255, 0.2);
+  background: linear-gradient(180deg, rgba(78, 152, 255, 1) 0%, rgba(53, 103, 173, 1) 100%);
   backdrop-filter: blur(10px);
   border-radius: 16px;
   padding: 12px 16px;
@@ -145,6 +145,7 @@ body {
 .stat-label {
   font-size: 1.2rem;
   opacity: 0.95;
+  color: rgba(255, 255, 255, 1);
   font-family: 'Dongle', sans-serif;
 }
 
@@ -173,7 +174,7 @@ body {
   gap: 8px;
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0px 6px 7.8px 0px rgba(0, 0, 0, 0.25);
   color: white;
   text-align: center;
   flex: 1;
@@ -201,7 +202,7 @@ body {
 }
 
 .nav-item.guild .nav-text {
-  color: #3b82f6;
+  color: rgba(255, 188, 0, 1);
 }
 
 .nav-item.support {
@@ -258,11 +259,12 @@ body {
 }
 
 .nav-text {
-  font-size: 1.8rem;
+  font-size: 48px;
   font-weight: 400;
   color: #3b82f6;
   margin-top: 4px;
   font-family: 'Dongle', sans-serif;
+  vertical-align: bottom;
 }
 
 /* ===== MAIN PANEL ===== */
@@ -270,7 +272,7 @@ body {
   background: white;
   border-radius: 30px;
   padding: 24px 32px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0px 6px 7.8px 0px rgba(78, 134, 255, 0.5);
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -288,7 +290,7 @@ body {
 /* ===== SLIDER TOGGLE ===== */
 .toggle-slider {
   display: inline-flex;
-  background: #e5e7eb;
+  background: linear-gradient(135deg, rgba(78, 170, 255, 1) 0%, rgba(78, 134, 255, 1) 100%);
   border-radius: 50px;
   padding: 4px;
   position: relative;
@@ -300,10 +302,11 @@ body {
   left: 4px;
   height: calc(100% - 8px);
   width: calc(50% - 4px);
-  background: #3b82f6;
+  background: rgba(218, 237, 255, 1);
   border-radius: 50px;
   transition: transform 0.3s ease;
   z-index: 0;
+  color: rgba(19, 48, 110, 1);
 }
 
 .toggle-slider-bg.right {
@@ -314,7 +317,7 @@ body {
   padding: 10px 32px;
   border: none;
   background: transparent;
-  color: #6b7280;
+  color: rgba(255, 255, 255, 1);
   border-radius: 50px;
   font-size: 1.5rem;
   font-weight: 400;
@@ -323,10 +326,11 @@ body {
   font-family: 'Dongle', sans-serif;
   position: relative;
   z-index: 1;
+  box-shadow: none;
 }
 
 .toggle-option.active {
-  color: white;
+  color: rgba(19, 48, 110, 1);
 }
 
 .logout-btn {

@@ -58,7 +58,10 @@ function MainMenu() {
   const [isPanning, setIsPanning] = useState(false);
   const [panStartX, setPanStartX] = useState(0);
   const [panStartY, setPanStartY] = useState(0);
-  const [layerGap] = useState(120); // Same as admin panel
+  const [layerGaps, setLayerGaps] = useState<{ [key: number]: number }>({ 1: 120, 2: 120, 3: 120, 4: 120, 5: 120, 6: 120 }); // Gap for each layer
+  const [arrowheadGapFromNode, setArrowheadGapFromNode] = useState(0); // Gap from target node edge
+  const [arrowheadStartPoint, setArrowheadStartPoint] = useState(0); // Distance from path end where arrowhead starts
+  const [arrowheadSize, setArrowheadSize] = useState(20); // Size of the arrowhead
 
   useEffect(() => {
     checkAuth();
@@ -67,6 +70,7 @@ function MainMenu() {
   useEffect(() => {
     if (user) {
       loadSkills();
+      loadSkillTreeSettings();
     }
   }, [user]);
 
@@ -75,10 +79,54 @@ function MainMenu() {
       const response = await axios.get('/api/skills');
       if (response.data.success) {
         setSkills(response.data.skills);
+        // Debug: Log connections with arrowhead info
+        response.data.skills.forEach((skill: any) => {
+          if (skill.connections && skill.connections.length > 0) {
+            skill.connections.forEach((conn: any) => {
+              console.log(`Connection: ${skill.title} -> ${conn.targetSkillId}, hasArrowhead: ${conn.hasArrowhead}`);
+            });
+          }
+        });
       }
     } catch (error) {
       console.error('Error loading skills:', error);
     }
+  };
+
+  const loadSkillTreeSettings = async () => {
+    try {
+      const response = await axios.get('/api/skill-tree-settings');
+      if (response.data.success) {
+        const settings = response.data.settings;
+        // Load per-layer gaps if available, otherwise use default
+        if (settings.layerGaps) {
+          const gaps: { [key: number]: number } = {};
+          for (let i = 1; i <= 6; i++) {
+            gaps[i] = settings.layerGaps[i] || settings.layerGap || 120;
+          }
+          setLayerGaps(gaps);
+        } else {
+          // Fallback to single layerGap for backward compatibility
+          const defaultGap = settings.layerGap || 120;
+          setLayerGaps({ 1: defaultGap, 2: defaultGap, 3: defaultGap, 4: defaultGap, 5: defaultGap, 6: defaultGap });
+        }
+        setArrowheadGapFromNode(settings.arrowheadGapFromNode || 0);
+        setArrowheadStartPoint(settings.arrowheadStartPoint || 0);
+        setArrowheadSize(settings.arrowheadSize || 20);
+      }
+    } catch (error) {
+      console.error('Error loading skill tree settings:', error);
+    }
+  };
+
+  // Helper function to calculate radius for a layer (cumulative)
+  const getLayerRadius = (layer: number): number => {
+    if (layer === 0) return 0; // Center node
+    let radius = 0;
+    for (let i = 1; i <= layer; i++) {
+      radius += layerGaps[i] || 120;
+    }
+    return radius;
   };
 
   const checkAuth = async () => {
@@ -114,26 +162,69 @@ function MainMenu() {
   };
 
   // Skill Tree helper functions
-  const getNodeColor = (color: string) => {
+  const getNodeColor = (color: string): string => {
     const colors: { [key: string]: string } = {
-      yellow: '#eab308',
-      blue: '#3b82f6',
-      green: '#22c55e',
-      white: '#ffffff',
-      purple: '#9333ea'
+      yellow: '#FFF6B6',
+      blue: '#C6DCFF',
+      green: '#ADF0C7',
+      white: '#FFFFFF',
+      purple: '#DEDAFF'
     };
     return colors[color] || colors.blue;
   };
 
-  const getNodeStrokeColor = (color: string) => {
+  const getNodeStrokeColor = (color: string): string => {
     const colors: { [key: string]: string } = {
       yellow: '#ca8a04',
-      blue: '#2563eb',
+      blue: '#1d4ed8',
       green: '#16a34a',
-      white: '#000000',
-      purple: '#7e22ce'
+      white: '#d1d5db',
+      purple: '#7c3aed'
     };
     return colors[color] || colors.blue;
+  };
+
+  // Wrap text to fit within circle
+  const wrapText = (text: string, maxWidth: number, fontSize: number): string[] => {
+    // Approximate character width (fontSize * 0.6 is a rough estimate for most fonts)
+    const charWidth = fontSize * 0.6;
+    const maxCharsPerLine = Math.floor(maxWidth / charWidth);
+    
+    if (text.length <= maxCharsPerLine) {
+      return [text];
+    }
+    
+    const words = text.split(' ');
+    const lines: string[] = [];
+    let currentLine = '';
+    
+    for (const word of words) {
+      const testLine = currentLine ? `${currentLine} ${word}` : word;
+      if (testLine.length <= maxCharsPerLine) {
+        currentLine = testLine;
+      } else {
+        if (currentLine) {
+          lines.push(currentLine);
+        }
+        // If word itself is longer than maxCharsPerLine, split it
+        if (word.length > maxCharsPerLine) {
+          let remainingWord = word;
+          while (remainingWord.length > maxCharsPerLine) {
+            lines.push(remainingWord.substring(0, maxCharsPerLine));
+            remainingWord = remainingWord.substring(maxCharsPerLine);
+          }
+          currentLine = remainingWord;
+        } else {
+          currentLine = word;
+        }
+      }
+    }
+    
+    if (currentLine) {
+      lines.push(currentLine);
+    }
+    
+    return lines;
   };
 
   // Zoom handlers
@@ -275,15 +366,19 @@ function MainMenu() {
         {/* Content */}
         <div className="panel-content">
           <div className="skill-tree-view">
-            {/* Zoom Controls */}
-            <div className="zoom-controls">
-              <button className="zoom-btn" onClick={zoomIn} title="Zoom In">➕</button>
-              <button className="zoom-btn" onClick={resetView} title="Reset View">🎯</button>
-              <button className="zoom-btn" onClick={zoomOut} title="Zoom Out">➖</button>
-              <span className="zoom-level">{Math.round(zoom * 100)}%</span>
-            </div>
+            {/* Skill Tree Visualization - 6 Circular Layers */}
+            <div 
+              className="skill-tree-container"
+              onWheel={(e) => e.preventDefault()}
+            >
+              {/* Zoom Controls */}
+              <div className="zoom-controls">
+                <button className="zoom-btn" onClick={zoomIn} title="Zoom In">➕</button>
+                <button className="zoom-btn" onClick={resetView} title="Reset View">🎯</button>
+                <button className="zoom-btn" onClick={zoomOut} title="Zoom Out">➖</button>
+                <span className="zoom-level">{Math.round(zoom * 100)}%</span>
+              </div>
 
-            <div className="skill-tree-container">
               <svg 
                 className="skill-tree-svg" 
                 viewBox="-900 -900 1800 1800" 
@@ -295,27 +390,29 @@ function MainMenu() {
                 onMouseLeave={handleMouseUp}
               >
                 <defs>
-                  {/* Arrow marker for normal connections (purple) */}
+                  {/* Arrow marker for normal connections (black) */}
                   <marker
                     id="arrowhead-normal"
-                    markerWidth="10"
-                    markerHeight="10"
-                    refX="9"
-                    refY="3"
+                    markerWidth={arrowheadSize}
+                    markerHeight={arrowheadSize}
+                    refX={arrowheadSize * 0.9 + arrowheadStartPoint}
+                    refY={arrowheadSize / 2}
                     orient="auto"
+                    markerUnits="userSpaceOnUse"
                   >
-                    <polygon points="0 0, 10 3, 0 6" fill="#9333ea" />
+                    <path d={`M 0,0 L 0,${arrowheadSize} L ${arrowheadSize * 0.9},${arrowheadSize / 2} Z`} fill="#000000" stroke="#000000" strokeWidth="0.5" />
                   </marker>
-                  {/* Arrow marker for special connections (red) */}
+                  {/* Arrow marker for special connections (black) */}
                   <marker
                     id="arrowhead-special"
-                    markerWidth="10"
-                    markerHeight="10"
-                    refX="9"
-                    refY="3"
+                    markerWidth={arrowheadSize}
+                    markerHeight={arrowheadSize}
+                    refX={arrowheadSize * 0.9 + arrowheadStartPoint}
+                    refY={arrowheadSize / 2}
                     orient="auto"
+                    markerUnits="userSpaceOnUse"
                   >
-                    <polygon points="0 0, 10 3, 0 6" fill="#ef4444" />
+                    <path d={`M 0,0 L 0,${arrowheadSize} L ${arrowheadSize * 0.9},${arrowheadSize / 2} Z`} fill="#000000" stroke="#000000" strokeWidth="0.5" />
                   </marker>
                 </defs>
 
@@ -325,28 +422,82 @@ function MainMenu() {
                     if (!skill.connections || skill.connections.length === 0) return [];
                     
                     const sourceLayer = skill.layer;
-                    const sourceRadius = sourceLayer * layerGap;
+                    const sourceRadius = getLayerRadius(sourceLayer);
                     const sourceAngle = (skill.position * Math.PI / 180) - Math.PI / 2;
-                    const sourceX = sourceRadius * Math.cos(sourceAngle);
-                    const sourceY = sourceRadius * Math.sin(sourceAngle);
-
+                    const sourceXOnLayer = sourceRadius * Math.cos(sourceAngle);
+                    const sourceYOnLayer = sourceRadius * Math.sin(sourceAngle);
+                    
                     return skill.connections.map((conn) => {
                       const targetSkill = skills.find(s => s._id === conn.targetSkillId);
                       if (!targetSkill) return null;
 
-                      const targetRadius = targetSkill.layer * layerGap;
+                      const targetRadius = getLayerRadius(targetSkill.layer);
                       const targetAngle = (targetSkill.position * Math.PI / 180) - Math.PI / 2;
-                      const targetX = targetRadius * Math.cos(targetAngle);
-                      const targetY = targetRadius * Math.sin(targetAngle);
+                      const targetXOnLayer = targetRadius * Math.cos(targetAngle);
+                      const targetYOnLayer = targetRadius * Math.sin(targetAngle);
+                      
+                      // Connection line starts from the center of the source node
+                      let sourceX, sourceY;
+                      if (sourceLayer === 0) {
+                        // Center node: start from center (0, 0)
+                        sourceX = 0;
+                        sourceY = 0;
+                      } else {
+                        // Other nodes: start from center of the node (which is on the layer circle)
+                        sourceX = sourceXOnLayer;
+                        sourceY = sourceYOnLayer;
+                      }
 
-                      const color = conn.connectionType === 'special' ? '#ef4444' : '#9333ea';
-                      const marker = conn.hasArrowhead !== false 
+                      // Default to true if undefined, only false if explicitly set to false
+                      const hasArrowhead = conn.hasArrowhead !== false;
+                      
+                      // Calculate target point: if arrowhead, stop at node edge; otherwise at center
+                      let targetX, targetY;
+                      if (hasArrowhead) {
+                        // With arrowhead: stop at node edge with gap (pointing to circle without overlapping)
+                        const targetNodeRadius = targetSkill.layer === 0 ? 60 : 50;
+                        const totalGap = targetNodeRadius + arrowheadGapFromNode; // Node radius + gap from node
+                        const distanceFromCenter = Math.sqrt(targetXOnLayer * targetXOnLayer + targetYOnLayer * targetYOnLayer);
+                        
+                        if (targetSkill.layer === 0) {
+                          // Center node: calculate direction from source to center
+                          const dirX = -sourceXOnLayer;
+                          const dirY = -sourceYOnLayer;
+                          const dirLength = Math.sqrt(dirX * dirX + dirY * dirY);
+                          if (dirLength > 0) {
+                            targetX = (dirX / dirLength) * totalGap;
+                            targetY = (dirY / dirLength) * totalGap;
+                          } else {
+                            targetX = totalGap;
+                            targetY = 0;
+                          }
+                        } else {
+                          // Other nodes: move back from center by node radius + gap along radial direction
+                          const dirX = targetXOnLayer / distanceFromCenter;
+                          const dirY = targetYOnLayer / distanceFromCenter;
+                          targetX = targetXOnLayer - dirX * totalGap;
+                          targetY = targetYOnLayer - dirY * totalGap;
+                        }
+                      } else {
+                        // No arrowhead: stop at center
+                        if (targetSkill.layer === 0) {
+                          targetX = 0;
+                          targetY = 0;
+                        } else {
+                          targetX = targetXOnLayer;
+                          targetY = targetYOnLayer;
+                        }
+                      }
+                      
+                      // If has arrow head, use black; otherwise use #6631D7
+                      const color = hasArrowhead ? '#000000' : '#6631D7';
+                      const marker = hasArrowhead
                         ? (conn.connectionType === 'special' ? 'url(#arrowhead-special)' : 'url(#arrowhead-normal)')
                         : 'none';
 
                       // Helper function to calculate point on circle
                       const getPointOnCircle = (layer: number, position: number) => {
-                        const radius = layer * layerGap;
+                        const radius = getLayerRadius(layer);
                         const angle = (position * Math.PI / 180) - Math.PI / 2;
                         return {
                           x: radius * Math.cos(angle),
@@ -356,7 +507,7 @@ function MainMenu() {
                       
                       // Helper function to create arc path between two points on same circle
                       const createArc = (layer: number, startPos: number, endPos: number) => {
-                        const radius = layer * layerGap;
+                        const radius = getLayerRadius(layer);
                         let angleDiff = endPos - startPos;
                         if (angleDiff > 180) angleDiff -= 360;
                         if (angleDiff < -180) angleDiff += 360;
@@ -390,12 +541,25 @@ function MainMenu() {
                         });
                         
                         if (targetSkill.layer === currentLayer) {
+                          // Same layer as last break point - arc to layer circle, then line to node edge
                           pathD += createArc(currentLayer, currentPos, targetSkill.position);
+                          // Add line from layer circle to node edge
+                          pathD += ` L ${targetX} ${targetY}`;
                         } else {
+                          // Different layer - straight line to node edge
                           pathD += ` L ${targetX} ${targetY}`;
                         }
                       } else {
-                        pathD += ` L ${targetX} ${targetY}`;
+                        // No break points - check if source and target are on same layer
+                        if (skill.layer === targetSkill.layer) {
+                          // Same layer - arc to layer circle, then line to node edge
+                          pathD += createArc(skill.layer, skill.position, targetSkill.position);
+                          // Add line from layer circle to node edge
+                          pathD += ` L ${targetX} ${targetY}`;
+                        } else {
+                          // Different layer - straight line to node edge
+                          pathD += ` L ${targetX} ${targetY}`;
+                        }
                       }
 
                       return (
@@ -415,48 +579,39 @@ function MainMenu() {
 
                   {/* Center node (layer 0) */}
                   {skills.filter(s => s.layer === 0).map((skill) => (
-                    <g key={skill._id}>
+                    <g key={skill._id} className="skill-node-center-group">
                       <circle
                         cx="0"
                         cy="0"
-                        r="50"
+                        r="60"
                         fill={getNodeColor(skill.nodeColor)}
                         stroke={getNodeStrokeColor(skill.nodeColor)}
                         strokeWidth="4"
-                        className="skill-node-center"
-                        style={{ cursor: 'pointer' }}
+                        style={{ cursor: 'pointer', pointerEvents: 'all' }}
                       />
                       <text
                         x="0"
-                        y="6"
+                        y="0"
                         textAnchor="middle"
                         fill={skill.nodeColor === 'white' ? '#000000' : '#ffffff'}
-                        fontSize="18"
+                        fontSize="28"
                         fontWeight="bold"
+                        fontFamily="Dongle, sans-serif"
                         style={{ pointerEvents: 'none' }}
                       >
-                        {skill.title.length > 14 ? skill.title.substring(0, 14) + '...' : skill.title}
+                        {wrapText(skill.title, 180, 28).map((line, idx) => {
+                          const totalLines = wrapText(skill.title, 180, 28).length;
+                          const offsetY = totalLines === 1 ? "0.15em" : -((totalLines - 1) * 28) / 2 + 4;
+                          return <tspan key={idx} x="0" dy={idx === 0 ? `${offsetY}` : "28"}>{line}</tspan>;
+                        })}
                       </text>
-                      {skill.cost > 0 && (
-                        <text
-                          x="0"
-                          y="25"
-                          textAnchor="middle"
-                          fill={skill.nodeColor === 'white' ? '#000000' : '#ffffff'}
-                          fontSize="12"
-                          fontWeight="bold"
-                          style={{ pointerEvents: 'none' }}
-                        >
-                          {skill.cost} AP
-                        </text>
-                      )}
                     </g>
                   ))}
 
                   {/* Skills on circular layers (1-6) */}
                   {[1, 2, 3, 4, 5, 6].map(layer => {
                     const layerSkills = skills.filter(s => s.layer === layer);
-                    const radius = layer * layerGap;
+                    const radius = getLayerRadius(layer);
 
                     return layerSkills.map((skill) => {
                       const angle = (skill.position * Math.PI / 180) - Math.PI / 2;
@@ -464,47 +619,44 @@ function MainMenu() {
                       const y = radius * Math.sin(angle);
 
                       return (
-                        <g key={skill._id}>
+                        <g key={skill._id} className="skill-node-group">
+                          {/* Skill node */}
                           <circle
                             cx={x}
                             cy={y}
-                            r="40"
+                            r="50"
                             fill={getNodeColor(skill.nodeColor)}
                             stroke={getNodeStrokeColor(skill.nodeColor)}
                             strokeWidth="3"
-                            className="skill-node"
-                            style={{ cursor: 'pointer' }}
+                            style={{ cursor: 'pointer', pointerEvents: 'all' }}
                           />
+                          
+                          {/* Skill title */}
                           <text
                             x={x}
-                            y={y + 5}
+                            y={y}
                             textAnchor="middle"
                             fill={skill.nodeColor === 'white' || skill.nodeColor === 'yellow' ? '#000000' : '#ffffff'}
-                            fontSize="16"
+                            fontSize="28"
                             fontWeight="bold"
+                            fontFamily="Dongle, sans-serif"
                             style={{ pointerEvents: 'none' }}
                           >
-                            {skill.title.length > 12 ? skill.title.substring(0, 12) + '...' : skill.title}
+                            {wrapText(skill.title, 150, 28).map((line, idx) => {
+                              const totalLines = wrapText(skill.title, 150, 28).length;
+                              const offsetY = totalLines === 1 ? "0.15em" : -((totalLines - 1) * 28) / 2 + 4;
+                              return <tspan key={idx} x={x} dy={idx === 0 ? `${offsetY}` : "28"}>{line}</tspan>;
+                            })}
                           </text>
-                          {skill.cost > 0 && (
-                            <text
-                              x={x}
-                              y={y + 20}
-                              textAnchor="middle"
-                              fill={skill.nodeColor === 'white' || skill.nodeColor === 'yellow' ? '#000000' : '#ffffff'}
-                              fontSize="11"
-                              fontWeight="bold"
-                              style={{ pointerEvents: 'none' }}
-                            >
-                              {skill.cost} AP
-                            </text>
-                          )}
                         </g>
                       );
                     });
                   })}
                 </g>
               </svg>
+              <div className="skill-tree-help">
+                <p>💡 <strong>Scroll</strong> to zoom | <strong>Shift+Drag</strong> to pan | <strong>Left-click</strong> node for details</p>
+              </div>
             </div>
           </div>
         </div>

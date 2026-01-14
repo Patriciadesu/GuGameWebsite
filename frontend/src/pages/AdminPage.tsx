@@ -101,6 +101,7 @@ function AdminPage() {
   const [editingSkill, setEditingSkill] = useState(false);
   const [draggingSkill, setDraggingSkill] = useState<string | null>(null);
   const [tempSkillPositions, setTempSkillPositions] = useState<{ [key: string]: number }>({});
+  const [wasDragged, setWasDragged] = useState<{ [key: string]: boolean }>({});
   
   // Zoom and Pan states
   const [zoom, setZoom] = useState(1);
@@ -122,7 +123,11 @@ function AdminPage() {
   const [skillNodeColor, setSkillNodeColor] = useState<'yellow' | 'blue' | 'green' | 'white' | 'purple'>('blue');
   const [showConnectionModal, setShowConnectionModal] = useState(false);
   const [connectionSource, setConnectionSource] = useState<Skill | null>(null);
-  const [layerGap, setLayerGap] = useState(120); // Gap between each layer
+  const [layerGap, setLayerGap] = useState(120); // Legacy: kept for backward compatibility
+  const [layerGaps, setLayerGaps] = useState<{ [key: number]: number }>({ 1: 120, 2: 120, 3: 120, 4: 120, 5: 120, 6: 120 }); // Gap for each layer
+  const [arrowheadGapFromNode, setArrowheadGapFromNode] = useState(0); // Gap from target node edge
+  const [arrowheadStartPoint, setArrowheadStartPoint] = useState(0); // Distance from path end where arrowhead starts
+  const [arrowheadSize, setArrowheadSize] = useState(20); // Size of the arrowhead
   const [connectionHasArrowhead, setConnectionHasArrowhead] = useState(true);
   const [editingConnection, setEditingConnection] = useState<{ skillId: string; targetSkillId: string } | null>(null);
   const [draggingBreakPoint, setDraggingBreakPoint] = useState<{ 
@@ -145,6 +150,7 @@ function AdminPage() {
       loadUserGuildInfo();
       if (user.role === 'super-admin') {
         loadSkills();
+        loadSkillTreeSettings();
       }
     }
   }, [user]);
@@ -241,6 +247,85 @@ function AdminPage() {
     } catch (error) {
       console.error('Error loading skills:', error);
     }
+  };
+
+  const loadSkillTreeSettings = async () => {
+    try {
+      const response = await axios.get('/api/skill-tree-settings');
+      if (response.data.success) {
+        const settings = response.data.settings;
+        setLayerGap(settings.layerGap || 120);
+        // Load per-layer gaps if available, otherwise use default
+        if (settings.layerGaps) {
+          const gaps: { [key: number]: number } = {};
+          for (let i = 1; i <= 6; i++) {
+            gaps[i] = settings.layerGaps[i] || settings.layerGap || 120;
+          }
+          setLayerGaps(gaps);
+        } else {
+          // Fallback to single layerGap for backward compatibility
+          const defaultGap = settings.layerGap || 120;
+          setLayerGaps({ 1: defaultGap, 2: defaultGap, 3: defaultGap, 4: defaultGap, 5: defaultGap, 6: defaultGap });
+        }
+        setArrowheadGapFromNode(settings.arrowheadGapFromNode || 0);
+        setArrowheadStartPoint(settings.arrowheadStartPoint || 0);
+        setArrowheadSize(settings.arrowheadSize || 20);
+      }
+    } catch (error) {
+      console.error('Error loading skill tree settings:', error);
+    }
+  };
+
+  const saveLayerGaps = async () => {
+    try {
+      console.log('💾 Saving layer gaps:', layerGaps);
+      // Ensure all layer gaps are numbers
+      const gapsToSave: { [key: number]: number } = {};
+      for (let i = 1; i <= 6; i++) {
+        gapsToSave[i] = Number(layerGaps[i]) || 120;
+      }
+      console.log('📤 Sending layer gaps:', gapsToSave);
+      
+      const response = await axios.put('/api/skill-tree-settings', { layerGaps: gapsToSave });
+      console.log('📥 Response:', response.data);
+      
+      if (response.data.success) {
+        console.log('✅ Layer gaps saved:', gapsToSave);
+        // Reload settings to ensure UI is in sync
+        await loadSkillTreeSettings();
+        alert('Layer gap settings saved successfully!');
+      } else {
+        alert('Failed to save layer gap settings');
+      }
+    } catch (error: any) {
+      console.error('❌ Error saving layer gaps:', error);
+      console.error('Error response:', error.response?.data);
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to save layer gap settings';
+      alert(`Error: ${errorMessage}`);
+    }
+  };
+
+  const saveArrowheadSettings = async () => {
+    try {
+      await axios.put('/api/skill-tree-settings', { 
+        arrowheadGapFromNode,
+        arrowheadStartPoint,
+        arrowheadSize
+      });
+      console.log('Arrowhead settings saved');
+    } catch (error) {
+      console.error('Error saving arrowhead settings:', error);
+    }
+  };
+
+  // Helper function to calculate radius for a layer (cumulative)
+  const getLayerRadius = (layer: number): number => {
+    if (layer === 0) return 0; // Center node
+    let radius = 0;
+    for (let i = 1; i <= layer; i++) {
+      radius += layerGaps[i] || 120;
+    }
+    return radius;
   };
 
   const handleCreateSkill = async () => {
@@ -396,13 +481,56 @@ function AdminPage() {
   // Get node color
   const getNodeColor = (color: string): string => {
     const colors: { [key: string]: string } = {
-      yellow: '#eab308',
-      blue: '#3b82f6',
-      green: '#22c55e',
-      white: '#ffffff',
-      purple: '#9333ea'
+      yellow: '#FFF6B6',
+      blue: '#C6DCFF',
+      green: '#ADF0C7',
+      white: '#FFFFFF',
+      purple: '#DEDAFF'
     };
     return colors[color] || colors.blue;
+  };
+
+  // Wrap text to fit within circle
+  const wrapText = (text: string, maxWidth: number, fontSize: number): string[] => {
+    // Approximate character width (fontSize * 0.6 is a rough estimate for most fonts)
+    const charWidth = fontSize * 0.6;
+    const maxCharsPerLine = Math.floor(maxWidth / charWidth);
+    
+    if (text.length <= maxCharsPerLine) {
+      return [text];
+    }
+    
+    const words = text.split(' ');
+    const lines: string[] = [];
+    let currentLine = '';
+    
+    for (const word of words) {
+      const testLine = currentLine ? `${currentLine} ${word}` : word;
+      if (testLine.length <= maxCharsPerLine) {
+        currentLine = testLine;
+      } else {
+        if (currentLine) {
+          lines.push(currentLine);
+        }
+        // If word itself is longer than maxCharsPerLine, split it
+        if (word.length > maxCharsPerLine) {
+          let remainingWord = word;
+          while (remainingWord.length > maxCharsPerLine) {
+            lines.push(remainingWord.substring(0, maxCharsPerLine));
+            remainingWord = remainingWord.substring(maxCharsPerLine);
+          }
+          currentLine = remainingWord;
+        } else {
+          currentLine = word;
+        }
+      }
+    }
+    
+    if (currentLine) {
+      lines.push(currentLine);
+    }
+    
+    return lines;
   };
 
   const getNodeStrokeColor = (color: string): string => {
@@ -460,6 +588,10 @@ function AdminPage() {
     const svg = e.currentTarget.ownerSVGElement;
     if (!svg) return;
 
+    // Track initial position and whether mouse moved
+    const initialPosition = skill.position;
+    let hasMoved = false;
+
     const handleMouseMove = (moveEvent: MouseEvent) => {
       const rect = svg.getBoundingClientRect();
       const centerX = rect.width / 2;
@@ -473,12 +605,29 @@ function AdminPage() {
       let angle = Math.atan2(mouseY, mouseX);
       let degrees = (angle * 180 / Math.PI + 90 + 360) % 360;
       
+      // Check if position actually changed (with small threshold to account for rounding)
+      if (Math.abs(degrees - initialPosition) > 1) {
+        hasMoved = true;
+      }
+      
       // Update local state only (no API call, no save yet)
       setTempSkillPositions(prev => ({ ...prev, [skill._id]: degrees }));
     };
 
     const handleMouseUp = () => {
       setDraggingSkill(null);
+      // Mark as dragged if mouse moved
+      if (hasMoved) {
+        setWasDragged(prev => ({ ...prev, [skill._id]: true }));
+        // Clear the flag after a short delay to allow click event to check it
+        setTimeout(() => {
+          setWasDragged(prev => {
+            const updated = { ...prev };
+            delete updated[skill._id];
+            return updated;
+          });
+        }, 100);
+      }
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
       // Don't save - wait for user to click save button
@@ -489,7 +638,7 @@ function AdminPage() {
     document.addEventListener('mouseup', handleMouseUp);
   };
 
-  // Handle break point dragging (constrained to circle)
+  // Handle break point dragging (can move to different layers)
   useEffect(() => {
     if (!draggingBreakPoint) return;
 
@@ -506,9 +655,22 @@ function AdminPage() {
       const mouseX = (svgP.x - panX / zoom) / zoom;
       const mouseY = (svgP.y - panY / zoom) / zoom;
 
-      // Calculate angle from center
+      // Calculate distance from center and angle
+      const distanceFromCenter = Math.sqrt(mouseX * mouseX + mouseY * mouseY);
       let angle = Math.atan2(mouseY, mouseX);
       let degrees = (angle * 180 / Math.PI + 90 + 360) % 360;
+
+      // Find the closest layer based on distance
+      let closestLayer = 1;
+      let minDistance = Math.abs(distanceFromCenter - getLayerRadius(1));
+      for (let layer = 1; layer <= 6; layer++) {
+        const layerRadius = getLayerRadius(layer);
+        const distance = Math.abs(distanceFromCenter - layerRadius);
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestLayer = layer;
+        }
+      }
 
       // Update local state only (no API call yet)
       const connectionKey = `${draggingBreakPoint.skillId}-${draggingBreakPoint.targetSkillId}`;
@@ -520,9 +682,9 @@ function AdminPage() {
 
       const currentPoints = tempBreakPoints[connectionKey] || conn.breakPoints;
       const newBreakPoints = [...currentPoints];
-      // Keep same layer, only update position (angle)
+      // Update both layer and position
       newBreakPoints[draggingBreakPoint.pointIndex] = { 
-        layer: newBreakPoints[draggingBreakPoint.pointIndex].layer,
+        layer: closestLayer,
         position: degrees 
       };
 
@@ -566,7 +728,7 @@ function AdminPage() {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [draggingBreakPoint, zoom, panX, panY, skills, tempBreakPoints]);
+  }, [draggingBreakPoint, zoom, panX, panY, skills, tempBreakPoints, layerGaps]);
 
   // Save all position changes
   const handleSavePositions = async () => {
@@ -1185,22 +1347,6 @@ function AdminPage() {
                 <span className="zoom-level">{Math.round(zoom * 100)}%</span>
               </div>
 
-              {/* Layer Gap Controls */}
-              <div className="layer-gap-controls">
-                <label className="gap-label">
-                  Layer Gap:
-                  <input 
-                    type="range" 
-                    min="80" 
-                    max="200" 
-                    step="10" 
-                    value={layerGap}
-                    onChange={(e) => setLayerGap(Number(e.target.value))}
-                    className="gap-slider"
-                  />
-                  <span className="gap-value">{layerGap}px</span>
-                </label>
-              </div>
 
               {/* Save Controls - Always visible */}
               <div className="save-controls">
@@ -1295,34 +1441,36 @@ function AdminPage() {
                 onMouseLeave={handlePanEnd}
               >
                 <defs>
-                  {/* Arrow marker for normal connections (purple) */}
+                  {/* Arrow marker for normal connections (black) */}
                   <marker
                     id="arrowhead-normal"
-                    markerWidth="10"
-                    markerHeight="10"
-                    refX="9"
-                    refY="3"
+                    markerWidth={arrowheadSize}
+                    markerHeight={arrowheadSize}
+                    refX={arrowheadSize * 0.9 + arrowheadStartPoint}
+                    refY={arrowheadSize / 2}
                     orient="auto"
+                    markerUnits="userSpaceOnUse"
                   >
-                    <polygon points="0 0, 10 3, 0 6" fill="#9333ea" />
+                    <path d={`M 0,0 L 0,${arrowheadSize} L ${arrowheadSize * 0.9},${arrowheadSize / 2} Z`} fill="#000000" stroke="#000000" strokeWidth="0.5" />
                   </marker>
-                  {/* Arrow marker for special connections (red) */}
+                  {/* Arrow marker for special connections (black) */}
                   <marker
                     id="arrowhead-special"
-                    markerWidth="10"
-                    markerHeight="10"
-                    refX="9"
-                    refY="3"
+                    markerWidth={arrowheadSize}
+                    markerHeight={arrowheadSize}
+                    refX={arrowheadSize * 0.9 + arrowheadStartPoint}
+                    refY={arrowheadSize / 2}
                     orient="auto"
+                    markerUnits="userSpaceOnUse"
                   >
-                    <polygon points="0 0, 10 3, 0 6" fill="#ef4444" />
+                    <path d={`M 0,0 L 0,${arrowheadSize} L ${arrowheadSize * 0.9},${arrowheadSize / 2} Z`} fill="#000000" stroke="#000000" strokeWidth="0.5" />
                   </marker>
                 </defs>
 
                 <g transform={`translate(${panX / zoom}, ${panY / zoom}) scale(${zoom})`}>
                   {/* Draw circles for each layer */}
                   {[1, 2, 3, 4, 5, 6].map(layer => {
-                    const radius = layer * layerGap; // Use layerGap
+                    const radius = getLayerRadius(layer);
                     return (
                       <circle
                         key={`layer-${layer}`}
@@ -1343,14 +1491,14 @@ function AdminPage() {
                     if (!skill.connections || skill.connections.length === 0) return [];
                     
                     const sourceLayer = skill.layer;
-                    const sourceRadius = sourceLayer * layerGap; // Use layerGap
+                    const sourceRadius = getLayerRadius(sourceLayer);
                     
                     // Use temp position if dragging, otherwise use actual position
                     const sourcePosition = tempSkillPositions[skill._id] ?? skill.position;
                     const sourceAngle = (sourcePosition * Math.PI / 180) - Math.PI / 2;
-                    const sourceX = sourceRadius * Math.cos(sourceAngle);
-                    const sourceY = sourceRadius * Math.sin(sourceAngle);
-
+                    const sourceXOnLayer = sourceRadius * Math.cos(sourceAngle);
+                    const sourceYOnLayer = sourceRadius * Math.sin(sourceAngle);
+                    
                     return skill.connections.map((conn) => {
                       const targetSkill = skills.find(s => s._id === conn.targetSkillId);
                       if (!targetSkill) {
@@ -1358,14 +1506,68 @@ function AdminPage() {
                         return null;
                       }
 
-                      const targetRadius = targetSkill.layer * layerGap; // Use layerGap
+                      const targetRadius = getLayerRadius(targetSkill.layer);
                       const targetPosition = tempSkillPositions[targetSkill._id] ?? targetSkill.position;
                       const targetAngle = (targetPosition * Math.PI / 180) - Math.PI / 2;
-                      const targetX = targetRadius * Math.cos(targetAngle);
-                      const targetY = targetRadius * Math.sin(targetAngle);
+                      const targetXOnLayer = targetRadius * Math.cos(targetAngle);
+                      const targetYOnLayer = targetRadius * Math.sin(targetAngle);
+                      
+                      // Connection line starts from the center of the source node
+                      let sourceX, sourceY;
+                      if (sourceLayer === 0) {
+                        // Center node: start from center (0, 0)
+                        sourceX = 0;
+                        sourceY = 0;
+                      } else {
+                        // Other nodes: start from center of the node (which is on the layer circle)
+                        sourceX = sourceXOnLayer;
+                        sourceY = sourceYOnLayer;
+                      }
 
-                      const color = conn.connectionType === 'special' ? '#ef4444' : '#9333ea';
-                      const marker = conn.hasArrowhead !== false 
+                      // Always show arrowhead by default (unless explicitly set to false)
+                      const hasArrowhead = conn.hasArrowhead !== false;
+                      
+                      // Calculate target point: if arrowhead, stop at node edge; otherwise at center
+                      let targetX, targetY;
+                      if (hasArrowhead) {
+                        // With arrowhead: stop at node edge with gap (pointing to circle without overlapping)
+                        const targetNodeRadius = targetSkill.layer === 0 ? 60 : 50;
+                        const totalGap = targetNodeRadius + arrowheadGapFromNode; // Node radius + gap from node
+                        const distanceFromCenter = Math.sqrt(targetXOnLayer * targetXOnLayer + targetYOnLayer * targetYOnLayer);
+                        
+                        if (targetSkill.layer === 0) {
+                          // Center node: calculate direction from source to center
+                          const dirX = -sourceXOnLayer;
+                          const dirY = -sourceYOnLayer;
+                          const dirLength = Math.sqrt(dirX * dirX + dirY * dirY);
+                          if (dirLength > 0) {
+                            targetX = (dirX / dirLength) * totalGap;
+                            targetY = (dirY / dirLength) * totalGap;
+                          } else {
+                            targetX = totalGap;
+                            targetY = 0;
+                          }
+                        } else {
+                          // Other nodes: move back from center by node radius + gap along radial direction
+                          const dirX = targetXOnLayer / distanceFromCenter;
+                          const dirY = targetYOnLayer / distanceFromCenter;
+                          targetX = targetXOnLayer - dirX * totalGap;
+                          targetY = targetYOnLayer - dirY * totalGap;
+                        }
+                      } else {
+                        // No arrowhead: stop at center
+                        if (targetSkill.layer === 0) {
+                          targetX = 0;
+                          targetY = 0;
+                        } else {
+                          targetX = targetXOnLayer;
+                          targetY = targetYOnLayer;
+                        }
+                      }
+                      
+                      // All connections with arrowhead use black color
+                      const color = hasArrowhead ? '#000000' : '#6631D7';
+                      const marker = hasArrowhead
                         ? (conn.connectionType === 'special' ? 'url(#arrowhead-special)' : 'url(#arrowhead-normal)')
                         : 'none';
 
@@ -1375,7 +1577,7 @@ function AdminPage() {
                       
                       // Helper function to calculate point on circle
                       const getPointOnCircle = (layer: number, position: number) => {
-                        const radius = layer * layerGap;
+                        const radius = getLayerRadius(layer);
                         const angle = (position * Math.PI / 180) - Math.PI / 2;
                         return {
                           x: radius * Math.cos(angle),
@@ -1385,7 +1587,7 @@ function AdminPage() {
                       
                       // Helper function to create arc path between two points on same circle
                       const createArc = (layer: number, startPos: number, endPos: number) => {
-                        const radius = layer * layerGap;
+                        const radius = getLayerRadius(layer);
                         // Calculate if we should go clockwise or counter-clockwise (shorter path)
                         let angleDiff = endPos - startPos;
                         if (angleDiff > 180) angleDiff -= 360;
@@ -1423,15 +1625,25 @@ function AdminPage() {
                         
                         // Final segment to target
                         if (targetSkill.layer === currentLayer) {
-                          // Same layer as last break point - arc
+                          // Same layer as last break point - arc to layer circle, then line to node edge
                           pathD += createArc(currentLayer, currentPos, targetPosition);
+                          // Add line from layer circle to node edge
+                          pathD += ` L ${targetX} ${targetY}`;
                         } else {
-                          // Different layer - straight line
+                          // Different layer - straight line to node edge
                           pathD += ` L ${targetX} ${targetY}`;
                         }
                       } else {
-                        // No break points - straight line
-                        pathD += ` L ${targetX} ${targetY}`;
+                        // No break points - check if source and target are on same layer
+                        if (skill.layer === targetSkill.layer) {
+                          // Same layer - arc to layer circle, then line to node edge
+                          pathD += createArc(skill.layer, sourcePosition, targetPosition);
+                          // Add line from layer circle to node edge
+                          pathD += ` L ${targetX} ${targetY}`;
+                        } else {
+                          // Different layer - straight line to node edge
+                          pathD += ` L ${targetX} ${targetY}`;
+                        }
                       }
 
                       return (
@@ -1502,7 +1714,7 @@ function AdminPage() {
                           {editingConnection?.skillId === skill._id && 
                            editingConnection?.targetSkillId === conn.targetSkillId &&
                            breakPoints?.map((point, pointIdx) => {
-                            const bpRadius = point.layer * layerGap;
+                            const bpRadius = getLayerRadius(point.layer);
                             const bpAngle = (point.position * Math.PI / 180) - Math.PI / 2;
                             const bpX = bpRadius * Math.cos(bpAngle);
                             const bpY = bpRadius * Math.sin(bpAngle);
@@ -1534,12 +1746,25 @@ function AdminPage() {
                                   fontSize="16"
                                   fontWeight="bold"
                                   style={{ cursor: 'pointer' }}
-                                  onClick={() => {
-                                    const newBreakPoints = conn.breakPoints!.filter((_, idx) => idx !== pointIdx);
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const connectionKey = `${skill._id}-${conn.targetSkillId}`;
+                                    const currentBreakPoints = tempBreakPoints[connectionKey] || conn.breakPoints || [];
+                                    const newBreakPoints = currentBreakPoints.filter((_, idx) => idx !== pointIdx);
+                                    
+                                    // Clear temp break points for this connection
+                                    setTempBreakPoints(prev => {
+                                      const updated = { ...prev };
+                                      delete updated[connectionKey];
+                                      return updated;
+                                    });
+                                    
                                     axios.put(`/api/skills/${skill._id}/connections/${conn.targetSkillId}`, {
                                       breakPoints: newBreakPoints
                                     }).then(() => {
                                       loadSkills();
+                                    }).catch((error) => {
+                                      console.error('Error deleting break point:', error);
                                     });
                                   }}
                                 >
@@ -1555,33 +1780,37 @@ function AdminPage() {
 
                   {/* Center node (layer 0) */}
                   {skills.filter(s => s.layer === 0).map((skill) => (
-                    <g key={skill._id}>
+                    <g key={skill._id} className="skill-node-center-group">
                       <circle
                         cx="0"
                         cy="0"
-                        r="50"
+                        r="60"
                         fill={getNodeColor(skill.nodeColor)}
                         stroke={getNodeStrokeColor(skill.nodeColor)}
                         strokeWidth="4"
-                        className="skill-node-center"
                         onClick={() => openSkillDetail(skill)}
                         onContextMenu={(e) => {
                           e.preventDefault();
                           setConnectionSource(skill);
                           setShowConnectionModal(true);
                         }}
-                        style={{ cursor: 'pointer' }}
+                        style={{ cursor: 'pointer', pointerEvents: 'all' }}
                       />
                       <text
                         x="0"
-                        y="6"
+                        y="0"
                         textAnchor="middle"
                         fill={skill.nodeColor === 'white' ? '#000000' : '#ffffff'}
-                        fontSize="18"
+                        fontSize="28"
                         fontWeight="bold"
+                        fontFamily="Dongle, sans-serif"
                         style={{ pointerEvents: 'none' }}
                       >
-                        {skill.title.length > 14 ? skill.title.substring(0, 14) + '...' : skill.title}
+                        {wrapText(skill.title, 180, 28).map((line, idx) => {
+                          const totalLines = wrapText(skill.title, 180, 28).length;
+                          const offsetY = totalLines === 1 ? "0.15em" : -((totalLines - 1) * 28) / 2 + 4;
+                          return <tspan key={idx} x="0" dy={idx === 0 ? `${offsetY}` : "28"}>{line}</tspan>;
+                        })}
                       </text>
                     </g>
                   ))}
@@ -1589,7 +1818,7 @@ function AdminPage() {
                   {/* Skills on circular layers (1-6) */}
                   {[1, 2, 3, 4, 5, 6].map(layer => {
                     const layerSkills = skills.filter(s => s.layer === layer);
-                    const radius = layer * layerGap; // Use layerGap
+                    const radius = getLayerRadius(layer);
 
                     return layerSkills.map((skill) => {
                       // Use temp position if dragging, otherwise use actual position
@@ -1600,19 +1829,19 @@ function AdminPage() {
                       const isDragging = draggingSkill === skill._id;
 
                       return (
-                        <g key={skill._id}>
+                        <g key={skill._id} className="skill-node-group">
                           {/* Skill node */}
                           <circle
                             cx={x}
                             cy={y}
-                            r="40"
+                            r="50"
                             fill={isDragging ? "#2563eb" : getNodeColor(skill.nodeColor)}
                             stroke={getNodeStrokeColor(skill.nodeColor)}
                             strokeWidth="3"
-                            className="skill-node"
                             onMouseDown={(e) => handleNodeDrag(e, skill)}
                             onClick={() => {
-                              if (!isDragging) {
+                              // Prevent click if node was just dragged
+                              if (!isDragging && !wasDragged[skill._id]) {
                                 openSkillDetail(skill);
                               }
                             }}
@@ -1621,20 +1850,25 @@ function AdminPage() {
                               setConnectionSource(skill);
                               setShowConnectionModal(true);
                             }}
-                            style={{ cursor: 'move' }}
+                            style={{ cursor: 'move', pointerEvents: 'all' }}
                           />
                           
                           {/* Skill title */}
                           <text
                             x={x}
-                            y={y + 5}
+                            y={y}
                             textAnchor="middle"
                             fill={skill.nodeColor === 'white' || skill.nodeColor === 'yellow' ? '#000000' : '#ffffff'}
-                            fontSize="16"
+                            fontSize="28"
                             fontWeight="bold"
+                            fontFamily="Dongle, sans-serif"
                             style={{ pointerEvents: 'none' }}
                           >
-                            {skill.title.length > 12 ? skill.title.substring(0, 12) + '...' : skill.title}
+                            {wrapText(skill.title, 150, 28).map((line, idx) => {
+                              const totalLines = wrapText(skill.title, 150, 28).length;
+                              const offsetY = totalLines === 1 ? "0.15em" : -((totalLines - 1) * 28) / 2 + 4;
+                              return <tspan key={idx} x={x} dy={idx === 0 ? `${offsetY}` : "28"}>{line}</tspan>;
+                            })}
                           </text>
                         </g>
                       );
@@ -1644,6 +1878,121 @@ function AdminPage() {
               </svg>
               <div className="skill-tree-help">
                 <p>💡 <strong>Scroll</strong> to zoom | <strong>Shift+Drag</strong> to pan | <strong>Left-click</strong> node for details | <strong>Right-click</strong> node to connect</p>
+              </div>
+            </div>
+
+            {/* Layer Gap Customizer Section */}
+            <div className="layer-gap-customizer-section">
+              <h3 className="section-subtitle">Layer Gap Customizer</h3>
+              <div className="layer-gap-customizer-content">
+                <div className="layer-gap-controls-grid">
+                  {[1, 2, 3, 4, 5, 6].map(layer => (
+                    <div key={layer} className="layer-gap-control-item">
+                      <label className="layer-gap-label">
+                        Layer {layer} Gap:
+                        <div className="layer-gap-input-group">
+                          <input 
+                            type="range" 
+                            min="80" 
+                            max="300" 
+                            step="10" 
+                            value={layerGaps[layer] || 120}
+                            onChange={(e) => {
+                              setLayerGaps(prev => ({
+                                ...prev,
+                                [layer]: Number(e.target.value)
+                              }));
+                            }}
+                            className="layer-gap-slider"
+                          />
+                          <span className="layer-gap-value">{layerGaps[layer] || 120}px</span>
+                        </div>
+                      </label>
+                    </div>
+                  ))}
+                </div>
+                <div className="layer-gap-actions">
+                  <button 
+                    className="save-layer-gap-btn"
+                    onClick={saveLayerGaps}
+                  >
+                    💾 Save Layer Gap Settings
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Arrow Head Customizer Section */}
+            <div className="arrowhead-customizer-section">
+              <h3 className="section-subtitle">Arrow Head Customizer</h3>
+              <div className="arrowhead-customizer-content">
+                <div className="arrowhead-controls-grid">
+                  <div className="arrowhead-control-item">
+                    <label className="arrowhead-label">
+                      Gap from Target Node:
+                      <div className="arrowhead-input-group">
+                        <input 
+                          type="range" 
+                          min="0" 
+                          max="100" 
+                          step="1" 
+                          value={arrowheadGapFromNode}
+                          onChange={(e) => {
+                            setArrowheadGapFromNode(Number(e.target.value));
+                          }}
+                          className="arrowhead-slider"
+                        />
+                        <span className="arrowhead-value">{arrowheadGapFromNode}px</span>
+                      </div>
+                    </label>
+                  </div>
+                  <div className="arrowhead-control-item">
+                    <label className="arrowhead-label">
+                      Arrow Head Start Point:
+                      <div className="arrowhead-input-group">
+                        <input 
+                          type="range" 
+                          min="-50" 
+                          max="50" 
+                          step="1" 
+                          value={arrowheadStartPoint}
+                          onChange={(e) => {
+                            setArrowheadStartPoint(Number(e.target.value));
+                          }}
+                          className="arrowhead-slider"
+                        />
+                        <span className="arrowhead-value">{arrowheadStartPoint}px</span>
+                      </div>
+                    </label>
+                  </div>
+                  <div className="arrowhead-control-item">
+                    <label className="arrowhead-label">
+                      Arrow Head Size:
+                      <div className="arrowhead-input-group">
+                        <input 
+                          type="range" 
+                          min="10" 
+                          max="50" 
+                          step="1" 
+                          value={arrowheadSize}
+                          onChange={(e) => {
+                            setArrowheadSize(Number(e.target.value));
+                          }}
+                          className="arrowhead-slider"
+                        />
+                        <span className="arrowhead-value">{arrowheadSize}px</span>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+                <div className="arrowhead-actions">
+                  <button 
+                    className="save-arrowhead-btn"
+                    onClick={saveArrowheadSettings}
+                  >
+                    💾 Save Arrow Head Settings
+                  </button>
+                </div>
               </div>
             </div>
 

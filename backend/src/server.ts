@@ -11,6 +11,7 @@ import axios from 'axios';
 import User, { IUser } from './models/User';
 import Guild, { IGuild } from './models/Guild';
 import Skill, { ISkill } from './models/Skill';
+import SkillTreeSettings from './models/SkillTreeSettings';
 
 // Extend Express types for Passport
 declare global {
@@ -906,6 +907,131 @@ app.delete('/api/skills/:id/connections/:targetSkillId', requireSuperAdmin, asyn
   } catch (error) {
     console.error('Error removing connection:', error);
     res.status(500).json({ error: 'Failed to remove connection' });
+  }
+});
+
+// ==================== SKILL TREE SETTINGS API ====================
+
+// Get skill tree settings (authenticated users can view)
+app.get('/api/skill-tree-settings', requireAuth, async (req: Request, res: Response) => {
+  try {
+    let settings = await SkillTreeSettings.findOne();
+    if (!settings) {
+      const defaultLayerGaps = new Map();
+      for (let i = 1; i <= 6; i++) {
+        defaultLayerGaps.set(String(i), 120); // Use string keys for Mongoose Map
+      }
+      settings = new SkillTreeSettings({ 
+        layerGap: 120,
+        layerGaps: defaultLayerGaps,
+        arrowheadGapFromNode: 0,
+        arrowheadStartPoint: 0,
+        arrowheadSize: 20
+      });
+      await settings.save();
+    }
+    // Convert Map to object for JSON response, converting string keys back to numbers
+    const settingsObj = settings.toObject();
+    if (settingsObj.layerGaps && settingsObj.layerGaps instanceof Map) {
+      const gapsObj: { [key: number]: number } = {};
+      settingsObj.layerGaps.forEach((value: number, key: string) => {
+        gapsObj[Number(key)] = value;
+      });
+      settingsObj.layerGaps = gapsObj;
+    }
+    res.json({ success: true, settings: settingsObj });
+  } catch (error) {
+    console.error('Error fetching skill tree settings:', error);
+    res.status(500).json({ error: 'Failed to fetch skill tree settings' });
+  }
+});
+
+// Update skill tree settings (super-admin only)
+app.put('/api/skill-tree-settings', requireSuperAdmin, async (req: Request, res: Response) => {
+  try {
+    const { layerGap, layerGaps, arrowheadGapFromNode, arrowheadStartPoint, arrowheadSize } = req.body;
+    console.log('📥 Received skill tree settings update:', { layerGap, layerGaps, arrowheadGapFromNode, arrowheadStartPoint, arrowheadSize });
+
+    let settings = await SkillTreeSettings.findOne();
+    if (!settings) {
+      const defaultLayerGaps = new Map();
+      for (let i = 1; i <= 6; i++) {
+        defaultLayerGaps.set(String(i), layerGap !== undefined ? layerGap : 120); // Use string keys
+      }
+      settings = new SkillTreeSettings({ 
+        layerGap: layerGap !== undefined ? layerGap : 120,
+        layerGaps: layerGaps ? new Map(Object.entries(layerGaps).map(([k, v]) => [String(k), v])) : defaultLayerGaps,
+        arrowheadGapFromNode: arrowheadGapFromNode !== undefined ? arrowheadGapFromNode : 0,
+        arrowheadStartPoint: arrowheadStartPoint !== undefined ? arrowheadStartPoint : 0,
+        arrowheadSize: arrowheadSize !== undefined ? arrowheadSize : 20
+      });
+    } else {
+      if (layerGap !== undefined) {
+        if (layerGap < 80 || layerGap > 300) {
+          return res.status(400).json({ error: 'Layer gap must be between 80 and 300' });
+        }
+        settings.layerGap = layerGap;
+      }
+      if (layerGaps !== undefined) {
+        console.log('📊 Processing layerGaps:', layerGaps);
+        // Validate and update per-layer gaps
+        // Mongoose Maps require string keys, so we convert numbers to strings
+        const layerGapsMap = new Map();
+        for (let layer = 1; layer <= 6; layer++) {
+          const gap = layerGaps[layer];
+          if (gap !== undefined) {
+            if (typeof gap !== 'number' || gap < 80 || gap > 300) {
+              console.error(`❌ Invalid gap for layer ${layer}:`, gap);
+              return res.status(400).json({ error: `Layer ${layer} gap must be a number between 80 and 300, got: ${gap}` });
+            }
+            layerGapsMap.set(String(layer), gap); // Convert to string for Mongoose Map
+          } else {
+            // Use existing value or default
+            const existingGaps = settings.layerGaps instanceof Map 
+              ? settings.layerGaps 
+              : (settings.layerGaps ? new Map(Object.entries(settings.layerGaps).map(([k, v]) => [String(k), v])) : new Map());
+            const existing = existingGaps.get(String(layer)) || settings.layerGap || 120;
+            layerGapsMap.set(String(layer), existing);
+          }
+        }
+        console.log('✅ Created layerGapsMap:', Array.from(layerGapsMap.entries()));
+        settings.layerGaps = layerGapsMap as any;
+      }
+      if (arrowheadGapFromNode !== undefined) {
+        if (arrowheadGapFromNode < 0 || arrowheadGapFromNode > 100) {
+          return res.status(400).json({ error: 'Arrowhead gap from node must be between 0 and 100' });
+        }
+        settings.arrowheadGapFromNode = arrowheadGapFromNode;
+      }
+      if (arrowheadStartPoint !== undefined) {
+        if (arrowheadStartPoint < -50 || arrowheadStartPoint > 50) {
+          return res.status(400).json({ error: 'Arrowhead start point must be between -50 and 50' });
+        }
+        settings.arrowheadStartPoint = arrowheadStartPoint;
+      }
+      if (arrowheadSize !== undefined) {
+        if (arrowheadSize < 10 || arrowheadSize > 50) {
+          return res.status(400).json({ error: 'Arrowhead size must be between 10 and 50' });
+        }
+        settings.arrowheadSize = arrowheadSize;
+      }
+    }
+    await settings.save();
+    console.log('✅ Settings saved successfully');
+    // Convert Map to object for JSON response, converting string keys back to numbers
+    const settingsObj = settings.toObject();
+    if (settingsObj.layerGaps && settingsObj.layerGaps instanceof Map) {
+      const gapsObj: { [key: number]: number } = {};
+      settingsObj.layerGaps.forEach((value: number, key: string) => {
+        gapsObj[Number(key)] = value;
+      });
+      settingsObj.layerGaps = gapsObj;
+    }
+    res.json({ success: true, settings: settingsObj });
+  } catch (error: any) {
+    console.error('❌ Error updating skill tree settings:', error);
+    console.error('Error details:', error.message, error.stack);
+    res.status(500).json({ error: `Failed to update skill tree settings: ${error.message || 'Unknown error'}` });
   }
 });
 

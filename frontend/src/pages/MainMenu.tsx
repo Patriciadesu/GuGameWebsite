@@ -81,6 +81,8 @@ function MainMenu() {
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [showSkillModal, setShowSkillModal] = useState(false);
   const [unlockedSkills, setUnlockedSkills] = useState<string[]>([]);
+  const [showApprovalRequestModal, setShowApprovalRequestModal] = useState(false);
+  const [approvalMessage, setApprovalMessage] = useState('');
 
   useEffect(() => {
     checkAuth();
@@ -220,8 +222,10 @@ function MainMenu() {
       }
     }
 
-    // Check asset points
-    if (assetPoints < skill.cost) {
+    // Check asset points (skip for Adventure and Marker nodes)
+    const isAdventure = skill.nodeType === 'adventure' || skill.nodeColor === 'white';
+    const isMarker = skill.nodeType === 'marker' || skill.nodeColor === 'yellow';
+    if (!isAdventure && !isMarker && assetPoints < skill.cost) {
       return false;
     }
 
@@ -230,6 +234,14 @@ function MainMenu() {
 
   const handleUnlockSkill = async () => {
     if (!selectedSkill) return;
+
+    const isQuest = selectedSkill.nodeType === 'quest' || selectedSkill.nodeColor === 'green';
+    
+    // For quest nodes, show approval request modal instead
+    if (isQuest) {
+      setShowApprovalRequestModal(true);
+      return;
+    }
 
     try {
       const response = await axios.post(`/api/skills/${selectedSkill._id}/unlock`);
@@ -241,11 +253,36 @@ function MainMenu() {
         // Close modal
         setShowSkillModal(false);
         setSelectedSkill(null);
-        alert('Skill unlocked successfully!');
+        // Don't show notification for Adventure and Marker nodes
+        const isAdventure = selectedSkill.nodeType === 'adventure' || selectedSkill.nodeColor === 'white';
+        const isMarker = selectedSkill.nodeType === 'marker' || selectedSkill.nodeColor === 'yellow';
+        if (!isAdventure && !isMarker) {
+          alert('Skill unlocked successfully!');
+        }
       }
     } catch (error: any) {
       console.error('Error unlocking skill:', error);
       alert(error.response?.data?.error || 'Failed to unlock skill');
+    }
+  };
+
+  const handleSendApprovalRequest = async () => {
+    if (!selectedSkill) return;
+
+    try {
+      const response = await axios.post(`/api/skills/${selectedSkill._id}/approval-request`, {
+        message: approvalMessage.trim() || ''
+      });
+      if (response.data.success) {
+        alert('Approval request sent successfully!');
+        setShowApprovalRequestModal(false);
+        setApprovalMessage('');
+        setShowSkillModal(false);
+        setSelectedSkill(null);
+      }
+    } catch (error: any) {
+      console.error('Error sending approval request:', error);
+      alert(error.response?.data?.error || 'Failed to send approval request');
     }
   };
 
@@ -690,7 +727,10 @@ function MainMenu() {
                       let targetX, targetY;
                       if (hasArrowhead) {
                         // With arrowhead: stop at node edge with gap (pointing to circle without overlapping)
-                        const targetNodeRadius = targetSkill.layer === 0 ? 60 : 50;
+                        const isTargetExtra = targetSkill.nodeType === 'EXTRA' || targetSkill.nodeColor === 'purple';
+                        const targetNodeRadius = targetSkill.layer === 0 
+                          ? (isTargetExtra ? 120 : 60)  // EXTRA center nodes are 120, regular are 60
+                          : (isTargetExtra ? 100 : 50); // EXTRA circular nodes are 100, regular are 50
                         const totalGap = targetNodeRadius + arrowheadGapFromNode; // Node radius + gap from node
                         const distanceFromCenter = Math.sqrt(targetXOnLayer * targetXOnLayer + targetYOnLayer * targetYOnLayer);
                         
@@ -816,12 +856,14 @@ function MainMenu() {
                   {skills.filter(s => s.layer === 0).map((skill) => {
                     const isUnlocked = unlockedSkills.includes(skill._id);
                     const canUnlock = canUnlockSkill(skill);
+                    const isExtraNode = skill.nodeType === 'EXTRA' || skill.nodeColor === 'purple';
+                    const nodeRadius = isExtraNode ? 120 : 60; // EXTRA nodes are twice the size
                     return (
                       <g key={skill._id} className="skill-node-center-group">
                         <circle
                           cx="0"
                           cy="0"
-                          r="60"
+                          r={nodeRadius}
                           fill={getNodeColor(skill.nodeColor)}
                           stroke={getNodeStrokeColor(skill.nodeColor)}
                           strokeWidth="4"
@@ -830,7 +872,8 @@ function MainMenu() {
                             cursor: 'pointer', 
                             pointerEvents: 'all',
                             opacity: highlightedSkillId === skill._id ? 1 : (isUnlocked ? 1 : 1),
-                            filter: isUnlocked ? 'none' : 'grayscale(0.3) brightness(0.9)'
+                            filter: isUnlocked ? 'none' : 'grayscale(0.3) brightness(0.9)',
+                            r: nodeRadius // Ensure radius is set in style as well
                           }}
                           onClick={() => handleSkillClick(skill)}
                         />
@@ -844,8 +887,8 @@ function MainMenu() {
                         fontFamily="Dongle, sans-serif"
                         style={{ pointerEvents: 'none' }}
                       >
-                        {wrapText(skill.title, 180, 28).map((line, idx) => {
-                          const totalLines = wrapText(skill.title, 180, 28).length;
+                        {wrapText(skill.title, isExtraNode ? 360 : 180, 28).map((line, idx) => {
+                          const totalLines = wrapText(skill.title, isExtraNode ? 360 : 180, 28).length;
                           const offsetY = totalLines === 1 ? "0.15em" : -((totalLines - 1) * 28) / 2 + 4;
                           return <tspan key={idx} x="0" dy={idx === 0 ? `${offsetY}` : "28"}>{line}</tspan>;
                         })}
@@ -866,13 +909,15 @@ function MainMenu() {
                       const isUnlocked = unlockedSkills.includes(skill._id);
                       const canUnlock = canUnlockSkill(skill);
 
+                      const isExtraNode = skill.nodeType === 'EXTRA' || skill.nodeColor === 'purple';
+                      const nodeRadius = isExtraNode ? 100 : 50; // EXTRA nodes are twice the size
                       return (
                         <g key={skill._id} className="skill-node-group">
                           {/* Skill node */}
                           <circle
                             cx={x}
                             cy={y}
-                            r="50"
+                            r={nodeRadius}
                             fill={getNodeColor(skill.nodeColor)}
                             stroke={getNodeStrokeColor(skill.nodeColor)}
                             strokeWidth="3"
@@ -881,7 +926,8 @@ function MainMenu() {
                               cursor: 'pointer', 
                               pointerEvents: 'all',
                               opacity: isUnlocked ? 1 : 1,
-                              filter: isUnlocked ? 'none' : 'grayscale(0.3) brightness(0.9)'
+                              filter: isUnlocked ? 'none' : 'grayscale(0.3) brightness(0.9)',
+                              r: nodeRadius // Ensure radius is set in style as well
                             }}
                             onClick={() => handleSkillClick(skill)}
                           />
@@ -897,8 +943,8 @@ function MainMenu() {
                             fontFamily="Dongle, sans-serif"
                             style={{ pointerEvents: 'none' }}
                           >
-                            {wrapText(skill.title, 150, 28).map((line, idx) => {
-                              const totalLines = wrapText(skill.title, 150, 28).length;
+                            {wrapText(skill.title, isExtraNode ? 300 : 150, 28).map((line, idx) => {
+                              const totalLines = wrapText(skill.title, isExtraNode ? 300 : 150, 28).length;
                               const offsetY = totalLines === 1 ? "0.15em" : -((totalLines - 1) * 28) / 2 + 4;
                               return <tspan key={idx} x={x} dy={idx === 0 ? `${offsetY}` : "28"}>{line}</tspan>;
                             })}
@@ -925,7 +971,17 @@ function MainMenu() {
               <h2>{selectedSkill.title}</h2>
               <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '8px' }}>
                 <span style={{ fontSize: '1.4rem', color: '#6b7280' }}>
-                  Cost: <strong style={{ color: '#4e98ff' }}>{selectedSkill.cost} AP</strong>
+                  {(() => {
+                    const isAdventure = selectedSkill.nodeType === 'adventure' || selectedSkill.nodeColor === 'white';
+                    const isMarker = selectedSkill.nodeType === 'marker' || selectedSkill.nodeColor === 'yellow';
+                    if (isAdventure) {
+                      return <strong style={{ color: '#4e98ff' }}>Free Adventure</strong>;
+                    } else if (isMarker) {
+                      return <strong style={{ color: '#4e98ff' }}>Free Marker</strong>;
+                    } else {
+                      return <>Cost: <strong style={{ color: '#4e98ff' }}>{selectedSkill.cost} AP</strong></>;
+                    }
+                  })()}
                 </span>
                 {unlockedSkills.includes(selectedSkill._id) && (
                   <span style={{ fontSize: '1.4rem', color: '#22c55e', fontWeight: 'bold' }}>✓ Unlocked</span>
@@ -1023,7 +1079,8 @@ function MainMenu() {
               })()}
 
               {((selectedSkill.contentYouTube && selectedSkill.contentYouTube.length > 0) || 
-                (selectedSkill.contentGoogleDrive && selectedSkill.contentGoogleDrive.length > 0)) && (
+                (selectedSkill.contentGoogleDrive && selectedSkill.contentGoogleDrive.length > 0)) &&
+                selectedSkill.nodeType !== 'adventure' && selectedSkill.nodeColor !== 'white' && (
                 <div style={{ marginBottom: '20px' }}>
                   <h4 style={{ fontSize: '1.8rem', fontWeight: '700', color: '#14306d', marginBottom: '12px' }}>Content Links</h4>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -1088,7 +1145,20 @@ function MainMenu() {
                     cursor: canUnlockSkill(selectedSkill) ? 'pointer' : 'not-allowed'
                   }}
                 >
-                  🔓 Unlock Skill ({selectedSkill.cost} AP)
+                  {(() => {
+                    const isAdventure = selectedSkill.nodeType === 'adventure' || selectedSkill.nodeColor === 'white';
+                    const isMarker = selectedSkill.nodeType === 'marker' || selectedSkill.nodeColor === 'yellow';
+                    const isQuest = selectedSkill.nodeType === 'quest' || selectedSkill.nodeColor === 'green';
+                    if (isAdventure) {
+                      return '✅ Complete Adventure';
+                    } else if (isMarker) {
+                      return '✅ OK';
+                    } else if (isQuest) {
+                      return '📤 Send Approval Request';
+                    } else {
+                      return `🔓 Unlock Skill (${selectedSkill.cost} AP)`;
+                    }
+                  })()}
                 </button>
               ) : (
                 <button
@@ -1100,7 +1170,17 @@ function MainMenu() {
                     cursor: 'not-allowed'
                   }}
                 >
-                  ✓ Already Unlocked
+                  {(() => {
+                    const isAdventure = selectedSkill.nodeType === 'adventure' || selectedSkill.nodeColor === 'white';
+                    const isMarker = selectedSkill.nodeType === 'marker' || selectedSkill.nodeColor === 'yellow';
+                    if (isAdventure) {
+                      return '✓ Adventure Completed';
+                    } else if (isMarker) {
+                      return '✓ OK';
+                    } else {
+                      return '✓ Already Unlocked';
+                    }
+                  })()}
                 </button>
               )}
               <button
@@ -1122,6 +1202,88 @@ function MainMenu() {
                 }}
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Approval Request Modal */}
+      {showApprovalRequestModal && selectedSkill && (
+        <div className="guild-selection-modal-overlay" onClick={() => setShowApprovalRequestModal(false)}>
+          <div className="guild-selection-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px' }}>
+            <div className="guild-selection-header">
+              <h2>Send Approval Request</h2>
+              <p style={{ fontSize: '1.4rem', color: '#6b7280', marginTop: '8px' }}>
+                Request approval for: <strong>{selectedSkill.title}</strong>
+              </p>
+            </div>
+            
+            <div className="guild-selection-content">
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ 
+                  display: 'block', 
+                  fontSize: '1.4rem', 
+                  fontWeight: '600', 
+                  marginBottom: '8px',
+                  color: '#14306d'
+                }}>
+                  Message to Admin (Optional)
+                </label>
+                <textarea
+                  value={approvalMessage}
+                  onChange={(e) => setApprovalMessage(e.target.value)}
+                  placeholder="Enter any message you'd like to send to the admin..."
+                  style={{
+                    width: '100%',
+                    minHeight: '120px',
+                    padding: '12px',
+                    fontSize: '1.4rem',
+                    fontFamily: 'Dongle, sans-serif',
+                    border: '2px solid #e5e7eb',
+                    borderRadius: '8px',
+                    resize: 'vertical'
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="guild-selection-actions">
+              <button
+                className="join-guild-btn"
+                onClick={handleSendApprovalRequest}
+                style={{
+                  padding: '12px 24px',
+                  background: 'linear-gradient(135deg, #4e98ff, #3b82f6)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '50px',
+                  fontSize: '1.4rem',
+                  fontWeight: '600',
+                  cursor: 'pointer'
+                }}
+              >
+                📤 Send Request
+              </button>
+              <button
+                className="cancel-btn"
+                onClick={() => {
+                  setShowApprovalRequestModal(false);
+                  setApprovalMessage('');
+                }}
+                style={{
+                  padding: '12px 24px',
+                  background: '#6b7280',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '50px',
+                  fontSize: '1.4rem',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  marginLeft: '12px'
+                }}
+              >
+                Cancel
               </button>
             </div>
           </div>

@@ -63,11 +63,32 @@ interface Skill {
     breakPoints?: Array<{ layer: number; position: number }>;
   }>;
   prerequisites?: string[];
+  minAP?: number;
+  maxAP?: number;
   createdAt: string;
   updatedAt: string;
 }
 
-type AdminSection = 'dashboard' | 'guilds' | 'users' | 'skilltree' | 'settings';
+interface ApprovalRequest {
+  _id: string;
+  userId: string;
+  skillId: string;
+  message?: string;
+  status: 'pending' | 'approved' | 'rejected';
+  rewardAP?: number;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  user?: {
+    username: string;
+    nickname?: string;
+    discriminator: string;
+    avatar: string | null;
+  };
+}
+
+type AdminSection = 'dashboard' | 'guilds' | 'users' | 'skilltree' | 'approvals' | 'settings';
 
 function AdminPage() {
   const navigate = useNavigate();
@@ -124,6 +145,8 @@ function AdminPage() {
   const [skillPosition, setSkillPosition] = useState(0);
   const [skillNodeColor, setSkillNodeColor] = useState<'yellow' | 'blue' | 'green' | 'white' | 'purple'>('blue');
   const [skillPrerequisites, setSkillPrerequisites] = useState<string[]>([]);
+  const [skillMinAP, setSkillMinAP] = useState<number | undefined>(undefined);
+  const [skillMaxAP, setSkillMaxAP] = useState<number | undefined>(undefined);
   const [showPrerequisiteModal, setShowPrerequisiteModal] = useState(false);
   const [showConnectionModal, setShowConnectionModal] = useState(false);
   const [connectionSource, setConnectionSource] = useState<Skill | null>(null);
@@ -142,6 +165,12 @@ function AdminPage() {
   const [tempBreakPoints, setTempBreakPoints] = useState<{ 
     [connectionKey: string]: Array<{ layer: number; position: number }> 
   }>({});
+
+  // Approval Request states
+  const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>([]);
+  const [showApproveModal, setShowApproveModal] = useState(false);
+  const [selectedApprovalRequest, setSelectedApprovalRequest] = useState<ApprovalRequest | null>(null);
+  const [approveAPAmount, setApproveAPAmount] = useState(0);
 
   useEffect(() => {
     checkAuth();
@@ -164,6 +193,12 @@ function AdminPage() {
       loadGuildMembers(selectedGuild._id);
     }
   }, [selectedGuild]);
+
+  useEffect(() => {
+    if (activeSection === 'approvals' && user) {
+      loadApprovalRequests();
+    }
+  }, [activeSection, user]);
 
   // Prevent page scroll when mouse is over skill tree
   useEffect(() => {
@@ -349,7 +384,9 @@ function AdminPage() {
         layer: skillLayer,
         position: skillPosition,
         nodeColor: skillNodeColor,
-        prerequisites: skillPrerequisites
+        prerequisites: skillPrerequisites,
+        minAP: skillNodeColor === 'green' ? skillMinAP : undefined,
+        maxAP: skillNodeColor === 'green' ? skillMaxAP : undefined
       });
 
       alert('Skill created successfully!');
@@ -379,7 +416,9 @@ function AdminPage() {
         layer: skillLayer,
         position: skillPosition,
         nodeColor: skillNodeColor,
-        prerequisites: skillPrerequisites
+        prerequisites: skillPrerequisites,
+        minAP: skillNodeColor === 'green' ? skillMinAP : undefined,
+        maxAP: skillNodeColor === 'green' ? skillMaxAP : undefined
       });
 
       alert('Skill updated successfully!');
@@ -460,6 +499,8 @@ function AdminPage() {
     setSkillPosition(skill.position);
     setSkillNodeColor(skill.nodeColor);
     setSkillPrerequisites(skill.prerequisites || []);
+    setSkillMinAP(skill.minAP);
+    setSkillMaxAP(skill.maxAP);
     setEditingSkill(true);
     setShowSkillDetail(true);
   };
@@ -475,6 +516,8 @@ function AdminPage() {
     setSkillPosition(0);
     setSkillNodeColor('blue');
     setSkillPrerequisites([]);
+    setSkillMinAP(undefined);
+    setSkillMaxAP(undefined);
     setSelectedSkill(null);
     setEditingSkill(false);
   };
@@ -862,6 +905,49 @@ function AdminPage() {
     }
   };
 
+  const loadApprovalRequests = async () => {
+    try {
+      const response = await axios.get('/api/approval-requests');
+      if (response.data.success) {
+        setApprovalRequests(response.data.requests);
+      }
+    } catch (error) {
+      console.error('Error loading approval requests:', error);
+      alert('Failed to load approval requests');
+    }
+  };
+
+  const handleApproveRequest = async (request: ApprovalRequest) => {
+    const skill = skills.find(s => s._id === request.skillId);
+    setSelectedApprovalRequest(request);
+    setApproveAPAmount(skill?.minAP || 0);
+    setShowApproveModal(true);
+  };
+
+  const handleConfirmApprove = async () => {
+    if (!selectedApprovalRequest) return;
+    if (approveAPAmount < 0) {
+      alert('AP amount must be non-negative');
+      return;
+    }
+
+    try {
+      const response = await axios.post(`/api/approval-requests/${selectedApprovalRequest._id}/approve`, {
+        rewardAP: approveAPAmount
+      });
+      if (response.data.success) {
+        alert('Request approved successfully!');
+        setShowApproveModal(false);
+        setSelectedApprovalRequest(null);
+        setApproveAPAmount(0);
+        loadApprovalRequests();
+      }
+    } catch (error: any) {
+      console.error('Error approving request:', error);
+      alert(error.response?.data?.error || 'Failed to approve request');
+    }
+  };
+
   const handleUpdateGuildLeaders = async (guildId: string, newLeaderIds: string[]) => {
     try {
       const response = await axios.put(`/api/guilds/${guildId}`, {
@@ -1010,6 +1096,12 @@ function AdminPage() {
             🌳 Skill Tree
           </button>
         )}
+        <button 
+          className={`nav-tab ${activeSection === 'approvals' ? 'active' : ''}`}
+          onClick={() => setActiveSection('approvals')}
+        >
+          ✅ Approvals
+        </button>
         <button 
           className={`nav-tab ${activeSection === 'settings' ? 'active' : ''}`}
           onClick={() => setActiveSection('settings')}
@@ -2222,6 +2314,85 @@ function AdminPage() {
           </div>
         )}
 
+        {/* Approvals Section */}
+        {activeSection === 'approvals' && (
+          <div className="approvals-section">
+            <h2 className="section-title">Approval Requests</h2>
+            {approvalRequests.length === 0 ? (
+              <p className="placeholder-text">No pending approval requests.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {approvalRequests.map((request) => {
+                  const skill = skills.find(s => s._id === request.skillId);
+                  const displayName = request.user?.nickname || request.user?.username || 'Unknown User';
+                  return (
+                    <div 
+                      key={request._id} 
+                      style={{
+                        padding: '20px',
+                        background: 'white',
+                        border: '2px solid #e5e7eb',
+                        borderRadius: '12px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '12px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>
+                            {displayName}
+                            {request.user?.discriminator && <span style={{ color: '#6b7280' }}>#{request.user.discriminator}</span>}
+                          </div>
+                          <div style={{ fontSize: '16px', color: '#4e98ff', marginBottom: '8px' }}>
+                            Quest: {skill?.title || 'Unknown Skill'}
+                          </div>
+                          {request.message && (
+                            <div style={{ 
+                              padding: '12px', 
+                              background: '#f3f4f6', 
+                              borderRadius: '8px',
+                              fontSize: '14px',
+                              color: '#374151',
+                              marginTop: '8px'
+                            }}>
+                              {request.message}
+                            </div>
+                          )}
+                          {skill && (skill.minAP !== undefined || skill.maxAP !== undefined) && (
+                            <div style={{ fontSize: '14px', color: '#6b7280', marginTop: '8px' }}>
+                              Recommended AP: {skill.minAP ?? 0} - {skill.maxAP ?? 'N/A'}
+                            </div>
+                          )}
+                          <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '8px' }}>
+                            Requested: {new Date(request.createdAt).toLocaleString()}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleApproveRequest(request)}
+                          style={{
+                            padding: '10px 20px',
+                            background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '8px',
+                            fontSize: '14px',
+                            fontWeight: '600',
+                            cursor: 'pointer',
+                            boxShadow: '0 2px 8px rgba(34, 197, 94, 0.3)'
+                          }}
+                        >
+                          ✅ Approve
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Settings Section */}
         {activeSection === 'settings' && (
           <div className="settings-section">
@@ -2423,16 +2594,53 @@ function AdminPage() {
                 </div>
 
                 <div className="form-row">
-                  <div className="form-group">
-                    <label>Cost (Asset Points) *</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={skillCost}
-                      onChange={(e) => setSkillCost(Number(e.target.value))}
+                  <div className="form-group full-width">
+                    <label>Node Color/Type *</label>
+                    <select
+                      value={skillNodeColor}
+                      onChange={(e) => {
+                        const newColor = e.target.value as any;
+                        setSkillNodeColor(newColor);
+                        // Reset cost and AP fields when changing node type
+                        if (newColor === 'green') {
+                          // Quest node - no cost, but may have min/max AP
+                          setSkillCost(0);
+                        } else if (newColor === 'white' || newColor === 'yellow') {
+                          // Adventure or Marker - no cost
+                          setSkillCost(0);
+                          setSkillMinAP(undefined);
+                          setSkillMaxAP(undefined);
+                        } else {
+                          // Asset or EXTRA - may have cost
+                          setSkillMinAP(undefined);
+                          setSkillMaxAP(undefined);
+                        }
+                      }}
                       className="skill-input"
-                    />
+                    >
+                      <option value="blue">Blue (Asset)</option>
+                      <option value="yellow">Yellow (Marker)</option>
+                      <option value="green">Green (Quest)</option>
+                      <option value="white">White (Adventure)</option>
+                      <option value="purple">Purple (EXTRA)</option>
+                    </select>
                   </div>
+                </div>
+
+                <div className="form-row">
+                  {/* Cost field - only show for Asset (blue) and EXTRA (purple) nodes */}
+                  {(skillNodeColor === 'blue' || skillNodeColor === 'purple') && (
+                    <div className="form-group">
+                      <label>Cost (Asset Points) *</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={skillCost}
+                        onChange={(e) => setSkillCost(Number(e.target.value))}
+                        className="skill-input"
+                      />
+                    </div>
+                  )}
                   <div className="form-group">
                     <label>Layer (0=center, 1-7) *</label>
                     <input
@@ -2458,22 +2666,47 @@ function AdminPage() {
                   </div>
                 </div>
 
-                <div className="form-row">
-                  <div className="form-group full-width">
-                    <label>Node Color *</label>
-                    <select
-                      value={skillNodeColor}
-                      onChange={(e) => setSkillNodeColor(e.target.value as any)}
-                      className="skill-input"
-                    >
-                      <option value="blue">Blue</option>
-                      <option value="yellow">Yellow</option>
-                      <option value="green">Green</option>
-                      <option value="white">White</option>
-                      <option value="purple">Purple</option>
-                    </select>
+                {/* Quest Node AP Guidelines - only show for Quest (green) nodes */}
+                {skillNodeColor === 'green' && (
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>Min AP (Recommended)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={skillMinAP ?? ''}
+                        onChange={(e) => setSkillMinAP(e.target.value ? Number(e.target.value) : undefined)}
+                        placeholder="Optional"
+                        className="skill-input"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label>Max AP (Recommended)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={skillMaxAP ?? ''}
+                        onChange={(e) => setSkillMaxAP(e.target.value ? Number(e.target.value) : undefined)}
+                        placeholder="Optional"
+                        className="skill-input"
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
+
+                {/* Info message for free nodes */}
+                {(skillNodeColor === 'white' || skillNodeColor === 'yellow') && (
+                  <div style={{ 
+                    padding: '12px', 
+                    background: '#dbeafe', 
+                    borderRadius: '8px',
+                    marginBottom: '16px',
+                    fontSize: '14px',
+                    color: '#1e40af'
+                  }}>
+                    ℹ️ {skillNodeColor === 'white' ? 'Adventure' : 'Marker'} nodes are free and do not require Asset Points.
+                  </div>
+                )}
 
                 <div className="form-row">
                   <div className="form-group full-width">
@@ -2488,31 +2721,36 @@ function AdminPage() {
                   </div>
                 </div>
 
-                <div className="form-row">
-                  <div className="form-group full-width">
-                    <label>Content - YouTube Links (one per line)</label>
-                    <textarea
-                      value={skillContentYouTube}
-                      onChange={(e) => setSkillContentYouTube(e.target.value)}
-                      placeholder="Enter YouTube URLs, one per line&#10;https://youtube.com/watch?v=..."
-                      className="skill-input"
-                      rows={3}
-                    />
-                  </div>
-                </div>
+                {/* Content fields - hidden for Adventure (white) nodes */}
+                {skillNodeColor !== 'white' && (
+                  <>
+                    <div className="form-row">
+                      <div className="form-group full-width">
+                        <label>Content - YouTube Links (one per line)</label>
+                        <textarea
+                          value={skillContentYouTube}
+                          onChange={(e) => setSkillContentYouTube(e.target.value)}
+                          placeholder="Enter YouTube URLs, one per line&#10;https://youtube.com/watch?v=..."
+                          className="skill-input"
+                          rows={3}
+                        />
+                      </div>
+                    </div>
 
-                <div className="form-row">
-                  <div className="form-group full-width">
-                    <label>Content - Google Drive Links (one per line)</label>
-                    <textarea
-                      value={skillContentGoogleDrive}
-                      onChange={(e) => setSkillContentGoogleDrive(e.target.value)}
-                      placeholder="Enter Google Drive URLs, one per line&#10;https://drive.google.com/..."
-                      className="skill-input"
-                      rows={3}
-                    />
-                  </div>
-                </div>
+                    <div className="form-row">
+                      <div className="form-group full-width">
+                        <label>Content - Google Drive Links (one per line)</label>
+                        <textarea
+                          value={skillContentGoogleDrive}
+                          onChange={(e) => setSkillContentGoogleDrive(e.target.value)}
+                          placeholder="Enter Google Drive URLs, one per line&#10;https://drive.google.com/..."
+                          className="skill-input"
+                          rows={3}
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="modal-actions">
@@ -2746,16 +2984,53 @@ function AdminPage() {
                     </div>
 
                     <div className="form-row">
-                      <div className="form-group">
-                        <label>Cost (Asset Points) *</label>
-                        <input
-                          type="number"
-                          min="0"
-                          value={skillCost}
-                          onChange={(e) => setSkillCost(Number(e.target.value))}
+                      <div className="form-group full-width">
+                        <label>Node Color/Type *</label>
+                        <select
+                          value={skillNodeColor}
+                          onChange={(e) => {
+                            const newColor = e.target.value as any;
+                            setSkillNodeColor(newColor);
+                            // Reset cost and AP fields when changing node type
+                            if (newColor === 'green') {
+                              // Quest node - no cost, but may have min/max AP
+                              setSkillCost(0);
+                            } else if (newColor === 'white' || newColor === 'yellow') {
+                              // Adventure or Marker - no cost
+                              setSkillCost(0);
+                              setSkillMinAP(undefined);
+                              setSkillMaxAP(undefined);
+                            } else {
+                              // Asset or EXTRA - may have cost
+                              setSkillMinAP(undefined);
+                              setSkillMaxAP(undefined);
+                            }
+                          }}
                           className="skill-input"
-                        />
+                        >
+                          <option value="blue">Blue (Asset)</option>
+                          <option value="yellow">Yellow (Marker)</option>
+                          <option value="green">Green (Quest)</option>
+                          <option value="white">White (Adventure)</option>
+                          <option value="purple">Purple (EXTRA)</option>
+                        </select>
                       </div>
+                    </div>
+
+                    <div className="form-row">
+                      {/* Cost field - only show for Asset (blue) and EXTRA (purple) nodes */}
+                      {(skillNodeColor === 'blue' || skillNodeColor === 'purple') && (
+                        <div className="form-group">
+                          <label>Cost (Asset Points) *</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={skillCost}
+                            onChange={(e) => setSkillCost(Number(e.target.value))}
+                            className="skill-input"
+                          />
+                        </div>
+                      )}
                       <div className="form-group">
                         <label>Layer (0-7) *</label>
                         <input
@@ -2781,22 +3056,47 @@ function AdminPage() {
                       </div>
                     </div>
 
-                    <div className="form-row">
-                      <div className="form-group full-width">
-                        <label>Node Color *</label>
-                        <select
-                          value={skillNodeColor}
-                          onChange={(e) => setSkillNodeColor(e.target.value as any)}
-                          className="skill-input"
-                        >
-                          <option value="blue">Blue</option>
-                          <option value="yellow">Yellow</option>
-                          <option value="green">Green</option>
-                          <option value="white">White</option>
-                          <option value="purple">Purple</option>
-                        </select>
+                    {/* Quest Node AP Guidelines - only show for Quest (green) nodes */}
+                    {skillNodeColor === 'green' && (
+                      <div className="form-row">
+                        <div className="form-group">
+                          <label>Min AP (Recommended)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={skillMinAP ?? ''}
+                            onChange={(e) => setSkillMinAP(e.target.value ? Number(e.target.value) : undefined)}
+                            placeholder="Optional"
+                            className="skill-input"
+                          />
+                        </div>
+                        <div className="form-group">
+                          <label>Max AP (Recommended)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={skillMaxAP ?? ''}
+                            onChange={(e) => setSkillMaxAP(e.target.value ? Number(e.target.value) : undefined)}
+                            placeholder="Optional"
+                            className="skill-input"
+                          />
+                        </div>
                       </div>
-                    </div>
+                    )}
+
+                    {/* Info message for free nodes */}
+                    {(skillNodeColor === 'white' || skillNodeColor === 'yellow') && (
+                      <div style={{ 
+                        padding: '12px', 
+                        background: '#dbeafe', 
+                        borderRadius: '8px',
+                        marginBottom: '16px',
+                        fontSize: '14px',
+                        color: '#1e40af'
+                      }}>
+                        ℹ️ {skillNodeColor === 'white' ? 'Adventure' : 'Marker'} nodes are free and do not require Asset Points.
+                      </div>
+                    )}
 
                     <div className="form-row">
                       <div className="form-group full-width">
@@ -2811,31 +3111,36 @@ function AdminPage() {
                       </div>
                     </div>
 
-                    <div className="form-row">
-                      <div className="form-group full-width">
-                        <label>Content - YouTube Links (one per line)</label>
-                        <textarea
-                          value={skillContentYouTube}
-                          onChange={(e) => setSkillContentYouTube(e.target.value)}
-                          className="skill-input"
-                          rows={3}
-                          placeholder="Enter YouTube URLs, one per line"
-                        />
-                      </div>
-                    </div>
+                    {/* Content fields - hidden for Adventure (white) nodes */}
+                    {skillNodeColor !== 'white' && (
+                      <>
+                        <div className="form-row">
+                          <div className="form-group full-width">
+                            <label>Content - YouTube Links (one per line)</label>
+                            <textarea
+                              value={skillContentYouTube}
+                              onChange={(e) => setSkillContentYouTube(e.target.value)}
+                              className="skill-input"
+                              rows={3}
+                              placeholder="Enter YouTube URLs, one per line"
+                            />
+                          </div>
+                        </div>
 
-                    <div className="form-row">
-                      <div className="form-group full-width">
-                        <label>Content - Google Drive Links (one per line)</label>
-                        <textarea
-                          value={skillContentGoogleDrive}
-                          onChange={(e) => setSkillContentGoogleDrive(e.target.value)}
-                          className="skill-input"
-                          rows={3}
-                          placeholder="Enter Google Drive URLs, one per line"
-                        />
-                      </div>
-                    </div>
+                        <div className="form-row">
+                          <div className="form-group full-width">
+                            <label>Content - Google Drive Links (one per line)</label>
+                            <textarea
+                              value={skillContentGoogleDrive}
+                              onChange={(e) => setSkillContentGoogleDrive(e.target.value)}
+                              className="skill-input"
+                              rows={3}
+                              placeholder="Enter Google Drive URLs, one per line"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
 
                     <div className="form-row">
                       <div className="form-group full-width">
@@ -3085,6 +3390,72 @@ function AdminPage() {
               }}>
                 Cancel
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Approve Modal */}
+        {showApproveModal && selectedApprovalRequest && (
+          <div className="modal-overlay" onClick={() => setShowApproveModal(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+              <h3>Approve Request</h3>
+              <p style={{ marginBottom: '16px', fontSize: '14px', color: '#6b7280' }}>
+                Enter the Asset Points to reward for completing this quest:
+              </p>
+              {(() => {
+                const skill = skills.find(s => s._id === selectedApprovalRequest.skillId);
+                return skill && (skill.minAP !== undefined || skill.maxAP !== undefined) && (
+                  <div style={{ 
+                    padding: '12px', 
+                    background: '#fef3c7', 
+                    borderRadius: '8px',
+                    marginBottom: '16px',
+                    fontSize: '14px',
+                    color: '#92400e'
+                  }}>
+                    💡 Recommended: {skill.minAP ?? 0} - {skill.maxAP ?? 'N/A'} AP
+                  </div>
+                );
+              })()}
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
+                  Asset Points:
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={approveAPAmount}
+                  onChange={(e) => setApproveAPAmount(Number(e.target.value))}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    fontSize: '16px',
+                    border: '2px solid #e5e7eb',
+                    borderRadius: '8px'
+                  }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                <button
+                  className="cancel-btn"
+                  onClick={() => {
+                    setShowApproveModal(false);
+                    setSelectedApprovalRequest(null);
+                    setApproveAPAmount(0);
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="submit-btn"
+                  onClick={handleConfirmApprove}
+                  style={{
+                    background: 'linear-gradient(135deg, #22c55e, #16a34a)'
+                  }}
+                >
+                  Approve & Reward
+                </button>
+              </div>
             </div>
           </div>
         )}

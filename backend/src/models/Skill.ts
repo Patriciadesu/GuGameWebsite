@@ -19,6 +19,8 @@ export interface ISkill extends Document {
     breakPoints?: Array<{ layer: number; position: number }>; // Break points on circles (layer + angle)
   }>;
   prerequisites?: string[]; // Array of skill IDs that must be unlocked first
+  minAP?: number; // Minimum recommended AP reward for quest nodes
+  maxAP?: number; // Maximum recommended AP reward for quest nodes
   createdAt: Date;
   updatedAt: Date;
 }
@@ -43,6 +45,8 @@ const SkillSchema = new Schema<ISkill>(
       breakPoints: [{ layer: Number, position: Number }]
     }],
     prerequisites: [{ type: String, default: [] }],
+    minAP: { type: Number, default: undefined, min: 0 },
+    maxAP: { type: Number, default: undefined, min: 0 },
   },
   { timestamps: true }
 );

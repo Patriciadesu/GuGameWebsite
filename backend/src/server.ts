@@ -14,6 +14,7 @@ import User, { IUser } from './models/User';
 import Guild, { IGuild } from './models/Guild';
 import Skill, { ISkill } from './models/Skill';
 import SkillTreeSettings from './models/SkillTreeSettings';
+import ApprovalRequest from './models/ApprovalRequest';
 import { VoiceTracker } from './services/voiceTracker';
 
 // Extend Express types for Passport
@@ -1214,17 +1215,22 @@ app.post('/api/skills/:id/unlock', requireAuth, async (req: Request, res: Respon
       }
     }
 
-    // Check if user has enough asset points
-    if (user.assetPoints < skill.cost) {
-      return res.status(400).json({ 
-        error: 'Insufficient asset points',
-        required: skill.cost,
-        available: user.assetPoints
-      });
+    // Check if user has enough asset points (skip for Adventure and Marker nodes)
+    const isAdventure = skill.nodeType === 'adventure' || skill.nodeColor === 'white';
+    const isMarker = skill.nodeType === 'marker' || skill.nodeColor === 'yellow';
+    if (!isAdventure && !isMarker) {
+      if (user.assetPoints < skill.cost) {
+        return res.status(400).json({ 
+          error: 'Insufficient asset points',
+          required: skill.cost,
+          available: user.assetPoints
+        });
+      }
+      // Deduct asset points for non-Adventure and non-Marker nodes
+      user.assetPoints -= skill.cost;
     }
 
     // Unlock the skill
-    user.assetPoints -= skill.cost;
     if (!user.unlockedSkills) {
       user.unlockedSkills = [];
     }
@@ -1257,6 +1263,162 @@ app.get('/api/user/unlocked-skills', requireAuth, async (req: Request, res: Resp
   } catch (error: any) {
     console.error('Error fetching unlocked skills:', error);
     res.status(500).json({ error: 'Failed to fetch unlocked skills' });
+  }
+});
+
+// Send approval request for quest node (authenticated users)
+app.post('/api/skills/:id/approval-request', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const skillId = req.params.id;
+    const userId = req.user!.id;
+    const { message } = req.body;
+
+    // Get user and skill
+    const user = await User.findOne({ discordId: userId });
+    const skill = await Skill.findById(skillId);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (!skill) {
+      return res.status(404).json({ error: 'Skill not found' });
+    }
+
+    // Check if skill is a quest node
+    const isQuest = skill.nodeType === 'quest' || skill.nodeColor === 'green';
+    if (!isQuest) {
+      return res.status(400).json({ error: 'Approval requests are only for quest nodes' });
+    }
+
+    // Check if already unlocked
+    const unlockedSkills = user.unlockedSkills || [];
+    if (unlockedSkills.includes(skillId)) {
+      return res.status(400).json({ error: 'Skill already unlocked' });
+    }
+
+    // Check if there's already a pending request for this skill by this user
+    const existingRequest = await ApprovalRequest.findOne({
+      userId,
+      skillId,
+      status: 'pending'
+    });
+
+    if (existingRequest) {
+      return res.status(400).json({ error: 'You already have a pending approval request for this skill' });
+    }
+
+    // Create approval request
+    const approvalRequest = new ApprovalRequest({
+      userId,
+      skillId,
+      message: message || '',
+      status: 'pending'
+    });
+
+    await approvalRequest.save();
+
+    res.json({ 
+      success: true, 
+      message: 'Approval request sent successfully',
+      requestId: approvalRequest._id
+    });
+  } catch (error: any) {
+    console.error('Error creating approval request:', error);
+    res.status(500).json({ error: error.message || 'Failed to create approval request' });
+  }
+});
+
+// Get all pending approval requests (admin only)
+app.get('/api/approval-requests', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const requests = await ApprovalRequest.find({ status: 'pending' })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Since userId is a discordId string, we need to manually get user info
+    const requestsWithUserInfo = await Promise.all(requests.map(async (req: any) => {
+      const user = await User.findOne({ discordId: req.userId });
+      return {
+        ...req,
+        user: user ? {
+          username: user.username,
+          nickname: user.nickname,
+          discriminator: user.discriminator,
+          avatar: user.avatar
+        } : null
+      };
+    }));
+
+    res.json({ 
+      success: true, 
+      requests: requestsWithUserInfo
+    });
+  } catch (error: any) {
+    console.error('Error fetching approval requests:', error);
+    res.status(500).json({ error: 'Failed to fetch approval requests' });
+  }
+});
+
+// Approve an approval request (admin only)
+app.post('/api/approval-requests/:id/approve', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const requestId = req.params.id;
+    const { rewardAP } = req.body;
+    const adminId = req.user!.id;
+
+    if (!rewardAP || rewardAP < 0) {
+      return res.status(400).json({ error: 'Valid reward AP amount is required' });
+    }
+
+    const approvalRequest = await ApprovalRequest.findById(requestId);
+    if (!approvalRequest) {
+      return res.status(404).json({ error: 'Approval request not found' });
+    }
+
+    if (approvalRequest.status !== 'pending') {
+      return res.status(400).json({ error: 'This request has already been processed' });
+    }
+
+    // Get user and skill
+    const user = await User.findOne({ discordId: approvalRequest.userId });
+    const skill = await Skill.findById(approvalRequest.skillId);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (!skill) {
+      return res.status(404).json({ error: 'Skill not found' });
+    }
+
+    // Update approval request
+    approvalRequest.status = 'approved';
+    approvalRequest.rewardAP = rewardAP;
+    approvalRequest.reviewedBy = adminId;
+    approvalRequest.reviewedAt = new Date();
+    await approvalRequest.save();
+
+    // Unlock the skill for the user
+    if (!user.unlockedSkills) {
+      user.unlockedSkills = [];
+    }
+    if (!user.unlockedSkills.includes(approvalRequest.skillId)) {
+      user.unlockedSkills.push(approvalRequest.skillId);
+    }
+
+    // Award AP
+    user.assetPoints = (user.assetPoints || 0) + rewardAP;
+    await user.save();
+
+    res.json({ 
+      success: true, 
+      message: 'Approval request approved successfully',
+      remainingAssetPoints: user.assetPoints
+    });
+  } catch (error: any) {
+    console.error('Error approving request:', error);
+    res.status(500).json({ error: error.message || 'Failed to approve request' });
   }
 });
 

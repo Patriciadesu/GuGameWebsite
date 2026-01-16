@@ -971,6 +971,39 @@ app.delete('/api/skills/:id/connections/:targetSkillId', requireSuperAdmin, asyn
 // ==================== SKILL TREE SETTINGS API ====================
 
 // Get skill tree settings (authenticated users can view)
+// Migrate existing skills to set nodeType based on nodeColor (super-admin only)
+app.post('/api/skills/migrate-node-type', requireSuperAdmin, async (req: Request, res: Response) => {
+  try {
+    const colorToTypeMap: { [key: string]: 'adventure' | 'asset' | 'quest' | 'marker' | 'EXTRA' } = {
+      'white': 'adventure',
+      'blue': 'asset',
+      'green': 'quest',
+      'yellow': 'marker',
+      'purple': 'EXTRA'
+    };
+
+    const skills = await Skill.find({});
+    let updatedCount = 0;
+
+    for (const skill of skills) {
+      if (!skill.nodeType && skill.nodeColor) {
+        skill.nodeType = colorToTypeMap[skill.nodeColor] || 'asset';
+        await skill.save();
+        updatedCount++;
+      }
+    }
+
+    res.json({ 
+      success: true, 
+      message: `Updated ${updatedCount} skills with nodeType based on nodeColor`,
+      updatedCount 
+    });
+  } catch (error) {
+    console.error('Error migrating node types:', error);
+    res.status(500).json({ error: 'Failed to migrate node types' });
+  }
+});
+
 app.get('/api/skill-tree-settings', requireAuth, async (req: Request, res: Response) => {
   try {
     let settings = await SkillTreeSettings.findOne();
@@ -1118,6 +1151,112 @@ const upload = multer({
     } else {
       cb(new Error('Only image files are allowed!'));
     }
+  }
+});
+
+// Unlock skill endpoint (authenticated users)
+app.post('/api/skills/:id/unlock', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const skillId = req.params.id;
+    const userId = req.user!.id;
+
+    // Get user and skill
+    const user = await User.findOne({ discordId: userId });
+    const skill = await Skill.findById(skillId);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (!skill) {
+      return res.status(404).json({ error: 'Skill not found' });
+    }
+
+    // Check if already unlocked
+    const unlockedSkills = user.unlockedSkills || [];
+    if (unlockedSkills.includes(skillId)) {
+      return res.status(400).json({ error: 'Skill already unlocked' });
+    }
+
+    // Check prerequisites from prerequisites array
+    if (skill.prerequisites && skill.prerequisites.length > 0) {
+      const missingPrerequisites = skill.prerequisites.filter(
+        (prereqId: string) => !unlockedSkills.includes(prereqId)
+      );
+      if (missingPrerequisites.length > 0) {
+        return res.status(400).json({ 
+          error: 'Prerequisites not met',
+          missingPrerequisites 
+        });
+      }
+    }
+
+    // Check prerequisites from connections (if any skill has a connection pointing to this skill, it's a prerequisite)
+    const allSkills = await Skill.find({});
+    const prerequisiteSkillsFromConnections = allSkills.filter(
+      (s) => s.connections && s.connections.some((conn: any) => conn.targetSkillId?.toString() === skillId)
+    );
+    
+    if (prerequisiteSkillsFromConnections.length > 0) {
+      const missingConnectionPrerequisites = prerequisiteSkillsFromConnections
+        .filter((prereqSkill) => !unlockedSkills.includes(prereqSkill._id.toString()))
+        .map((prereqSkill) => prereqSkill._id.toString());
+      
+      if (missingConnectionPrerequisites.length > 0) {
+        const missingSkillTitles = prerequisiteSkillsFromConnections
+          .filter((prereqSkill) => !unlockedSkills.includes(prereqSkill._id.toString()))
+          .map((s) => s.title);
+        return res.status(400).json({ 
+          error: 'Connection prerequisites not met',
+          missingPrerequisites: missingConnectionPrerequisites,
+          missingSkillTitles
+        });
+      }
+    }
+
+    // Check if user has enough asset points
+    if (user.assetPoints < skill.cost) {
+      return res.status(400).json({ 
+        error: 'Insufficient asset points',
+        required: skill.cost,
+        available: user.assetPoints
+      });
+    }
+
+    // Unlock the skill
+    user.assetPoints -= skill.cost;
+    if (!user.unlockedSkills) {
+      user.unlockedSkills = [];
+    }
+    user.unlockedSkills.push(skillId);
+    await user.save();
+
+    res.json({ 
+      success: true, 
+      message: 'Skill unlocked successfully',
+      remainingAssetPoints: user.assetPoints
+    });
+  } catch (error: any) {
+    console.error('Error unlocking skill:', error);
+    res.status(500).json({ error: error.message || 'Failed to unlock skill' });
+  }
+});
+
+// Get user's unlocked skills (authenticated users)
+app.get('/api/user/unlocked-skills', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const user = await User.findOne({ discordId: req.user!.id }).select('unlockedSkills');
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({ 
+      success: true, 
+      unlockedSkills: user.unlockedSkills || [] 
+    });
+  } catch (error: any) {
+    console.error('Error fetching unlocked skills:', error);
+    res.status(500).json({ error: 'Failed to fetch unlocked skills' });
   }
 });
 

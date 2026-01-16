@@ -17,6 +17,7 @@ export interface IUser extends Document {
   voiceMinutesToday: number; // Minutes spent in voice today (resets at midnight UTC+7)
   totalVoiceMinutes: number; // Total minutes spent in voice (cumulative)
   lastVoiceTimeReset: Date; // Last time voiceMinutesToday was reset
+  unlockedSkills?: string[]; // Array of unlocked skill IDs
   createdAt: Date;
   updatedAt: Date;
 }
@@ -89,6 +90,10 @@ const UserSchema = new Schema<IUser>(
     lastVoiceTimeReset: {
       type: Date,
       default: () => new Date()
+    },
+    unlockedSkills: {
+      type: [String],
+      default: []
     }
   },
   {

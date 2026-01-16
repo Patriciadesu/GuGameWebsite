@@ -48,13 +48,14 @@ interface Skill {
   title: string;
   description: string;
   cost: number;
-  previewClip?: string;
-  contentYouTube?: string;
-  contentGoogleDrive?: string;
+  previewClip?: string[];
+  contentYouTube?: string[];
+  contentGoogleDrive?: string[];
   layer: number;
   position: number;
   isActive: boolean;
   nodeColor: 'yellow' | 'blue' | 'green' | 'white' | 'purple';
+  nodeType?: 'adventure' | 'asset' | 'quest' | 'marker' | 'EXTRA';
   connections?: Array<{
     targetSkillId: string;
     connectionType: 'normal' | 'special';
@@ -122,6 +123,8 @@ function AdminPage() {
   const [skillLayer, setSkillLayer] = useState(1);
   const [skillPosition, setSkillPosition] = useState(0);
   const [skillNodeColor, setSkillNodeColor] = useState<'yellow' | 'blue' | 'green' | 'white' | 'purple'>('blue');
+  const [skillPrerequisites, setSkillPrerequisites] = useState<string[]>([]);
+  const [showPrerequisiteModal, setShowPrerequisiteModal] = useState(false);
   const [showConnectionModal, setShowConnectionModal] = useState(false);
   const [connectionSource, setConnectionSource] = useState<Skill | null>(null);
   const [layerGap, setLayerGap] = useState(120); // Legacy: kept for backward compatibility
@@ -340,12 +343,13 @@ function AdminPage() {
         title: skillTitle,
         description: skillDescription,
         cost: skillCost,
-        previewClip: skillPreviewClip || undefined,
-        contentYouTube: skillContentYouTube || undefined,
-        contentGoogleDrive: skillContentGoogleDrive || undefined,
+        previewClip: skillPreviewClip ? skillPreviewClip.split('\n').filter(url => url.trim()) : undefined,
+        contentYouTube: skillContentYouTube ? skillContentYouTube.split('\n').filter(url => url.trim()) : undefined,
+        contentGoogleDrive: skillContentGoogleDrive ? skillContentGoogleDrive.split('\n').filter(url => url.trim()) : undefined,
         layer: skillLayer,
         position: skillPosition,
-        nodeColor: skillNodeColor
+        nodeColor: skillNodeColor,
+        prerequisites: skillPrerequisites
       });
 
       alert('Skill created successfully!');
@@ -369,12 +373,13 @@ function AdminPage() {
         title: skillTitle,
         description: skillDescription,
         cost: skillCost,
-        previewClip: skillPreviewClip || undefined,
-        contentYouTube: skillContentYouTube || undefined,
-        contentGoogleDrive: skillContentGoogleDrive || undefined,
+        previewClip: skillPreviewClip ? skillPreviewClip.split('\n').filter(url => url.trim()) : undefined,
+        contentYouTube: skillContentYouTube ? skillContentYouTube.split('\n').filter(url => url.trim()) : undefined,
+        contentGoogleDrive: skillContentGoogleDrive ? skillContentGoogleDrive.split('\n').filter(url => url.trim()) : undefined,
         layer: skillLayer,
         position: skillPosition,
-        nodeColor: skillNodeColor
+        nodeColor: skillNodeColor,
+        prerequisites: skillPrerequisites
       });
 
       alert('Skill updated successfully!');
@@ -448,12 +453,13 @@ function AdminPage() {
     setSkillTitle(skill.title);
     setSkillDescription(skill.description);
     setSkillCost(skill.cost);
-    setSkillPreviewClip(skill.previewClip || '');
-    setSkillContentYouTube(skill.contentYouTube || '');
-    setSkillContentGoogleDrive(skill.contentGoogleDrive || '');
+    setSkillPreviewClip(Array.isArray(skill.previewClip) ? skill.previewClip.join('\n') : (skill.previewClip || ''));
+    setSkillContentYouTube(Array.isArray(skill.contentYouTube) ? skill.contentYouTube.join('\n') : (skill.contentYouTube || ''));
+    setSkillContentGoogleDrive(Array.isArray(skill.contentGoogleDrive) ? skill.contentGoogleDrive.join('\n') : (skill.contentGoogleDrive || ''));
     setSkillLayer(skill.layer);
     setSkillPosition(skill.position);
     setSkillNodeColor(skill.nodeColor);
+    setSkillPrerequisites(skill.prerequisites || []);
     setEditingSkill(true);
     setShowSkillDetail(true);
   };
@@ -468,6 +474,7 @@ function AdminPage() {
     setSkillLayer(1);
     setSkillPosition(0);
     setSkillNodeColor('blue');
+    setSkillPrerequisites([]);
     setSelectedSkill(null);
     setEditingSkill(false);
   };
@@ -2203,8 +2210,9 @@ function AdminPage() {
                       </p>
                       <div className="skill-card-meta">
                         <span className="skill-layer-badge">Layer {skill.layer}</span>
-                        {skill.previewClip && <span className="skill-has-preview">🎬</span>}
-                        {(skill.contentYouTube || skill.contentGoogleDrive) && <span className="skill-has-content">📚</span>}
+                        {(Array.isArray(skill.previewClip) ? skill.previewClip.length > 0 : skill.previewClip) && <span className="skill-has-preview">🎬</span>}
+                        {((Array.isArray(skill.contentYouTube) ? skill.contentYouTube.length > 0 : skill.contentYouTube) || 
+                          (Array.isArray(skill.contentGoogleDrive) ? skill.contentGoogleDrive.length > 0 : skill.contentGoogleDrive)) && <span className="skill-has-content">📚</span>}
                       </div>
                     </div>
                   ))
@@ -2469,39 +2477,39 @@ function AdminPage() {
 
                 <div className="form-row">
                   <div className="form-group full-width">
-                    <label>Preview Clip (YouTube URL)</label>
-                    <input
-                      type="text"
+                    <label>Preview Clips (YouTube URLs - one per line)</label>
+                    <textarea
                       value={skillPreviewClip}
                       onChange={(e) => setSkillPreviewClip(e.target.value)}
-                      placeholder="https://youtube.com/watch?v=..."
+                      placeholder="Enter YouTube URLs, one per line&#10;https://youtube.com/watch?v=..."
                       className="skill-input"
+                      rows={3}
                     />
                   </div>
                 </div>
 
                 <div className="form-row">
                   <div className="form-group full-width">
-                    <label>Content - YouTube Link</label>
-                    <input
-                      type="text"
+                    <label>Content - YouTube Links (one per line)</label>
+                    <textarea
                       value={skillContentYouTube}
                       onChange={(e) => setSkillContentYouTube(e.target.value)}
-                      placeholder="https://youtube.com/watch?v=..."
+                      placeholder="Enter YouTube URLs, one per line&#10;https://youtube.com/watch?v=..."
                       className="skill-input"
+                      rows={3}
                     />
                   </div>
                 </div>
 
                 <div className="form-row">
                   <div className="form-group full-width">
-                    <label>Content - Google Drive Link</label>
-                    <input
-                      type="text"
+                    <label>Content - Google Drive Links (one per line)</label>
+                    <textarea
                       value={skillContentGoogleDrive}
                       onChange={(e) => setSkillContentGoogleDrive(e.target.value)}
-                      placeholder="https://drive.google.com/..."
+                      placeholder="Enter Google Drive URLs, one per line&#10;https://drive.google.com/..."
                       className="skill-input"
+                      rows={3}
                     />
                   </div>
                 </div>
@@ -2549,40 +2557,43 @@ function AdminPage() {
                     </div>
                   </div>
 
-                  {selectedSkill.previewClip && (
+                  {selectedSkill.previewClip && selectedSkill.previewClip.length > 0 && (
                     <div className="skill-preview-section">
-                      <h4>Preview Clip</h4>
-                      <div className="video-embed-container">
-                        <iframe
-                          src={getYouTubeEmbedUrl(selectedSkill.previewClip)}
-                          frameBorder="0"
-                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                          allowFullScreen
-                          title="Preview Clip"
-                        />
-                      </div>
+                      <h4>Preview Clips</h4>
+                      {selectedSkill.previewClip.map((clip, index) => (
+                        <div key={index} className="video-embed-container" style={{ marginBottom: index < selectedSkill.previewClip!.length - 1 ? '16px' : '0' }}>
+                          <iframe
+                            src={getYouTubeEmbedUrl(clip)}
+                            frameBorder="0"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                            allowFullScreen
+                            title={`Preview Clip ${index + 1}`}
+                          />
+                        </div>
+                      ))}
                     </div>
                   )}
 
-                  {(selectedSkill.contentYouTube || selectedSkill.contentGoogleDrive) && (
+                  {((selectedSkill.contentYouTube && selectedSkill.contentYouTube.length > 0) || 
+                    (selectedSkill.contentGoogleDrive && selectedSkill.contentGoogleDrive.length > 0)) && (
                     <div className="skill-content-section">
                       <h4>Content Links</h4>
-                      {selectedSkill.contentYouTube && (
-                        <div className="content-link-item">
+                      {selectedSkill.contentYouTube && selectedSkill.contentYouTube.map((link, index) => (
+                        <div key={`youtube-${index}`} className="content-link-item">
                           <span className="content-icon">📺</span>
-                          <a href={selectedSkill.contentYouTube} target="_blank" rel="noopener noreferrer">
-                            YouTube Content
+                          <a href={link} target="_blank" rel="noopener noreferrer">
+                            YouTube Content {selectedSkill.contentYouTube!.length > 1 ? `${index + 1}` : ''}
                           </a>
                         </div>
-                      )}
-                      {selectedSkill.contentGoogleDrive && (
-                        <div className="content-link-item">
+                      ))}
+                      {selectedSkill.contentGoogleDrive && selectedSkill.contentGoogleDrive.map((link, index) => (
+                        <div key={`gdrive-${index}`} className="content-link-item">
                           <span className="content-icon">📂</span>
-                          <a href={selectedSkill.contentGoogleDrive} target="_blank" rel="noopener noreferrer">
-                            Google Drive Content
+                          <a href={link} target="_blank" rel="noopener noreferrer">
+                            Google Drive Content {selectedSkill.contentGoogleDrive!.length > 1 ? `${index + 1}` : ''}
                           </a>
                         </div>
-                      )}
+                      ))}
                     </div>
                   )}
 
@@ -2789,37 +2800,127 @@ function AdminPage() {
 
                     <div className="form-row">
                       <div className="form-group full-width">
-                        <label>Preview Clip (YouTube URL)</label>
-                        <input
-                          type="text"
+                        <label>Preview Clips (YouTube URLs - one per line)</label>
+                        <textarea
                           value={skillPreviewClip}
                           onChange={(e) => setSkillPreviewClip(e.target.value)}
                           className="skill-input"
+                          rows={3}
+                          placeholder="Enter YouTube URLs, one per line"
                         />
                       </div>
                     </div>
 
                     <div className="form-row">
                       <div className="form-group full-width">
-                        <label>Content - YouTube Link</label>
-                        <input
-                          type="text"
+                        <label>Content - YouTube Links (one per line)</label>
+                        <textarea
                           value={skillContentYouTube}
                           onChange={(e) => setSkillContentYouTube(e.target.value)}
                           className="skill-input"
+                          rows={3}
+                          placeholder="Enter YouTube URLs, one per line"
                         />
                       </div>
                     </div>
 
                     <div className="form-row">
                       <div className="form-group full-width">
-                        <label>Content - Google Drive Link</label>
-                        <input
-                          type="text"
+                        <label>Content - Google Drive Links (one per line)</label>
+                        <textarea
                           value={skillContentGoogleDrive}
                           onChange={(e) => setSkillContentGoogleDrive(e.target.value)}
                           className="skill-input"
+                          rows={3}
+                          placeholder="Enter Google Drive URLs, one per line"
                         />
+                      </div>
+                    </div>
+
+                    <div className="form-row">
+                      <div className="form-group full-width">
+                        <label>Prerequisites</label>
+                        <div style={{ marginBottom: '8px' }}>
+                          <button
+                            type="button"
+                            onClick={() => setShowPrerequisiteModal(true)}
+                            style={{
+                              padding: '8px 16px',
+                              background: '#6366f1',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '8px',
+                              cursor: 'pointer',
+                              fontSize: '14px',
+                              fontWeight: '500'
+                            }}
+                          >
+                            🔗 Select Custom Prerequisites
+                          </button>
+                        </div>
+                        {skillPrerequisites.length > 0 ? (
+                          <div style={{ 
+                            padding: '12px', 
+                            background: '#f3f4f6', 
+                            borderRadius: '8px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '8px'
+                          }}>
+                            {skillPrerequisites.map((prereqId) => {
+                              const prereqSkill = skills.find(s => s._id === prereqId);
+                              return prereqSkill ? (
+                                <div key={prereqId} style={{ 
+                                  display: 'flex', 
+                                  justifyContent: 'space-between', 
+                                  alignItems: 'center',
+                                  padding: '8px',
+                                  background: 'white',
+                                  borderRadius: '6px'
+                                }}>
+                                  <span style={{ fontSize: '14px' }}>
+                                    <span style={{ 
+                                      display: 'inline-block',
+                                      width: '12px',
+                                      height: '12px',
+                                      borderRadius: '50%',
+                                      background: getNodeColor(prereqSkill.nodeColor),
+                                      border: `2px solid ${getNodeStrokeColor(prereqSkill.nodeColor)}`,
+                                      marginRight: '8px'
+                                    }}></span>
+                                    {prereqSkill.title} (Layer {prereqSkill.layer})
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSkillPrerequisites(skillPrerequisites.filter(id => id !== prereqId))}
+                                    style={{
+                                      padding: '4px 8px',
+                                      background: '#ef4444',
+                                      color: 'white',
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                      fontSize: '12px'
+                                    }}
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              ) : null;
+                            })}
+                          </div>
+                        ) : (
+                          <div style={{ 
+                            padding: '12px', 
+                            background: '#f3f4f6', 
+                            borderRadius: '8px',
+                            color: '#6b7280',
+                            fontSize: '14px',
+                            fontStyle: 'italic'
+                          }}>
+                            No prerequisites selected
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -2837,6 +2938,85 @@ function AdminPage() {
                   </div>
                 </>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Prerequisite Selection Modal */}
+        {showPrerequisiteModal && (
+          <div className="modal-overlay" onClick={() => setShowPrerequisiteModal(false)}>
+            <div className="modal-content connection-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
+              <h3>🔗 Select Prerequisites</h3>
+              <p className="connection-help" style={{ marginBottom: '16px' }}>
+                Select skill nodes that must be unlocked before this skill can be unlocked:
+              </p>
+              
+              <div style={{ 
+                maxHeight: '400px', 
+                overflowY: 'auto',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px'
+              }}>
+                {skills
+                  .filter(s => !selectedSkill || s._id !== selectedSkill._id)
+                  .map(skill => {
+                    const isSelected = skillPrerequisites.includes(skill._id);
+                    return (
+                      <div 
+                        key={skill._id}
+                        onClick={() => {
+                          if (isSelected) {
+                            setSkillPrerequisites(skillPrerequisites.filter(id => id !== skill._id));
+                          } else {
+                            setSkillPrerequisites([...skillPrerequisites, skill._id]);
+                          }
+                        }}
+                        style={{
+                          padding: '12px',
+                          background: isSelected ? '#dbeafe' : 'white',
+                          border: `2px solid ${isSelected ? '#3b82f6' : '#e5e7eb'}`,
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '12px'
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {}}
+                          style={{ cursor: 'pointer' }}
+                        />
+                        <div style={{ 
+                          width: '20px',
+                          height: '20px',
+                          borderRadius: '50%',
+                          background: getNodeColor(skill.nodeColor),
+                          border: `2px solid ${getNodeStrokeColor(skill.nodeColor)}`,
+                          flexShrink: 0
+                        }}></div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: '600', fontSize: '15px' }}>{skill.title}</div>
+                          <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                            Layer {skill.layer} • Position {skill.position} • {skill.cost} AP
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+
+              <div className="connection-actions" style={{ marginTop: '16px', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                <button 
+                  className="cancel-btn" 
+                  onClick={() => setShowPrerequisiteModal(false)}
+                >
+                  Done
+                </button>
+              </div>
             </div>
           </div>
         )}

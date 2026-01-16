@@ -14,17 +14,6 @@ interface User {
   email?: string;
   isAdmin: boolean;
   role: 'user' | 'admin' | 'super-admin';
-  guildId?: string;
-}
-
-interface Guild {
-  _id: string;
-  name: string;
-  guildLeaderIds?: string[];
-  adminIds: string[];
-  createdBy: string;
-  createdAt: string;
-  updatedAt: string;
 }
 
 interface Skill {
@@ -32,14 +21,13 @@ interface Skill {
   title: string;
   description: string;
   cost: number;
-  previewClip?: string[];
-  contentYouTube?: string[];
-  contentGoogleDrive?: string[];
+  previewClip?: string;
+  contentYouTube?: string;
+  contentGoogleDrive?: string;
   layer: number;
   position: number;
   isActive: boolean;
   nodeColor: 'yellow' | 'blue' | 'green' | 'white' | 'purple';
-  nodeType?: 'adventure' | 'asset' | 'quest' | 'marker' | 'EXTRA';
   connections?: Array<{
     targetSkillId: string;
     connectionType: 'normal' | 'special';
@@ -56,14 +44,11 @@ function MainMenu() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [customPhrase] = useState<string>('"The only way to do great work is to love what you do. If you haven\'t found it yet, keep looking. Don\'t settle."');
-  const [showGuildSelection, setShowGuildSelection] = useState(false);
-  const [guilds, setGuilds] = useState<Guild[]>([]);
-  const [selectedGuildId, setSelectedGuildId] = useState('');
 
-  // User stats
-  const [assetPoints, setAssetPoints] = useState(0);
-  const [voiceMinutesToday, setVoiceMinutesToday] = useState(0);
-  const [totalVoiceMinutes, setTotalVoiceMinutes] = useState(0);
+  // Mock data
+  const [assetPoints] = useState(300);
+  const [techTokens] = useState(300);
+  const [voiceToday] = useState(300);
 
   // Skill Tree states
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -73,14 +58,10 @@ function MainMenu() {
   const [isPanning, setIsPanning] = useState(false);
   const [panStartX, setPanStartX] = useState(0);
   const [panStartY, setPanStartY] = useState(0);
-  const [highlightedSkillId, setHighlightedSkillId] = useState<string | null>(null);
-  const [layerGaps, setLayerGaps] = useState<{ [key: number]: number }>({ 1: 120, 2: 120, 3: 120, 4: 120, 5: 120, 6: 120, 7: 120 }); // Gap for each layer
+  const [layerGaps, setLayerGaps] = useState<{ [key: number]: number }>({ 1: 120, 2: 120, 3: 120, 4: 120, 5: 120, 6: 120 }); // Gap for each layer
   const [arrowheadGapFromNode, setArrowheadGapFromNode] = useState(0); // Gap from target node edge
   const [arrowheadStartPoint, setArrowheadStartPoint] = useState(0); // Distance from path end where arrowhead starts
   const [arrowheadSize, setArrowheadSize] = useState(20); // Size of the arrowhead
-  const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
-  const [showSkillModal, setShowSkillModal] = useState(false);
-  const [unlockedSkills, setUnlockedSkills] = useState<string[]>([]);
 
   useEffect(() => {
     checkAuth();
@@ -90,8 +71,6 @@ function MainMenu() {
     if (user) {
       loadSkills();
       loadSkillTreeSettings();
-      loadUserStats();
-      loadVoiceTime();
     }
   }, [user]);
 
@@ -122,14 +101,14 @@ function MainMenu() {
         // Load per-layer gaps if available, otherwise use default
         if (settings.layerGaps) {
           const gaps: { [key: number]: number } = {};
-          for (let i = 1; i <= 7; i++) {
+          for (let i = 1; i <= 6; i++) {
             gaps[i] = settings.layerGaps[i] || settings.layerGap || 120;
           }
           setLayerGaps(gaps);
         } else {
           // Fallback to single layerGap for backward compatibility
           const defaultGap = settings.layerGap || 120;
-          setLayerGaps({ 1: defaultGap, 2: defaultGap, 3: defaultGap, 4: defaultGap, 5: defaultGap, 6: defaultGap, 7: defaultGap });
+          setLayerGaps({ 1: defaultGap, 2: defaultGap, 3: defaultGap, 4: defaultGap, 5: defaultGap, 6: defaultGap });
         }
         setArrowheadGapFromNode(settings.arrowheadGapFromNode || 0);
         setArrowheadStartPoint(settings.arrowheadStartPoint || 0);
@@ -138,171 +117,6 @@ function MainMenu() {
     } catch (error) {
       console.error('Error loading skill tree settings:', error);
     }
-  };
-
-  const loadUserStats = async () => {
-    try {
-      const response = await axios.get('/api/auth/user');
-      if (response.data.authenticated && response.data.user) {
-        // Try to get full user data with stats
-        const userResponse = await axios.get(`/api/users/${response.data.user.id}`);
-        if (userResponse.data.success && userResponse.data.user) {
-          setAssetPoints(userResponse.data.user.assetPoints || 0);
-        }
-      }
-    } catch (error) {
-      console.error('Error loading user stats:', error);
-    }
-  };
-
-  const loadVoiceTime = async () => {
-    try {
-      if (!user?.id) return;
-      const response = await axios.get(`/api/users/${user.id}/voice-time`);
-      if (response.data.success && response.data.voiceTime) {
-        setVoiceMinutesToday(response.data.voiceTime.voiceMinutesToday || 0);
-        setTotalVoiceMinutes(response.data.voiceTime.totalVoiceMinutes || 0);
-      }
-    } catch (error) {
-      console.error('Error loading voice time:', error);
-    }
-  };
-
-  const loadUnlockedSkills = async () => {
-    try {
-      const response = await axios.get('/api/user/unlocked-skills');
-      if (response.data.success) {
-        setUnlockedSkills(response.data.unlockedSkills || []);
-      }
-    } catch (error) {
-      console.error('Error loading unlocked skills:', error);
-    }
-  };
-
-  useEffect(() => {
-    if (user) {
-      loadUnlockedSkills();
-    }
-  }, [user]);
-
-  const handleSkillClick = (skill: Skill) => {
-    setSelectedSkill(skill);
-    setShowSkillModal(true);
-  };
-
-  const canUnlockSkill = (skill: Skill): boolean => {
-    // Check if already unlocked
-    if (unlockedSkills.includes(skill._id)) {
-      return false;
-    }
-
-    // Check prerequisites from prerequisites array
-    if (skill.prerequisites && skill.prerequisites.length > 0) {
-      const allPrerequisitesMet = skill.prerequisites.every(
-        (prereqId: string) => unlockedSkills.includes(prereqId)
-      );
-      if (!allPrerequisitesMet) {
-        return false;
-      }
-    }
-
-    // Check prerequisites from connections (if any skill has a connection pointing to this skill, it's a prerequisite)
-    const prerequisiteSkillsFromConnections = skills.filter(
-      (s) => s.connections && s.connections.some((conn) => conn.targetSkillId === skill._id)
-    );
-    
-    if (prerequisiteSkillsFromConnections.length > 0) {
-      const allConnectionPrerequisitesMet = prerequisiteSkillsFromConnections.every(
-        (prereqSkill) => unlockedSkills.includes(prereqSkill._id)
-      );
-      if (!allConnectionPrerequisitesMet) {
-        return false;
-      }
-    }
-
-    // Check asset points
-    if (assetPoints < skill.cost) {
-      return false;
-    }
-
-    return true;
-  };
-
-  const handleUnlockSkill = async () => {
-    if (!selectedSkill) return;
-
-    try {
-      const response = await axios.post(`/api/skills/${selectedSkill._id}/unlock`);
-      if (response.data.success) {
-        // Update unlocked skills
-        setUnlockedSkills([...unlockedSkills, selectedSkill._id]);
-        // Update asset points
-        setAssetPoints(response.data.remainingAssetPoints);
-        // Close modal
-        setShowSkillModal(false);
-        setSelectedSkill(null);
-        alert('Skill unlocked successfully!');
-      }
-    } catch (error: any) {
-      console.error('Error unlocking skill:', error);
-      alert(error.response?.data?.error || 'Failed to unlock skill');
-    }
-  };
-
-  // Parse description and render images from markdown-style syntax ![alt](url)
-  const renderDescriptionWithImages = (description: string) => {
-    const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
-    const parts: (string | JSX.Element)[] = [];
-    let lastIndex = 0;
-    let match;
-    let key = 0;
-
-    while ((match = imageRegex.exec(description)) !== null) {
-      // Add text before the image
-      if (match.index > lastIndex) {
-        parts.push(description.substring(lastIndex, match.index));
-      }
-      // Add the image
-      const altText = match[1];
-      const imageUrl = match[2];
-      parts.push(
-        <img
-          key={key++}
-          src={imageUrl}
-          alt={altText || 'Skill image'}
-          style={{
-            maxWidth: '100%',
-            height: 'auto',
-            margin: '10px 0',
-            borderRadius: '8px',
-            display: 'block'
-          }}
-          onError={(e) => {
-            (e.target as HTMLImageElement).style.display = 'none';
-          }}
-        />
-      );
-      lastIndex = match.index + match[0].length;
-    }
-
-    // Add remaining text
-    if (lastIndex < description.length) {
-      parts.push(description.substring(lastIndex));
-    }
-
-    // If no images found, return the description as-is
-    if (parts.length === 0) {
-      return <span>{description}</span>;
-    }
-
-    return <div>{parts}</div>;
-  };
-
-  // Convert YouTube URL to embed URL
-  const getYouTubeEmbedUrl = (url: string) => {
-    if (!url) return '';
-    const videoIdMatch = url.match(/(?:youtu\.be\/|youtube\.com(?:\/embed\/|\/v\/|\/watch\?v=|\/watch\?.+&v=))([\w-]{11})/);
-    return videoIdMatch ? `https://www.youtube.com/embed/${videoIdMatch[1]}` : url;
   };
 
   // Helper function to calculate radius for a layer (cumulative)
@@ -320,12 +134,6 @@ function MainMenu() {
       const response = await axios.get('/api/auth/user');
       if (response.data.authenticated && response.data.user) {
         setUser(response.data.user);
-        // Check if user has a guild
-        if (!response.data.user.guildId) {
-          // Load guilds and show selection modal
-          await loadGuilds();
-          setShowGuildSelection(true);
-        }
       } else {
         navigate('/login');
       }
@@ -334,40 +142,6 @@ function MainMenu() {
       navigate('/login');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadGuilds = async () => {
-    try {
-      const response = await axios.get('/api/guilds');
-      if (response.data.success) {
-        setGuilds(response.data.guilds);
-      }
-    } catch (error) {
-      console.error('Error loading guilds:', error);
-    }
-  };
-
-  const handleJoinGuild = async () => {
-    if (!selectedGuildId || !user) {
-      alert('Please select a guild');
-      return;
-    }
-
-    try {
-      const response = await axios.post(`/api/users/${user.id}/guild`, {
-        guildId: selectedGuildId
-      });
-      
-      if (response.data.success) {
-        // Update user state with new guildId
-        setUser({ ...user, guildId: selectedGuildId });
-        setShowGuildSelection(false);
-        alert('Successfully joined the guild!');
-      }
-    } catch (error: any) {
-      console.error('Error joining guild:', error);
-      alert(error.response?.data?.error || 'Failed to join guild');
     }
   };
 
@@ -470,26 +244,17 @@ function MainMenu() {
 
   // Pan handlers
   const handleMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
-    // Only allow panning with Shift key or middle mouse button
     if (e.shiftKey || e.button === 1) {
-      e.preventDefault();
       setIsPanning(true);
-      setPanStartX(e.clientX);
-      setPanStartY(e.clientY);
+      setPanStartX(e.clientX - panX);
+      setPanStartY(e.clientY - panY);
     }
   };
 
   const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
     if (isPanning) {
-      e.preventDefault();
-      const deltaX = e.clientX - panStartX;
-      const deltaY = e.clientY - panStartY;
-      // Adjust pan based on zoom level, with increased speed (multiply by 2 for faster panning)
-      const panSpeed = 2.0; // Increase this value to make panning faster
-      setPanX(prev => prev + (deltaX / zoom) * panSpeed);
-      setPanY(prev => prev + (deltaY / zoom) * panSpeed);
-      setPanStartX(e.clientX);
-      setPanStartY(e.clientY);
+      setPanX(e.clientX - panStartX);
+      setPanY(e.clientY - panStartY);
     }
   };
 
@@ -538,12 +303,12 @@ function MainMenu() {
               <span className="stat-value">{assetPoints}</span>
             </div>
             <div className="stat-item">
-              <span className="stat-label">Voice Today :</span>
-              <span className="stat-value">{voiceMinutesToday}m</span>
+              <span className="stat-label">Tech Token:</span>
+              <span className="stat-value">{techTokens}</span>
             </div>
             <div className="stat-item">
-              <span className="stat-label">Total Voice :</span>
-              <span className="stat-value">{totalVoiceMinutes}m</span>
+              <span className="stat-label">Voice Today :</span>
+              <span className="stat-value">{voiceToday}m</span>
             </div>
           </div>
         </div>
@@ -813,32 +578,22 @@ function MainMenu() {
                   }).filter(Boolean)}
 
                   {/* Center node (layer 0) */}
-                  {skills.filter(s => s.layer === 0).map((skill) => {
-                    const isUnlocked = unlockedSkills.includes(skill._id);
-                    const canUnlock = canUnlockSkill(skill);
-                    return (
-                      <g key={skill._id} className="skill-node-center-group">
-                        <circle
-                          cx="0"
-                          cy="0"
-                          r="60"
-                          fill={getNodeColor(skill.nodeColor)}
-                          stroke={getNodeStrokeColor(skill.nodeColor)}
-                          strokeWidth="4"
-                          className={`${canUnlock ? 'skill-node-available' : ''} ${highlightedSkillId === skill._id ? 'skill-node-highlight' : ''}`}
-                          style={{ 
-                            cursor: 'pointer', 
-                            pointerEvents: 'all',
-                            opacity: highlightedSkillId === skill._id ? 1 : (isUnlocked ? 1 : 1),
-                            filter: isUnlocked ? 'none' : 'grayscale(0.3) brightness(0.9)'
-                          }}
-                          onClick={() => handleSkillClick(skill)}
-                        />
+                  {skills.filter(s => s.layer === 0).map((skill) => (
+                    <g key={skill._id} className="skill-node-center-group">
+                      <circle
+                        cx="0"
+                        cy="0"
+                        r="60"
+                        fill={getNodeColor(skill.nodeColor)}
+                        stroke={getNodeStrokeColor(skill.nodeColor)}
+                        strokeWidth="4"
+                        style={{ cursor: 'pointer', pointerEvents: 'all' }}
+                      />
                       <text
                         x="0"
                         y="0"
                         textAnchor="middle"
-                        fill="#000000"
+                        fill={skill.nodeColor === 'white' ? '#000000' : '#ffffff'}
                         fontSize="28"
                         fontWeight="bold"
                         fontFamily="Dongle, sans-serif"
@@ -851,11 +606,10 @@ function MainMenu() {
                         })}
                       </text>
                     </g>
-                    );
-                  })}
+                  ))}
 
-                  {/* Skills on circular layers (1-7) */}
-                  {[1, 2, 3, 4, 5, 6, 7].map(layer => {
+                  {/* Skills on circular layers (1-6) */}
+                  {[1, 2, 3, 4, 5, 6].map(layer => {
                     const layerSkills = skills.filter(s => s.layer === layer);
                     const radius = getLayerRadius(layer);
 
@@ -863,8 +617,6 @@ function MainMenu() {
                       const angle = (skill.position * Math.PI / 180) - Math.PI / 2;
                       const x = radius * Math.cos(angle);
                       const y = radius * Math.sin(angle);
-                      const isUnlocked = unlockedSkills.includes(skill._id);
-                      const canUnlock = canUnlockSkill(skill);
 
                       return (
                         <g key={skill._id} className="skill-node-group">
@@ -876,14 +628,7 @@ function MainMenu() {
                             fill={getNodeColor(skill.nodeColor)}
                             stroke={getNodeStrokeColor(skill.nodeColor)}
                             strokeWidth="3"
-                            className={`${canUnlock ? 'skill-node-available' : ''} ${highlightedSkillId === skill._id ? 'skill-node-highlight' : ''}`}
-                            style={{ 
-                              cursor: 'pointer', 
-                              pointerEvents: 'all',
-                              opacity: isUnlocked ? 1 : 1,
-                              filter: isUnlocked ? 'none' : 'grayscale(0.3) brightness(0.9)'
-                            }}
-                            onClick={() => handleSkillClick(skill)}
+                            style={{ cursor: 'pointer', pointerEvents: 'all' }}
                           />
                           
                           {/* Skill title */}
@@ -891,7 +636,7 @@ function MainMenu() {
                             x={x}
                             y={y}
                             textAnchor="middle"
-                            fill="#000000"
+                            fill={skill.nodeColor === 'white' || skill.nodeColor === 'yellow' ? '#000000' : '#ffffff'}
                             fontSize="28"
                             fontWeight="bold"
                             fontFamily="Dongle, sans-serif"
@@ -916,262 +661,6 @@ function MainMenu() {
           </div>
         </div>
       </div>
-
-      {/* Skill Detail Modal */}
-      {showSkillModal && selectedSkill && (
-        <div className="guild-selection-modal-overlay" onClick={() => setShowSkillModal(false)}>
-          <div className="guild-selection-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '700px' }}>
-            <div className="guild-selection-header">
-              <h2>{selectedSkill.title}</h2>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '8px' }}>
-                <span style={{ fontSize: '1.4rem', color: '#6b7280' }}>
-                  Cost: <strong style={{ color: '#4e98ff' }}>{selectedSkill.cost} AP</strong>
-                </span>
-                {unlockedSkills.includes(selectedSkill._id) && (
-                  <span style={{ fontSize: '1.4rem', color: '#22c55e', fontWeight: 'bold' }}>✓ Unlocked</span>
-                )}
-              </div>
-            </div>
-            
-            <div className="guild-selection-content">
-              <div style={{ marginBottom: '20px' }}>
-                <h4 style={{ fontSize: '1.8rem', fontWeight: '700', color: '#14306d', marginBottom: '12px' }}>Description</h4>
-                <div style={{ fontSize: '1.4rem', lineHeight: '1.6', whiteSpace: 'pre-wrap', color: '#374151' }}>
-                  {renderDescriptionWithImages(selectedSkill.description)}
-                </div>
-              </div>
-
-              {selectedSkill.prerequisites && selectedSkill.prerequisites.length > 0 && (
-                <div style={{ marginBottom: '20px' }}>
-                  <h4 style={{ fontSize: '1.8rem', fontWeight: '700', color: '#14306d', marginBottom: '12px' }}>Prerequisites</h4>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {selectedSkill.prerequisites.map((prereqId) => {
-                      const prereqSkill = skills.find(s => s._id === prereqId);
-                      const isUnlocked = unlockedSkills.includes(prereqId);
-                      return (
-                        <div key={prereqId} style={{ 
-                          fontSize: '1.4rem', 
-                          padding: '8px 12px',
-                          background: isUnlocked ? '#22c55e1a' : '#ef44441a',
-                          border: `2px solid ${isUnlocked ? '#22c55e' : '#ef4444'}`,
-                          borderRadius: '8px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: '8px'
-                        }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            {isUnlocked ? '✓' : '✗'} {prereqSkill?.title || 'Unknown Skill'}
-                          </div>
-                          {!isUnlocked && prereqSkill && (
-                            <button
-                              onClick={() => {
-                                setShowSkillModal(false);
-                                setHighlightedSkillId(prereqSkill._id);
-                                setTimeout(() => {
-                                  setHighlightedSkillId(null);
-                                }, 3000);
-                              }}
-                              style={{
-                                padding: '6px 12px',
-                                background: '#4e98ff',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '6px',
-                                cursor: 'pointer',
-                                fontSize: '1.2rem',
-                                fontWeight: '500',
-                                fontFamily: 'Dongle, sans-serif'
-                              }}
-                            >
-                              Highlight Prerequisite
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {(() => {
-                const previewClips = Array.isArray(selectedSkill.previewClip) 
-                  ? selectedSkill.previewClip 
-                  : (selectedSkill.previewClip ? [selectedSkill.previewClip] : []);
-                
-                return previewClips.length > 0 && (
-                  <div style={{ marginBottom: '20px' }}>
-                    <h4 style={{ fontSize: '1.8rem', fontWeight: '700', color: '#14306d', marginBottom: '12px' }}>
-                      Preview {previewClips.length > 1 ? 'Clips' : 'Clip'}
-                    </h4>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                      {previewClips.map((clip, index) => (
-                        <div key={index} style={{ position: 'relative', paddingBottom: '56.25%', height: 0, overflow: 'hidden', borderRadius: '12px', background: '#000' }}>
-                          <iframe
-                            src={getYouTubeEmbedUrl(clip)}
-                            frameBorder="0"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                            allowFullScreen
-                            title={`Preview Clip ${index + 1}`}
-                            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', borderRadius: '12px' }}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {((selectedSkill.contentYouTube && selectedSkill.contentYouTube.length > 0) || 
-                (selectedSkill.contentGoogleDrive && selectedSkill.contentGoogleDrive.length > 0)) && (
-                <div style={{ marginBottom: '20px' }}>
-                  <h4 style={{ fontSize: '1.8rem', fontWeight: '700', color: '#14306d', marginBottom: '12px' }}>Content Links</h4>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {selectedSkill.contentYouTube && selectedSkill.contentYouTube.map((link, index) => (
-                      <a 
-                        key={`youtube-${index}`}
-                        href={link} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        style={{ 
-                          fontSize: '1.4rem', 
-                          color: '#4e98ff', 
-                          textDecoration: 'none',
-                          padding: '8px 12px',
-                          background: '#4e98ff1a',
-                          borderRadius: '8px',
-                          border: '2px solid #4e98ff33'
-                        }}
-                      >
-                        📺 YouTube Content {selectedSkill.contentYouTube && selectedSkill.contentYouTube.length > 1 ? `${index + 1}` : ''}
-                      </a>
-                    ))}
-                    {selectedSkill.contentGoogleDrive && selectedSkill.contentGoogleDrive.map((link, index) => (
-                      <a 
-                        key={`gdrive-${index}`}
-                        href={link} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        style={{ 
-                          fontSize: '1.4rem', 
-                          color: '#4e98ff', 
-                          textDecoration: 'none',
-                          padding: '8px 12px',
-                          background: '#4e98ff1a',
-                          borderRadius: '8px',
-                          border: '2px solid #4e98ff33'
-                        }}
-                      >
-                        📂 Google Drive Content {selectedSkill.contentGoogleDrive && selectedSkill.contentGoogleDrive.length > 1 ? `${index + 1}` : ''}
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="guild-selection-actions">
-              {!unlockedSkills.includes(selectedSkill._id) ? (
-                <button
-                  className="join-guild-btn"
-                  onClick={handleUnlockSkill}
-                  disabled={!canUnlockSkill(selectedSkill)}
-                  style={{
-                    background: canUnlockSkill(selectedSkill) 
-                      ? 'linear-gradient(135deg, #22c55e, #16a34a)' 
-                      : '#6b7280',
-                    boxShadow: canUnlockSkill(selectedSkill)
-                      ? '0 4px 20px rgba(34, 197, 94, 0.6), 0 0 20px rgba(34, 197, 94, 0.4)'
-                      : 'none',
-                    animation: canUnlockSkill(selectedSkill) ? 'glow 2s ease-in-out infinite' : 'none',
-                    opacity: canUnlockSkill(selectedSkill) ? 1 : 0.6,
-                    cursor: canUnlockSkill(selectedSkill) ? 'pointer' : 'not-allowed'
-                  }}
-                >
-                  🔓 Unlock Skill ({selectedSkill.cost} AP)
-                </button>
-              ) : (
-                <button
-                  className="join-guild-btn"
-                  disabled
-                  style={{
-                    background: '#22c55e',
-                    opacity: 0.7,
-                    cursor: 'not-allowed'
-                  }}
-                >
-                  ✓ Already Unlocked
-                </button>
-              )}
-              <button
-                className="cancel-btn"
-                onClick={() => {
-                  setShowSkillModal(false);
-                  setSelectedSkill(null);
-                }}
-                style={{
-                  padding: '12px 24px',
-                  background: '#6b7280',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '50px',
-                  fontSize: '1.4rem',
-                  fontWeight: '600',
-                  cursor: 'pointer',
-                  marginLeft: '12px'
-                }}
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Guild Selection Modal */}
-      {showGuildSelection && (
-        <div className="guild-selection-modal-overlay" onClick={() => {}}>
-          <div className="guild-selection-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="guild-selection-header">
-              <h2>Choose Your Guild</h2>
-              <p>Please select a guild to join. You can change this later.</p>
-            </div>
-            
-            <div className="guild-selection-content">
-              {guilds.length === 0 ? (
-                <p className="no-guilds-message">No guilds available. Please contact an administrator.</p>
-              ) : (
-                <div className="guild-list">
-                  {guilds.map((guild) => (
-                    <div
-                      key={guild._id}
-                      className={`guild-option ${selectedGuildId === guild._id ? 'selected' : ''}`}
-                      onClick={() => setSelectedGuildId(guild._id)}
-                    >
-                      <div className="guild-option-name">{guild.name}</div>
-                      {guild.guildLeaderIds && guild.guildLeaderIds.length > 0 && (
-                        <div className="guild-option-leader">
-                          👑 Leaders: {guild.guildLeaderIds.length}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="guild-selection-actions">
-              <button
-                className="join-guild-btn"
-                onClick={handleJoinGuild}
-                disabled={!selectedGuildId || guilds.length === 0}
-              >
-                Join Guild
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -14,6 +14,17 @@ interface User {
   email?: string;
   isAdmin: boolean;
   role: 'user' | 'admin' | 'super-admin';
+  guildId?: string;
+}
+
+interface Guild {
+  _id: string;
+  name: string;
+  guildLeaderIds?: string[];
+  adminIds: string[];
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface Skill {
@@ -44,11 +55,14 @@ function MainMenu() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [customPhrase] = useState<string>('"The only way to do great work is to love what you do. If you haven\'t found it yet, keep looking. Don\'t settle."');
+  const [showGuildSelection, setShowGuildSelection] = useState(false);
+  const [guilds, setGuilds] = useState<Guild[]>([]);
+  const [selectedGuildId, setSelectedGuildId] = useState('');
 
-  // Mock data
-  const [assetPoints] = useState(300);
-  const [techTokens] = useState(300);
-  const [voiceToday] = useState(300);
+  // User stats
+  const [assetPoints, setAssetPoints] = useState(0);
+  const [voiceMinutesToday, setVoiceMinutesToday] = useState(0);
+  const [totalVoiceMinutes, setTotalVoiceMinutes] = useState(0);
 
   // Skill Tree states
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -58,7 +72,7 @@ function MainMenu() {
   const [isPanning, setIsPanning] = useState(false);
   const [panStartX, setPanStartX] = useState(0);
   const [panStartY, setPanStartY] = useState(0);
-  const [layerGaps, setLayerGaps] = useState<{ [key: number]: number }>({ 1: 120, 2: 120, 3: 120, 4: 120, 5: 120, 6: 120 }); // Gap for each layer
+  const [layerGaps, setLayerGaps] = useState<{ [key: number]: number }>({ 1: 120, 2: 120, 3: 120, 4: 120, 5: 120, 6: 120, 7: 120 }); // Gap for each layer
   const [arrowheadGapFromNode, setArrowheadGapFromNode] = useState(0); // Gap from target node edge
   const [arrowheadStartPoint, setArrowheadStartPoint] = useState(0); // Distance from path end where arrowhead starts
   const [arrowheadSize, setArrowheadSize] = useState(20); // Size of the arrowhead
@@ -71,6 +85,8 @@ function MainMenu() {
     if (user) {
       loadSkills();
       loadSkillTreeSettings();
+      loadUserStats();
+      loadVoiceTime();
     }
   }, [user]);
 
@@ -101,14 +117,14 @@ function MainMenu() {
         // Load per-layer gaps if available, otherwise use default
         if (settings.layerGaps) {
           const gaps: { [key: number]: number } = {};
-          for (let i = 1; i <= 6; i++) {
+          for (let i = 1; i <= 7; i++) {
             gaps[i] = settings.layerGaps[i] || settings.layerGap || 120;
           }
           setLayerGaps(gaps);
         } else {
           // Fallback to single layerGap for backward compatibility
           const defaultGap = settings.layerGap || 120;
-          setLayerGaps({ 1: defaultGap, 2: defaultGap, 3: defaultGap, 4: defaultGap, 5: defaultGap, 6: defaultGap });
+          setLayerGaps({ 1: defaultGap, 2: defaultGap, 3: defaultGap, 4: defaultGap, 5: defaultGap, 6: defaultGap, 7: defaultGap });
         }
         setArrowheadGapFromNode(settings.arrowheadGapFromNode || 0);
         setArrowheadStartPoint(settings.arrowheadStartPoint || 0);
@@ -116,6 +132,34 @@ function MainMenu() {
       }
     } catch (error) {
       console.error('Error loading skill tree settings:', error);
+    }
+  };
+
+  const loadUserStats = async () => {
+    try {
+      const response = await axios.get('/api/auth/user');
+      if (response.data.authenticated && response.data.user) {
+        // Try to get full user data with stats
+        const userResponse = await axios.get(`/api/users/${response.data.user.id}`);
+        if (userResponse.data.success && userResponse.data.user) {
+          setAssetPoints(userResponse.data.user.assetPoints || 0);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading user stats:', error);
+    }
+  };
+
+  const loadVoiceTime = async () => {
+    try {
+      if (!user?.id) return;
+      const response = await axios.get(`/api/users/${user.id}/voice-time`);
+      if (response.data.success && response.data.voiceTime) {
+        setVoiceMinutesToday(response.data.voiceTime.voiceMinutesToday || 0);
+        setTotalVoiceMinutes(response.data.voiceTime.totalVoiceMinutes || 0);
+      }
+    } catch (error) {
+      console.error('Error loading voice time:', error);
     }
   };
 
@@ -134,6 +178,12 @@ function MainMenu() {
       const response = await axios.get('/api/auth/user');
       if (response.data.authenticated && response.data.user) {
         setUser(response.data.user);
+        // Check if user has a guild
+        if (!response.data.user.guildId) {
+          // Load guilds and show selection modal
+          await loadGuilds();
+          setShowGuildSelection(true);
+        }
       } else {
         navigate('/login');
       }
@@ -142,6 +192,40 @@ function MainMenu() {
       navigate('/login');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadGuilds = async () => {
+    try {
+      const response = await axios.get('/api/guilds');
+      if (response.data.success) {
+        setGuilds(response.data.guilds);
+      }
+    } catch (error) {
+      console.error('Error loading guilds:', error);
+    }
+  };
+
+  const handleJoinGuild = async () => {
+    if (!selectedGuildId || !user) {
+      alert('Please select a guild');
+      return;
+    }
+
+    try {
+      const response = await axios.post(`/api/users/${user.id}/guild`, {
+        guildId: selectedGuildId
+      });
+      
+      if (response.data.success) {
+        // Update user state with new guildId
+        setUser({ ...user, guildId: selectedGuildId });
+        setShowGuildSelection(false);
+        alert('Successfully joined the guild!');
+      }
+    } catch (error: any) {
+      console.error('Error joining guild:', error);
+      alert(error.response?.data?.error || 'Failed to join guild');
     }
   };
 
@@ -303,12 +387,12 @@ function MainMenu() {
               <span className="stat-value">{assetPoints}</span>
             </div>
             <div className="stat-item">
-              <span className="stat-label">Tech Token:</span>
-              <span className="stat-value">{techTokens}</span>
+              <span className="stat-label">Voice Today :</span>
+              <span className="stat-value">{voiceMinutesToday}m</span>
             </div>
             <div className="stat-item">
-              <span className="stat-label">Voice Today :</span>
-              <span className="stat-value">{voiceToday}m</span>
+              <span className="stat-label">Total Voice :</span>
+              <span className="stat-value">{totalVoiceMinutes}m</span>
             </div>
           </div>
         </div>
@@ -593,7 +677,7 @@ function MainMenu() {
                         x="0"
                         y="0"
                         textAnchor="middle"
-                        fill={skill.nodeColor === 'white' ? '#000000' : '#ffffff'}
+                        fill="#000000"
                         fontSize="28"
                         fontWeight="bold"
                         fontFamily="Dongle, sans-serif"
@@ -608,8 +692,8 @@ function MainMenu() {
                     </g>
                   ))}
 
-                  {/* Skills on circular layers (1-6) */}
-                  {[1, 2, 3, 4, 5, 6].map(layer => {
+                  {/* Skills on circular layers (1-7) */}
+                  {[1, 2, 3, 4, 5, 6, 7].map(layer => {
                     const layerSkills = skills.filter(s => s.layer === layer);
                     const radius = getLayerRadius(layer);
 
@@ -636,7 +720,7 @@ function MainMenu() {
                             x={x}
                             y={y}
                             textAnchor="middle"
-                            fill={skill.nodeColor === 'white' || skill.nodeColor === 'yellow' ? '#000000' : '#ffffff'}
+                            fill="#000000"
                             fontSize="28"
                             fontWeight="bold"
                             fontFamily="Dongle, sans-serif"
@@ -661,6 +745,51 @@ function MainMenu() {
           </div>
         </div>
       </div>
+
+      {/* Guild Selection Modal */}
+      {showGuildSelection && (
+        <div className="guild-selection-modal-overlay" onClick={() => {}}>
+          <div className="guild-selection-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="guild-selection-header">
+              <h2>Choose Your Guild</h2>
+              <p>Please select a guild to join. You can change this later.</p>
+            </div>
+            
+            <div className="guild-selection-content">
+              {guilds.length === 0 ? (
+                <p className="no-guilds-message">No guilds available. Please contact an administrator.</p>
+              ) : (
+                <div className="guild-list">
+                  {guilds.map((guild) => (
+                    <div
+                      key={guild._id}
+                      className={`guild-option ${selectedGuildId === guild._id ? 'selected' : ''}`}
+                      onClick={() => setSelectedGuildId(guild._id)}
+                    >
+                      <div className="guild-option-name">{guild.name}</div>
+                      {guild.guildLeaderIds && guild.guildLeaderIds.length > 0 && (
+                        <div className="guild-option-leader">
+                          👑 Leaders: {guild.guildLeaderIds.length}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="guild-selection-actions">
+              <button
+                className="join-guild-btn"
+                onClick={handleJoinGuild}
+                disabled={!selectedGuildId || guilds.length === 0}
+              >
+                Join Guild
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

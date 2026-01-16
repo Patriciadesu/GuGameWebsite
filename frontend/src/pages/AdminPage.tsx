@@ -29,7 +29,7 @@ interface GuildMember {
 interface Guild {
   _id: string;
   name: string;
-  guildLeaderId?: string;
+  guildLeaderIds?: string[];
   adminIds: string[];
   createdBy: string;
   createdAt: string;
@@ -90,7 +90,8 @@ function AdminPage() {
 
   // Form states
   const [newGuildName, setNewGuildName] = useState('');
-  const [newGuildLeaderId, setNewGuildLeaderId] = useState('');
+  const [newGuildLeaderIds, setNewGuildLeaderIds] = useState<string[]>([]);
+  const [newGuildLeaderIdInput, setNewGuildLeaderIdInput] = useState('');
   const [assetPointsAmount, setAssetPointsAmount] = useState(0);
 
   // Skill Tree states
@@ -124,7 +125,7 @@ function AdminPage() {
   const [showConnectionModal, setShowConnectionModal] = useState(false);
   const [connectionSource, setConnectionSource] = useState<Skill | null>(null);
   const [layerGap, setLayerGap] = useState(120); // Legacy: kept for backward compatibility
-  const [layerGaps, setLayerGaps] = useState<{ [key: number]: number }>({ 1: 120, 2: 120, 3: 120, 4: 120, 5: 120, 6: 120 }); // Gap for each layer
+  const [layerGaps, setLayerGaps] = useState<{ [key: number]: number }>({ 1: 120, 2: 120, 3: 120, 4: 120, 5: 120, 6: 120, 7: 120 }); // Gap for each layer
   const [arrowheadGapFromNode, setArrowheadGapFromNode] = useState(0); // Gap from target node edge
   const [arrowheadStartPoint, setArrowheadStartPoint] = useState(0); // Distance from path end where arrowhead starts
   const [arrowheadSize, setArrowheadSize] = useState(20); // Size of the arrowhead
@@ -258,14 +259,14 @@ function AdminPage() {
         // Load per-layer gaps if available, otherwise use default
         if (settings.layerGaps) {
           const gaps: { [key: number]: number } = {};
-          for (let i = 1; i <= 6; i++) {
+          for (let i = 1; i <= 7; i++) {
             gaps[i] = settings.layerGaps[i] || settings.layerGap || 120;
           }
           setLayerGaps(gaps);
         } else {
           // Fallback to single layerGap for backward compatibility
           const defaultGap = settings.layerGap || 120;
-          setLayerGaps({ 1: defaultGap, 2: defaultGap, 3: defaultGap, 4: defaultGap, 5: defaultGap, 6: defaultGap });
+          setLayerGaps({ 1: defaultGap, 2: defaultGap, 3: defaultGap, 4: defaultGap, 5: defaultGap, 6: defaultGap, 7: defaultGap });
         }
         setArrowheadGapFromNode(settings.arrowheadGapFromNode || 0);
         setArrowheadStartPoint(settings.arrowheadStartPoint || 0);
@@ -281,7 +282,7 @@ function AdminPage() {
       console.log('💾 Saving layer gaps:', layerGaps);
       // Ensure all layer gaps are numbers
       const gapsToSave: { [key: number]: number } = {};
-      for (let i = 1; i <= 6; i++) {
+      for (let i = 1; i <= 7; i++) {
         gapsToSave[i] = Number(layerGaps[i]) || 120;
       }
       console.log('📤 Sending layer gaps:', gapsToSave);
@@ -490,6 +491,55 @@ function AdminPage() {
     return colors[color] || colors.blue;
   };
 
+  // Parse description and render images from markdown-style syntax ![alt](url)
+  const renderDescriptionWithImages = (description: string) => {
+    const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
+    const parts: (string | JSX.Element)[] = [];
+    let lastIndex = 0;
+    let match;
+    let key = 0;
+
+    while ((match = imageRegex.exec(description)) !== null) {
+      // Add text before the image
+      if (match.index > lastIndex) {
+        parts.push(description.substring(lastIndex, match.index));
+      }
+      // Add the image
+      const altText = match[1];
+      const imageUrl = match[2];
+      parts.push(
+        <img
+          key={key++}
+          src={imageUrl}
+          alt={altText || 'Skill image'}
+          style={{
+            maxWidth: '100%',
+            height: 'auto',
+            margin: '10px 0',
+            borderRadius: '8px',
+            display: 'block'
+          }}
+          onError={(e) => {
+            (e.target as HTMLImageElement).style.display = 'none';
+          }}
+        />
+      );
+      lastIndex = match.index + match[0].length;
+    }
+
+    // Add remaining text
+    if (lastIndex < description.length) {
+      parts.push(description.substring(lastIndex));
+    }
+
+    // If no images found, return the description as-is
+    if (parts.length === 0) {
+      return <span>{description}</span>;
+    }
+
+    return <div>{parts}</div>;
+  };
+
   // Wrap text to fit within circle
   const wrapText = (text: string, maxWidth: number, fontSize: number): string[] => {
     // Approximate character width (fontSize * 0.6 is a rough estimate for most fonts)
@@ -663,7 +713,7 @@ function AdminPage() {
       // Find the closest layer based on distance
       let closestLayer = 1;
       let minDistance = Math.abs(distanceFromCenter - getLayerRadius(1));
-      for (let layer = 1; layer <= 6; layer++) {
+      for (let layer = 1; layer <= 7; layer++) {
         const layerRadius = getLayerRadius(layer);
         const distance = Math.abs(distanceFromCenter - layerRadius);
         if (distance < minDistance) {
@@ -763,10 +813,11 @@ function AdminPage() {
     try {
       await axios.post('/api/guilds', {
         name: newGuildName,
-        guildLeaderId: newGuildLeaderId || undefined
+        guildLeaderIds: newGuildLeaderIds
       });
       setNewGuildName('');
-      setNewGuildLeaderId('');
+      setNewGuildLeaderIds([]);
+      setNewGuildLeaderIdInput('');
       setShowCreateGuild(false);
       loadGuilds();
       alert('Guild created successfully!');
@@ -801,6 +852,27 @@ function AdminPage() {
     } catch (error) {
       console.error('Error assigning user:', error);
       alert('Failed to assign user');
+    }
+  };
+
+  const handleUpdateGuildLeaders = async (guildId: string, newLeaderIds: string[]) => {
+    try {
+      const response = await axios.put(`/api/guilds/${guildId}`, {
+        guildLeaderIds: newLeaderIds
+      });
+      
+      // Update the guilds list
+      await loadGuilds();
+      
+      // Update the selected guild if it's the one we just updated
+      if (selectedGuild && selectedGuild._id === guildId) {
+        setSelectedGuild(response.data.guild);
+      }
+      
+      alert('Guild leaders updated successfully!');
+    } catch (error: any) {
+      console.error('Error updating guild leaders:', error);
+      alert(error.response?.data?.error || 'Failed to update guild leaders');
     }
   };
 
@@ -1032,21 +1104,55 @@ function AdminPage() {
                   onChange={(e) => setNewGuildName(e.target.value)}
                   className="guild-input"
                 />
-                <select
-                  value={newGuildLeaderId}
-                  onChange={(e) => setNewGuildLeaderId(e.target.value)}
-                  className="guild-select"
-                >
-                  <option value="">Select Guild Leader (optional)</option>
-                  {allUsers
-                    .filter(u => u.role === 'admin' || u.role === 'super-admin')
-                    .map(user => (
-                      <option key={user.discordId} value={user.discordId}>
-                        {user.username} ({user.role})
-                      </option>
-                    ))
-                  }
-                </select>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                  <select
+                    value={newGuildLeaderIdInput}
+                    onChange={(e) => setNewGuildLeaderIdInput(e.target.value)}
+                    className="guild-select"
+                  >
+                    <option value="">Select Guild Leader</option>
+                    {allUsers
+                      .filter(u => (u.role === 'admin' || u.role === 'super-admin') && !newGuildLeaderIds.includes(u.discordId))
+                      .map(user => (
+                        <option key={user.discordId} value={user.discordId}>
+                          {user.username} ({user.role})
+                        </option>
+                      ))
+                    }
+                  </select>
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      if (newGuildLeaderIdInput && !newGuildLeaderIds.includes(newGuildLeaderIdInput)) {
+                        setNewGuildLeaderIds([...newGuildLeaderIds, newGuildLeaderIdInput]);
+                        setNewGuildLeaderIdInput('');
+                      }
+                    }}
+                    style={{ padding: '8px 16px', background: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+                  >
+                    Add
+                  </button>
+                </div>
+                {newGuildLeaderIds.length > 0 && (
+                  <div style={{ marginBottom: '12px' }}>
+                    <strong>Selected Leaders:</strong>
+                    {newGuildLeaderIds.map((leaderId, idx) => {
+                      const leader = allUsers.find(u => u.discordId === leaderId);
+                      return (
+                        <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                          <span>👑 {leader?.username || leaderId}</span>
+                          <button
+                            type="button"
+                            onClick={() => setNewGuildLeaderIds(newGuildLeaderIds.filter(id => id !== leaderId))}
+                            style={{ padding: '4px 8px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 <button className="submit-btn" onClick={handleCreateGuild}>
                   Create Guild
                 </button>
@@ -1079,9 +1185,9 @@ function AdminPage() {
                     </button>
                   )}
                 </div>
-                {guild.guildLeaderId && (
+                {guild.guildLeaderIds && guild.guildLeaderIds.length > 0 && (
                   <p className="guild-leader-name">
-                    👑 {allUsers.find(u => u.discordId === guild.guildLeaderId)?.username || 'Leader'}
+                    👑 {guild.guildLeaderIds.map(id => allUsers.find(u => u.discordId === id)?.username || 'Leader').join(', ')}
                   </p>
                 )}
               </div>
@@ -1096,15 +1202,94 @@ function AdminPage() {
             <div className="guild-details">
               <h3>Guild: {selectedGuild.name}</h3>
               
-              {/* Guild Leader Info */}
-              {selectedGuild.guildLeaderId && (
-                <div className="guild-leader-badge">
-                  <span className="leader-icon">👑</span>
-                  <span className="leader-text">
-                    Leader: {allUsers.find(u => u.discordId === selectedGuild.guildLeaderId)?.username || 'Unknown'}
-                  </span>
-                </div>
-              )}
+              {/* Guild Leader Info & Management */}
+              <div className="guild-leader-section">
+                {selectedGuild.guildLeaderIds && selectedGuild.guildLeaderIds.length > 0 && (
+                  <div>
+                    <label className="change-leader-label">Guild Leaders:</label>
+                    {selectedGuild.guildLeaderIds.map((leaderId, idx) => {
+                      const leader = allUsers.find(u => u.discordId === leaderId);
+                      return (
+                        <div key={idx} className="guild-leader-badge" style={{ marginBottom: '8px' }}>
+                          <span className="leader-icon">👑</span>
+                          <span className="leader-text">
+                            {leader?.username || 'Unknown'} ({leader?.role || 'Unknown'})
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                
+                {/* Change Guild Leaders (Super Admin Only) */}
+                {user?.role === 'super-admin' && (
+                  <div className="change-leader-section">
+                    <label className="change-leader-label">Manage Guild Leaders:</label>
+                    <select
+                      value={newGuildLeaderIdInput}
+                      onChange={(e) => setNewGuildLeaderIdInput(e.target.value)}
+                      className="guild-select"
+                      style={{ marginBottom: '8px' }}
+                    >
+                      <option value="">Select a Leader to Add</option>
+                      {allUsers
+                        .filter(u => (u.role === 'admin' || u.role === 'super-admin') && 
+                                 (!selectedGuild.guildLeaderIds || !selectedGuild.guildLeaderIds.includes(u.discordId)))
+                        .map(user => (
+                          <option key={user.discordId} value={user.discordId}>
+                            {user.username} ({user.role})
+                          </option>
+                        ))
+                      }
+                    </select>
+                    <button
+                      onClick={() => {
+                        if (newGuildLeaderIdInput) {
+                          const updatedLeaders = [...(selectedGuild.guildLeaderIds || []), newGuildLeaderIdInput];
+                          handleUpdateGuildLeaders(selectedGuild._id, updatedLeaders);
+                          setNewGuildLeaderIdInput('');
+                        }
+                      }}
+                      style={{ padding: '8px 16px', background: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', marginRight: '8px' }}
+                    >
+                      Add Leader
+                    </button>
+                    {selectedGuild.guildLeaderIds && selectedGuild.guildLeaderIds.length > 0 && (
+                      <button
+                        onClick={() => {
+                          if (confirm('Remove all leaders?')) {
+                            handleUpdateGuildLeaders(selectedGuild._id, []);
+                          }
+                        }}
+                        style={{ padding: '8px 16px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+                      >
+                        Clear All
+                      </button>
+                    )}
+                    {selectedGuild.guildLeaderIds && selectedGuild.guildLeaderIds.length > 0 && (
+                      <div style={{ marginTop: '12px' }}>
+                        {selectedGuild.guildLeaderIds.map((leaderId, idx) => {
+                          const leader = allUsers.find(u => u.discordId === leaderId);
+                          return (
+                            <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                              <span>👑 {leader?.username || leaderId}</span>
+                              <button
+                                onClick={() => {
+                                  const updatedLeaders = selectedGuild.guildLeaderIds!.filter(id => id !== leaderId);
+                                  handleUpdateGuildLeaders(selectedGuild._id, updatedLeaders);
+                                }}
+                                style={{ padding: '4px 8px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               {/* Members List */}
               <div className="members-section">
@@ -1469,7 +1654,7 @@ function AdminPage() {
 
                 <g transform={`translate(${panX / zoom}, ${panY / zoom}) scale(${zoom})`}>
                   {/* Draw circles for each layer */}
-                  {[1, 2, 3, 4, 5, 6].map(layer => {
+                  {[1, 2, 3, 4, 5, 6, 7].map(layer => {
                     const radius = getLayerRadius(layer);
                     return (
                       <circle
@@ -1682,7 +1867,7 @@ function AdminPage() {
                               
                               // Find nearest circle layer
                               const distFromCenter = Math.sqrt(mouseX * mouseX + mouseY * mouseY);
-                              const nearestLayer = Math.max(1, Math.min(6, Math.round(distFromCenter / layerGap)));
+                              const nearestLayer = Math.max(1, Math.min(7, Math.round(distFromCenter / layerGap)));
                               
                               // Calculate angle on that circle
                               let angle = Math.atan2(mouseY, mouseX);
@@ -1800,7 +1985,7 @@ function AdminPage() {
                         x="0"
                         y="0"
                         textAnchor="middle"
-                        fill={skill.nodeColor === 'white' ? '#000000' : '#ffffff'}
+                        fill="#000000"
                         fontSize="28"
                         fontWeight="bold"
                         fontFamily="Dongle, sans-serif"
@@ -1815,8 +2000,8 @@ function AdminPage() {
                     </g>
                   ))}
 
-                  {/* Skills on circular layers (1-6) */}
-                  {[1, 2, 3, 4, 5, 6].map(layer => {
+                  {/* Skills on circular layers (1-7) */}
+                  {[1, 2, 3, 4, 5, 6, 7].map(layer => {
                     const layerSkills = skills.filter(s => s.layer === layer);
                     const radius = getLayerRadius(layer);
 
@@ -1858,7 +2043,7 @@ function AdminPage() {
                             x={x}
                             y={y}
                             textAnchor="middle"
-                            fill={skill.nodeColor === 'white' || skill.nodeColor === 'yellow' ? '#000000' : '#ffffff'}
+                            fill="#000000"
                             fontSize="28"
                             fontWeight="bold"
                             fontFamily="Dongle, sans-serif"
@@ -1886,7 +2071,7 @@ function AdminPage() {
               <h3 className="section-subtitle">Layer Gap Customizer</h3>
               <div className="layer-gap-customizer-content">
                 <div className="layer-gap-controls-grid">
-                  {[1, 2, 3, 4, 5, 6].map(layer => (
+                  {[1, 2, 3, 4, 5, 6, 7].map(layer => (
                     <div key={layer} className="layer-gap-control-item">
                       <label className="layer-gap-label">
                         Layer {layer} Gap:
@@ -2116,12 +2301,115 @@ function AdminPage() {
                 <div className="form-row">
                   <div className="form-group full-width">
                     <label>Description *</label>
+                    <div style={{ marginBottom: '8px' }}>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        style={{ display: 'none' }}
+                        id="image-upload-input"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+
+                          const formData = new FormData();
+                          formData.append('image', file);
+
+                          try {
+                            const response = await axios.post('/api/upload/image', formData, {
+                              headers: { 'Content-Type': 'multipart/form-data' }
+                            });
+
+                            if (response.data.success) {
+                              const imageUrl = response.data.url;
+                              const altText = prompt('Enter alt text (optional):') || 'Image';
+                              const imageSyntax = `![${altText}](${imageUrl})`;
+                              const textarea = document.querySelector('.skill-textarea') as HTMLTextAreaElement;
+                              const cursorPos = textarea?.selectionStart || skillDescription.length;
+                              const newDescription = 
+                                skillDescription.substring(0, cursorPos) + 
+                                imageSyntax + 
+                                skillDescription.substring(cursorPos);
+                              setSkillDescription(newDescription);
+                              // Focus back on textarea
+                              setTimeout(() => {
+                                if (textarea) {
+                                  textarea.focus();
+                                  textarea.setSelectionRange(cursorPos + imageSyntax.length, cursorPos + imageSyntax.length);
+                                }
+                              }, 0);
+                            }
+                          } catch (error: any) {
+                            alert(error.response?.data?.error || 'Failed to upload image');
+                          }
+
+                          // Reset file input
+                          e.target.value = '';
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const imageUrl = prompt('Enter image URL:');
+                          if (imageUrl) {
+                            const altText = prompt('Enter alt text (optional):') || 'Image';
+                            const imageSyntax = `![${altText}](${imageUrl})`;
+                            const textarea = document.querySelector('.skill-textarea') as HTMLTextAreaElement;
+                            const cursorPos = textarea?.selectionStart || skillDescription.length;
+                            const newDescription = 
+                              skillDescription.substring(0, cursorPos) + 
+                              imageSyntax + 
+                              skillDescription.substring(cursorPos);
+                            setSkillDescription(newDescription);
+                            // Focus back on textarea
+                            setTimeout(() => {
+                              if (textarea) {
+                                textarea.focus();
+                                textarea.setSelectionRange(cursorPos + imageSyntax.length, cursorPos + imageSyntax.length);
+                              }
+                            }, 0);
+                          }
+                        }}
+                        style={{
+                          padding: '6px 12px',
+                          background: '#3b82f6',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          fontSize: '14px',
+                          marginRight: '8px'
+                        }}
+                      >
+                        📷 Insert Image URL
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          document.getElementById('image-upload-input')?.click();
+                        }}
+                        style={{
+                          padding: '6px 12px',
+                          background: '#10b981',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          fontSize: '14px',
+                          marginRight: '8px'
+                        }}
+                      >
+                        📤 Upload Image
+                      </button>
+                      <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                        Use format: ![alt text](image-url)
+                      </span>
+                    </div>
                     <textarea
                       value={skillDescription}
                       onChange={(e) => setSkillDescription(e.target.value)}
-                      placeholder="Detailed skill description"
+                      placeholder="Detailed skill description. Use ![alt text](image-url) to add images."
                       className="skill-textarea"
-                      rows={4}
+                      rows={6}
                     />
                   </div>
                 </div>
@@ -2138,11 +2426,11 @@ function AdminPage() {
                     />
                   </div>
                   <div className="form-group">
-                    <label>Layer (0=center, 1-6) *</label>
+                    <label>Layer (0=center, 1-7) *</label>
                     <input
                       type="number"
                       min="0"
-                      max="6"
+                      max="7"
                       value={skillLayer}
                       onChange={(e) => setSkillLayer(Number(e.target.value))}
                       className="skill-input"
@@ -2256,7 +2544,9 @@ function AdminPage() {
 
                   <div className="skill-detail-description">
                     <h4>Description</h4>
-                    <p>{selectedSkill.description}</p>
+                    <div style={{ lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
+                      {renderDescriptionWithImages(selectedSkill.description)}
+                    </div>
                   </div>
 
                   {selectedSkill.previewClip && (
@@ -2331,11 +2621,115 @@ function AdminPage() {
                     <div className="form-row">
                       <div className="form-group full-width">
                         <label>Description *</label>
+                        <div style={{ marginBottom: '8px' }}>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            style={{ display: 'none' }}
+                            id="image-upload-input-edit"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+
+                              const formData = new FormData();
+                              formData.append('image', file);
+
+                              try {
+                                const response = await axios.post('/api/upload/image', formData, {
+                                  headers: { 'Content-Type': 'multipart/form-data' }
+                                });
+
+                                if (response.data.success) {
+                                  const imageUrl = response.data.url;
+                                  const altText = prompt('Enter alt text (optional):') || 'Image';
+                                  const imageSyntax = `![${altText}](${imageUrl})`;
+                                  const textarea = document.querySelector('.skill-textarea') as HTMLTextAreaElement;
+                                  const cursorPos = textarea?.selectionStart || skillDescription.length;
+                                  const newDescription = 
+                                    skillDescription.substring(0, cursorPos) + 
+                                    imageSyntax + 
+                                    skillDescription.substring(cursorPos);
+                                  setSkillDescription(newDescription);
+                                  // Focus back on textarea
+                                  setTimeout(() => {
+                                    if (textarea) {
+                                      textarea.focus();
+                                      textarea.setSelectionRange(cursorPos + imageSyntax.length, cursorPos + imageSyntax.length);
+                                    }
+                                  }, 0);
+                                }
+                              } catch (error: any) {
+                                alert(error.response?.data?.error || 'Failed to upload image');
+                              }
+
+                              // Reset file input
+                              e.target.value = '';
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const imageUrl = prompt('Enter image URL:');
+                              if (imageUrl) {
+                                const altText = prompt('Enter alt text (optional):') || 'Image';
+                                const imageSyntax = `![${altText}](${imageUrl})`;
+                                const textarea = document.querySelector('.skill-textarea') as HTMLTextAreaElement;
+                                const cursorPos = textarea?.selectionStart || skillDescription.length;
+                                const newDescription = 
+                                  skillDescription.substring(0, cursorPos) + 
+                                  imageSyntax + 
+                                  skillDescription.substring(cursorPos);
+                                setSkillDescription(newDescription);
+                                // Focus back on textarea
+                                setTimeout(() => {
+                                  if (textarea) {
+                                    textarea.focus();
+                                    textarea.setSelectionRange(cursorPos + imageSyntax.length, cursorPos + imageSyntax.length);
+                                  }
+                                }, 0);
+                              }
+                            }}
+                            style={{
+                              padding: '6px 12px',
+                              background: '#3b82f6',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '6px',
+                              cursor: 'pointer',
+                              fontSize: '14px',
+                              marginRight: '8px'
+                            }}
+                          >
+                            📷 Insert Image URL
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              document.getElementById('image-upload-input-edit')?.click();
+                            }}
+                            style={{
+                              padding: '6px 12px',
+                              background: '#10b981',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '6px',
+                              cursor: 'pointer',
+                              fontSize: '14px',
+                              marginRight: '8px'
+                            }}
+                          >
+                            📤 Upload Image
+                          </button>
+                          <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                            Use format: ![alt text](image-url)
+                          </span>
+                        </div>
                         <textarea
                           value={skillDescription}
                           onChange={(e) => setSkillDescription(e.target.value)}
+                          placeholder="Detailed skill description. Use ![alt text](image-url) to add images."
                           className="skill-textarea"
-                          rows={4}
+                          rows={6}
                         />
                       </div>
                     </div>
@@ -2352,11 +2746,11 @@ function AdminPage() {
                         />
                       </div>
                       <div className="form-group">
-                        <label>Layer (0-6) *</label>
+                        <label>Layer (0-7) *</label>
                         <input
                           type="number"
                           min="0"
-                          max="6"
+                          max="7"
                           value={skillLayer}
                           onChange={(e) => setSkillLayer(Number(e.target.value))}
                           className="skill-input"

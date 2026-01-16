@@ -14,7 +14,9 @@ export interface IUser extends Document {
   guildId?: string; // Guild membership (MongoDB ObjectId)
   assetPoints: number;
   techTokens: number;
-  voiceMinutesToday: number;
+  voiceMinutesToday: number; // Minutes spent in voice today (resets at midnight UTC+7)
+  totalVoiceMinutes: number; // Total minutes spent in voice (cumulative)
+  lastVoiceTimeReset: Date; // Last time voiceMinutesToday was reset
   createdAt: Date;
   updatedAt: Date;
 }
@@ -79,6 +81,14 @@ const UserSchema = new Schema<IUser>(
     voiceMinutesToday: {
       type: Number,
       default: 0
+    },
+    totalVoiceMinutes: {
+      type: Number,
+      default: 0
+    },
+    lastVoiceTimeReset: {
+      type: Date,
+      default: () => new Date()
     }
   },
   {

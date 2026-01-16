@@ -2,7 +2,7 @@ import mongoose, { Document, Schema } from 'mongoose';
 
 export interface IGuild extends Document {
   name: string;
-  guildLeaderId?: string; // Discord ID of the guild leader
+  guildLeaderIds?: string[]; // Discord IDs of the guild leaders
   adminIds: string[]; // Discord IDs of assigned admins
   createdBy: string; // Discord ID of super-admin who created it
   createdAt: Date;
@@ -17,9 +17,9 @@ const GuildSchema = new Schema<IGuild>(
       unique: true,
       trim: true
     },
-    guildLeaderId: {
-      type: String,
-      default: undefined
+    guildLeaderIds: {
+      type: [String],
+      default: []
     },
     adminIds: {
       type: [String],

@@ -2,16 +2,19 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import session from 'express-session';
 import passport from 'passport';
 import { Strategy as DiscordStrategy } from 'passport-discord';
 import mongoose from 'mongoose';
 import MongoStore from 'connect-mongo';
 import axios from 'axios';
+import multer from 'multer';
 import User, { IUser } from './models/User';
 import Guild, { IGuild } from './models/Guild';
 import Skill, { ISkill } from './models/Skill';
 import SkillTreeSettings from './models/SkillTreeSettings';
+import { VoiceTracker } from './services/voiceTracker';
 
 // Extend Express types for Passport
 declare global {
@@ -24,6 +27,7 @@ declare global {
       email?: string;
       isAdmin: boolean;
       role: 'user' | 'admin' | 'super-admin';
+      guildId?: string;
     }
   }
 }
@@ -38,6 +42,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 const ADMIN_GUILD_ID = process.env.ADMIN_GUILD_ID || '';
 const ADMIN_ROLE_IDS = process.env.ADMIN_ROLE_IDS?.split(',') || [];
 const SUPER_ADMIN_ROLE_IDS = process.env.SUPER_ADMIN_ROLE_IDS?.split(',') || [];
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
 
 if (!MONGODB_URI) {
   console.error('❌ MONGODB_URI not found in environment variables');
@@ -59,6 +64,9 @@ if (ADMIN_ROLE_IDS.length > 0) {
 }
 
 console.log(`✅ Admin Guild ID: ${ADMIN_GUILD_ID}`);
+
+// Initialize voice tracker (will be initialized after MongoDB connection)
+let voiceTracker: VoiceTracker | null = null;
 
 // Helper function to check user's role and get nickname in the admin guild
 async function checkUserRoleAndNickname(accessToken: string, userId: string): Promise<{ role: 'user' | 'admin' | 'super-admin', nickname?: string }> {
@@ -135,6 +143,13 @@ app.set('trust proxy', 1);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Serve uploaded files statically
+const uploadsDir = path.join(__dirname, '../uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+app.use('/uploads', express.static(uploadsDir));
+
 // CORS configuration
 app.use(cors({
   origin: FRONTEND_URL,
@@ -145,7 +160,20 @@ app.use(cors({
 
 // MongoDB connection
 mongoose.connect(MONGODB_URI)
-  .then(() => console.log('✅ Connected to MongoDB'))
+  .then(() => {
+    console.log('✅ Connected to MongoDB');
+    
+    // Initialize voice tracker after MongoDB connection
+    if (DISCORD_BOT_TOKEN && ADMIN_GUILD_ID) {
+      console.log('🎤 Initializing voice tracker...');
+      voiceTracker = new VoiceTracker(ADMIN_GUILD_ID);
+      voiceTracker.initialize(DISCORD_BOT_TOKEN).catch((error) => {
+        console.error('❌ Failed to initialize voice tracker:', error);
+      });
+    } else {
+      console.warn('⚠️ DISCORD_BOT_TOKEN or ADMIN_GUILD_ID not set - voice tracking disabled');
+    }
+  })
   .catch((err) => {
     console.error('❌ MongoDB connection error:', err);
     process.exit(1);
@@ -232,7 +260,8 @@ async (accessToken: string, refreshToken: string, profile: any, done: any) => {
       avatar: user.avatar,
       email: user.email,
       isAdmin: user.isAdmin,
-      role: user.role
+      role: user.role,
+      guildId: user.guildId
     });
   } catch (error) {
     return done(error, null);
@@ -256,7 +285,8 @@ passport.deserializeUser(async (id: string, done) => {
         avatar: user.avatar,
         email: user.email,
         isAdmin: user.isAdmin,
-        role: user.role
+        role: user.role,
+        guildId: user.guildId
       });
     } else {
       done(null, false);
@@ -354,7 +384,7 @@ app.get('/api/super-admin/settings', requireSuperAdmin, (req: Request, res: Resp
 // Create a new guild (super-admin only)
 app.post('/api/guilds', requireSuperAdmin, async (req: Request, res: Response) => {
   try {
-    const { name, guildLeaderId, adminIds } = req.body;
+    const { name, guildLeaderIds, adminIds } = req.body;
 
     if (!name) {
       return res.status(400).json({ error: 'Guild name is required' });
@@ -366,20 +396,23 @@ app.post('/api/guilds', requireSuperAdmin, async (req: Request, res: Response) =
       return res.status(400).json({ error: 'Guild name already exists' });
     }
 
-    // Verify guild leader exists and has appropriate role
-    if (guildLeaderId) {
-      const leader = await User.findOne({ discordId: guildLeaderId });
-      if (!leader) {
-        return res.status(400).json({ error: 'Guild leader not found' });
-      }
-      if (leader.role !== 'admin' && leader.role !== 'super-admin') {
-        return res.status(400).json({ error: 'Guild leader must be an admin or super-admin' });
+    // Verify guild leaders exist and have appropriate role
+    const leaderIdsArray = Array.isArray(guildLeaderIds) ? guildLeaderIds : (guildLeaderIds ? [guildLeaderIds] : []);
+    if (leaderIdsArray.length > 0) {
+      for (const leaderId of leaderIdsArray) {
+        const leader = await User.findOne({ discordId: leaderId });
+        if (!leader) {
+          return res.status(400).json({ error: `Guild leader ${leaderId} not found` });
+        }
+        if (leader.role !== 'admin' && leader.role !== 'super-admin') {
+          return res.status(400).json({ error: 'Guild leader must be an admin or super-admin' });
+        }
       }
     }
 
     const guild = await Guild.create({
       name,
-      guildLeaderId: guildLeaderId || undefined,
+      guildLeaderIds: leaderIdsArray,
       adminIds: adminIds || [],
       createdBy: req.user!.id
     });
@@ -391,8 +424,8 @@ app.post('/api/guilds', requireSuperAdmin, async (req: Request, res: Response) =
   }
 });
 
-// Get all guilds (admin and super-admin)
-app.get('/api/guilds', requireAdmin, async (req: Request, res: Response) => {
+// Get all guilds (public - for guild selection)
+app.get('/api/guilds', async (req: Request, res: Response) => {
   try {
     const guilds = await Guild.find().sort({ createdAt: -1 });
     res.json({ success: true, guilds });
@@ -419,25 +452,28 @@ app.get('/api/guilds/:id', requireAdmin, async (req: Request, res: Response) => 
 // Update guild (super-admin only)
 app.put('/api/guilds/:id', requireSuperAdmin, async (req: Request, res: Response) => {
   try {
-    const { name, guildLeaderId, adminIds } = req.body;
+    const { name, guildLeaderIds, adminIds } = req.body;
     const guild = await Guild.findById(req.params.id);
 
     if (!guild) {
       return res.status(404).json({ error: 'Guild not found' });
     }
 
-    // Verify guild leader if provided
-    if (guildLeaderId !== undefined) {
-      if (guildLeaderId) {
-        const leader = await User.findOne({ discordId: guildLeaderId });
-        if (!leader) {
-          return res.status(400).json({ error: 'Guild leader not found' });
-        }
-        if (leader.role !== 'admin' && leader.role !== 'super-admin') {
-          return res.status(400).json({ error: 'Guild leader must be an admin or super-admin' });
+    // Verify guild leaders if provided
+    if (guildLeaderIds !== undefined) {
+      const leaderIdsArray = Array.isArray(guildLeaderIds) ? guildLeaderIds : (guildLeaderIds ? [guildLeaderIds] : []);
+      if (leaderIdsArray.length > 0) {
+        for (const leaderId of leaderIdsArray) {
+          const leader = await User.findOne({ discordId: leaderId });
+          if (!leader) {
+            return res.status(400).json({ error: `Guild leader ${leaderId} not found` });
+          }
+          if (leader.role !== 'admin' && leader.role !== 'super-admin') {
+            return res.status(400).json({ error: 'Guild leader must be an admin or super-admin' });
+          }
         }
       }
-      guild.guildLeaderId = guildLeaderId || undefined;
+      guild.guildLeaderIds = leaderIdsArray;
     }
 
     if (name) guild.name = name;
@@ -486,6 +522,7 @@ app.get('/api/guilds/:id/members', requireAdmin, async (req: Request, res: Respo
       assetPoints: member.assetPoints,
       techTokens: member.techTokens,
       voiceMinutesToday: member.voiceMinutesToday,
+      totalVoiceMinutes: member.totalVoiceMinutes || 0,
       isAdmin: member.isAdmin
     }));
     
@@ -513,16 +550,18 @@ app.get('/api/guilds/:id/stats', requireAdmin, async (req: Request, res: Respons
     const totalTechTokens = members.reduce((sum, member) => sum + member.techTokens, 0);
     const totalVoiceMinutes = members.reduce((sum, member) => sum + member.voiceMinutesToday, 0);
     
-    // Get guild leader info
-    let guildLeader = null;
-    if (guild.guildLeaderId) {
-      const leader = await User.findOne({ discordId: guild.guildLeaderId }).select('-accessToken -refreshToken');
-      if (leader) {
-        guildLeader = {
-          discordId: leader.discordId,
-          username: leader.nickname || leader.username,
-          role: leader.role
-        };
+    // Get guild leaders info
+    const guildLeaders = [];
+    if (guild.guildLeaderIds && guild.guildLeaderIds.length > 0) {
+      for (const leaderId of guild.guildLeaderIds) {
+        const leader = await User.findOne({ discordId: leaderId }).select('-accessToken -refreshToken');
+        if (leader) {
+          guildLeaders.push({
+            discordId: leader.discordId,
+            username: leader.nickname || leader.username,
+            role: leader.role
+          });
+        }
       }
     }
 
@@ -530,7 +569,7 @@ app.get('/api/guilds/:id/stats', requireAdmin, async (req: Request, res: Respons
       success: true,
       stats: {
         guildName: guild.name,
-        guildLeader,
+        guildLeaders,
         totalMembers,
         totalAssetPoints,
         totalTechTokens,
@@ -553,8 +592,8 @@ app.get('/api/guilds/:id/stats', requireAdmin, async (req: Request, res: Respons
 // Get user's guild info (for dashboard)
 app.get('/api/user/guild-info', requireAdmin, async (req: Request, res: Response) => {
   try {
-    // Find guilds where user is the leader
-    const leaderGuilds = await Guild.find({ guildLeaderId: req.user!.id });
+    // Find guilds where user is one of the leaders
+    const leaderGuilds = await Guild.find({ guildLeaderIds: req.user!.id });
     
     if (leaderGuilds.length === 0) {
       return res.json({ success: true, isLeader: false, guild: null });
@@ -600,6 +639,7 @@ app.get('/api/users', requireAdmin, async (req: Request, res: Response) => {
       assetPoints: user.assetPoints,
       techTokens: user.techTokens,
       voiceMinutesToday: user.voiceMinutesToday,
+      totalVoiceMinutes: user.totalVoiceMinutes || 0,
       isAdmin: user.isAdmin,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt
@@ -613,11 +653,29 @@ app.get('/api/users', requireAdmin, async (req: Request, res: Response) => {
 });
 
 // Assign user to guild (admin and super-admin)
-app.post('/api/users/:userId/guild', requireAdmin, async (req: Request, res: Response) => {
+// Assign user to guild (admin can assign any user, regular users can only assign themselves)
+app.post('/api/users/:userId/guild', async (req: Request, res: Response) => {
   try {
     const { guildId } = req.body;
-    const user = await User.findOne({ discordId: req.params.userId });
+    const requestingUserId = req.user?.id; // From session
+    const targetUserId = req.params.userId;
 
+    // Check if user is authenticated
+    if (!requestingUserId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const requestingUser = await User.findOne({ discordId: requestingUserId });
+    if (!requestingUser) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    // Regular users can only assign themselves, admins can assign anyone
+    if (requestingUser.role !== 'admin' && requestingUser.role !== 'super-admin' && requestingUserId !== targetUserId) {
+      return res.status(403).json({ error: 'You can only assign yourself to a guild' });
+    }
+
+    const user = await User.findOne({ discordId: targetUserId });
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -712,9 +770,9 @@ app.post('/api/skills', requireSuperAdmin, async (req: Request, res: Response) =
       return res.status(400).json({ error: 'Missing required fields: title, description, cost, layer, position' });
     }
 
-    // Validate layer is between 0 and 6
-    if (layer < 0 || layer > 6) {
-      return res.status(400).json({ error: 'Layer must be between 0 (center) and 6' });
+    // Validate layer is between 0 and 7
+    if (layer < 0 || layer > 7) {
+      return res.status(400).json({ error: 'Layer must be between 0 (center) and 7' });
     }
 
     const skill = new Skill({
@@ -752,8 +810,8 @@ app.put('/api/skills/:id', requireSuperAdmin, async (req: Request, res: Response
     }
 
     // Validate layer if provided
-    if (layer !== undefined && (layer < 0 || layer > 6)) {
-      return res.status(400).json({ error: 'Layer must be between 0 (center) and 6' });
+    if (layer !== undefined && (layer < 0 || layer > 7)) {
+      return res.status(400).json({ error: 'Layer must be between 0 (center) and 7' });
     }
 
     // Update fields
@@ -918,7 +976,7 @@ app.get('/api/skill-tree-settings', requireAuth, async (req: Request, res: Respo
     let settings = await SkillTreeSettings.findOne();
     if (!settings) {
       const defaultLayerGaps = new Map();
-      for (let i = 1; i <= 6; i++) {
+      for (let i = 1; i <= 7; i++) {
         defaultLayerGaps.set(String(i), 120); // Use string keys for Mongoose Map
       }
       settings = new SkillTreeSettings({ 
@@ -955,7 +1013,7 @@ app.put('/api/skill-tree-settings', requireSuperAdmin, async (req: Request, res:
     let settings = await SkillTreeSettings.findOne();
     if (!settings) {
       const defaultLayerGaps = new Map();
-      for (let i = 1; i <= 6; i++) {
+      for (let i = 1; i <= 7; i++) {
         defaultLayerGaps.set(String(i), layerGap !== undefined ? layerGap : 120); // Use string keys
       }
       settings = new SkillTreeSettings({ 
@@ -977,7 +1035,7 @@ app.put('/api/skill-tree-settings', requireSuperAdmin, async (req: Request, res:
         // Validate and update per-layer gaps
         // Mongoose Maps require string keys, so we convert numbers to strings
         const layerGapsMap = new Map();
-        for (let layer = 1; layer <= 6; layer++) {
+        for (let layer = 1; layer <= 7; layer++) {
           const gap = layerGaps[layer];
           if (gap !== undefined) {
             if (typeof gap !== 'number' || gap < 80 || gap > 300) {
@@ -1032,6 +1090,53 @@ app.put('/api/skill-tree-settings', requireSuperAdmin, async (req: Request, res:
     console.error('❌ Error updating skill tree settings:', error);
     console.error('Error details:', error.message, error.stack);
     res.status(500).json({ error: `Failed to update skill tree settings: ${error.message || 'Unknown error'}` });
+  }
+});
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    // Generate unique filename with timestamp
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname);
+    cb(null, 'image-' + uniqueSuffix + ext);
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    // Accept only image files
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed!'));
+    }
+  }
+});
+
+// Upload image endpoint (admin only)
+app.post('/api/upload/image', requireAdmin, upload.single('image'), (req: Request, res: Response) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    // Return the URL to access the uploaded file
+    // The base URL should match where the backend is accessible from the frontend
+    const baseUrl = process.env.BACKEND_URL || `http://localhost:${PORT}`;
+    const fileUrl = `${baseUrl}/uploads/${req.file.filename}`;
+    
+    res.json({ success: true, url: fileUrl, filename: req.file.filename });
+  } catch (error: any) {
+    console.error('Error uploading image:', error);
+    res.status(500).json({ error: error.message || 'Failed to upload image' });
   }
 });
 

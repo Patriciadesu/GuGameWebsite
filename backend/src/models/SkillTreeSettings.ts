@@ -2,7 +2,7 @@ import mongoose, { Document, Schema } from 'mongoose';
 
 export interface ISkillTreeSettings extends Document {
   layerGap: number; // Legacy: kept for backward compatibility, will use layerGaps if available
-  layerGaps: { [key: number]: number }; // Gap for each layer (1-6)
+  layerGaps: { [key: number]: number }; // Gap for each layer (1-7)
   arrowheadGapFromNode: number; // Gap from target node edge
   arrowheadStartPoint: number; // Distance from path end where arrowhead starts
   arrowheadSize: number; // Size of the arrowhead
@@ -18,7 +18,7 @@ const SkillTreeSettingsSchema = new Schema<ISkillTreeSettings>(
       of: Number,
       default: () => {
         const map = new Map();
-        for (let i = 1; i <= 6; i++) {
+        for (let i = 1; i <= 7; i++) {
           map.set(String(i), 120); // Mongoose Maps require string keys
         }
         return map;

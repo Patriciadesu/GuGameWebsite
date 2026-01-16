@@ -7,7 +7,7 @@ export interface ISkill extends Document {
   previewClip?: string; // YouTube embed link
   contentYouTube?: string; // YouTube content link
   contentGoogleDrive?: string; // Google Drive content link
-  layer: number; // Layer position (1-6)
+  layer: number; // Layer position (1-7)
   position: number; // Position within the layer (0-based)
   isActive: boolean; // Whether the skill is currently active/visible
   nodeColor: 'yellow' | 'blue' | 'green' | 'white' | 'purple'; // Node color type
@@ -30,7 +30,7 @@ const SkillSchema = new Schema<ISkill>(
     previewClip: { type: String, default: undefined },
     contentYouTube: { type: String, default: undefined },
     contentGoogleDrive: { type: String, default: undefined },
-    layer: { type: Number, required: true, min: 0, max: 6 },
+    layer: { type: Number, required: true, min: 0, max: 7 },
     position: { type: Number, required: true, min: 0 },
     isActive: { type: Boolean, default: true },
     nodeColor: { type: String, enum: ['yellow', 'blue', 'green', 'white', 'purple'], default: 'blue' },

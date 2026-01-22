@@ -4,7 +4,6 @@ import axios from '../config/axios';
 import './MainMenu.css';
 import guildIcon from '../assets/Guild.svg';
 import leaderboardIcon from '../assets/Leaderboard.svg';
-import supportIcon from '../assets/Tech Support.svg';
 
 interface User {
   id: string;
@@ -93,9 +92,41 @@ function MainMenu() {
       loadSkills();
       loadSkillTreeSettings();
       loadUserStats();
-      loadVoiceTime();
+      loadUnlockedSkills();
     }
   }, [user]);
+
+  // Reload user stats immediately on mount and when component comes back into focus
+  useEffect(() => {
+    if (user) {
+      // Load stats immediately on mount
+      loadUserStats();
+      
+      const handleFocus = () => {
+        loadUserStats();
+      };
+
+      // Reload stats when window gains focus (e.g., returning from another tab/page)
+      window.addEventListener('focus', handleFocus);
+      
+      // Also reload stats periodically to keep in sync (every 10 seconds)
+      const interval = setInterval(() => {
+        loadUserStats();
+      }, 10000);
+
+      return () => {
+        window.removeEventListener('focus', handleFocus);
+        clearInterval(interval);
+      };
+    }
+  }, [user]);
+
+  // Also reload stats when component mounts/becomes visible
+  useEffect(() => {
+    if (user) {
+      loadUserStats();
+    }
+  }, []);
 
   const loadSkills = async () => {
     try {
@@ -144,12 +175,18 @@ function MainMenu() {
 
   const loadUserStats = async () => {
     try {
-      const response = await axios.get('/api/auth/user');
-      if (response.data.authenticated && response.data.user) {
-        // Try to get full user data with stats
-        const userResponse = await axios.get(`/api/users/${response.data.user.id}`);
-        if (userResponse.data.success && userResponse.data.user) {
-          setAssetPoints(userResponse.data.user.assetPoints || 0);
+      if (!user?.id) return;
+      
+      // Get full user data with stats
+      const userResponse = await axios.get(`/api/users/${user.id}`);
+      if (userResponse.data.success && userResponse.data.user) {
+        setAssetPoints(userResponse.data.user.assetPoints || 0);
+        // Also load voice time from the same response if available
+        if (userResponse.data.user.voiceMinutesToday !== undefined) {
+          setVoiceMinutesToday(userResponse.data.user.voiceMinutesToday || 0);
+        }
+        if (userResponse.data.user.totalVoiceMinutes !== undefined) {
+          setTotalVoiceMinutes(userResponse.data.user.totalVoiceMinutes || 0);
         }
       }
     } catch (error) {
@@ -157,18 +194,7 @@ function MainMenu() {
     }
   };
 
-  const loadVoiceTime = async () => {
-    try {
-      if (!user?.id) return;
-      const response = await axios.get(`/api/users/${user.id}/voice-time`);
-      if (response.data.success && response.data.voiceTime) {
-        setVoiceMinutesToday(response.data.voiceTime.voiceMinutesToday || 0);
-        setTotalVoiceMinutes(response.data.voiceTime.totalVoiceMinutes || 0);
-      }
-    } catch (error) {
-      console.error('Error loading voice time:', error);
-    }
-  };
+  // Voice time is now loaded with loadUserStats
 
   const loadUnlockedSkills = async () => {
     try {
@@ -246,10 +272,10 @@ function MainMenu() {
     try {
       const response = await axios.post(`/api/skills/${selectedSkill._id}/unlock`);
       if (response.data.success) {
-        // Update unlocked skills
-        setUnlockedSkills([...unlockedSkills, selectedSkill._id]);
-        // Update asset points
-        setAssetPoints(response.data.remainingAssetPoints);
+        // Reload all user stats to ensure they're up to date
+        await loadUserStats();
+        // Reload unlocked skills list
+        await loadUnlockedSkills();
         // Close modal
         setShowSkillModal(false);
         setSelectedSkill(null);
@@ -286,53 +312,221 @@ function MainMenu() {
     }
   };
 
-  // Parse description and render images from markdown-style syntax ![alt](url)
+  // Parse description and render Discord Rich Text / Markdown format
   const renderDescriptionWithImages = (description: string) => {
-    const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
-    const parts: (string | JSX.Element)[] = [];
-    let lastIndex = 0;
-    let match;
-    let key = 0;
+    if (!description) return null;
 
-    while ((match = imageRegex.exec(description)) !== null) {
-      // Add text before the image
-      if (match.index > lastIndex) {
-        parts.push(description.substring(lastIndex, match.index));
+    // Split by lines to handle headers and lists
+    const lines = description.split('\n');
+    const elements: JSX.Element[] = [];
+    let key = 0;
+    let listItems: JSX.Element[] = [];
+    let listKey = 0;
+
+    lines.forEach((line) => {
+      const trimmedLine = line.trim();
+      
+      // Skip empty lines
+      if (!trimmedLine) {
+        if (listItems.length > 0) {
+          elements.push(
+            <ul key={key++} style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
+              {listItems}
+            </ul>
+          );
+          listItems = [];
+        }
+        return;
       }
-      // Add the image
-      const altText = match[1];
-      const imageUrl = match[2];
+
+      // Headers
+      if (trimmedLine.startsWith('### ')) {
+        if (listItems.length > 0) {
+          elements.push(
+            <ul key={key++} style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
+              {listItems}
+            </ul>
+          );
+          listItems = [];
+        }
+        const text = trimmedLine.substring(4);
+        elements.push(
+          <h3 key={key++} style={{ fontSize: '1.6rem', fontWeight: '700', color: '#14306d', marginTop: '16px', marginBottom: '8px' }}>
+            {parseInlineMarkdown(text, key)}
+          </h3>
+        );
+        return;
+      }
+      
+      if (trimmedLine.startsWith('## ')) {
+        if (listItems.length > 0) {
+          elements.push(
+            <ul key={key++} style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
+              {listItems}
+            </ul>
+          );
+          listItems = [];
+        }
+        const text = trimmedLine.substring(3);
+        elements.push(
+          <h2 key={key++} style={{ fontSize: '1.8rem', fontWeight: '700', color: '#14306d', marginTop: '20px', marginBottom: '12px' }}>
+            {parseInlineMarkdown(text, key)}
+          </h2>
+        );
+        return;
+      }
+      
+      if (trimmedLine.startsWith('# ')) {
+        if (listItems.length > 0) {
+          elements.push(
+            <ul key={key++} style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
+              {listItems}
+            </ul>
+          );
+          listItems = [];
+        }
+        const text = trimmedLine.substring(2);
+        elements.push(
+          <h1 key={key++} style={{ fontSize: '2rem', fontWeight: '700', color: '#14306d', marginTop: '24px', marginBottom: '16px' }}>
+            {parseInlineMarkdown(text, key)}
+          </h1>
+        );
+        return;
+      }
+
+      // Bullet points
+      if (trimmedLine.startsWith('- ')) {
+        const text = trimmedLine.substring(2);
+        listItems.push(
+          <li key={listKey++} style={{ marginBottom: '4px', fontSize: '1.4rem', lineHeight: '1.6' }}>
+            {parseInlineMarkdown(text, key * 1000 + listKey)}
+          </li>
+        );
+        return;
+      }
+
+      // Regular paragraph - close list if open
+      if (listItems.length > 0) {
+        elements.push(
+          <ul key={key++} style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
+            {listItems}
+          </ul>
+        );
+        listItems = [];
+      }
+
+      // Check for images in the line
+      const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
+      let imageMatch;
+      let lastIndex = 0;
+      const lineParts: (string | JSX.Element)[] = [];
+      let hasImages = false;
+
+      while ((imageMatch = imageRegex.exec(trimmedLine)) !== null) {
+        hasImages = true;
+        // Add text before the image
+        if (imageMatch.index > lastIndex) {
+          const textBefore = trimmedLine.substring(lastIndex, imageMatch.index);
+          const parsed = parseInlineMarkdown(textBefore, key * 1000 + lineParts.length);
+          lineParts.push(...parsed);
+        }
+        // Add the image
+        const altText = imageMatch[1];
+        const imageUrl = imageMatch[2];
+        lineParts.push(
+          <img
+            key={`img-${key}-${lineParts.length}`}
+            src={imageUrl}
+            alt={altText || 'Skill image'}
+            style={{
+              maxWidth: '100%',
+              height: 'auto',
+              margin: '10px 0',
+              borderRadius: '8px',
+              display: 'block'
+            }}
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = 'none';
+            }}
+          />
+        );
+        lastIndex = imageMatch.index + imageMatch[0].length;
+      }
+
+      // Add remaining text
+      if (lastIndex < trimmedLine.length) {
+        const remainingText = trimmedLine.substring(lastIndex);
+        const parsed = parseInlineMarkdown(remainingText, key * 1000 + lineParts.length);
+        lineParts.push(...parsed);
+      } else if (!hasImages) {
+        // No images found, parse entire line
+        const parsed = parseInlineMarkdown(trimmedLine, key * 1000);
+        lineParts.push(...parsed);
+      }
+
+      if (lineParts.length > 0) {
+        elements.push(
+          <p key={`p-${key++}`} style={{ marginBottom: '8px', fontSize: '1.4rem', lineHeight: '1.6' }}>
+            {lineParts}
+          </p>
+        );
+      }
+    });
+
+    // Close any open list
+    if (listItems.length > 0) {
+      elements.push(
+        <ul key={key++} style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
+          {listItems}
+        </ul>
+      );
+    }
+
+    return <div style={{ whiteSpace: 'pre-wrap' }}>{elements}</div>;
+  };
+
+  // Parse inline markdown (links, bold, italic)
+  const parseInlineMarkdown = (text: string, baseKey: number): (string | JSX.Element)[] => {
+    const parts: (string | JSX.Element)[] = [];
+    let key = baseKey;
+    let lastIndex = 0;
+
+    // Match links [text](url)
+    const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+    let match;
+
+    while ((match = linkRegex.exec(text)) !== null) {
+      // Add text before the link
+      if (match.index > lastIndex) {
+        parts.push(text.substring(lastIndex, match.index));
+      }
+      // Add the link
+      const linkText = match[1];
+      const linkUrl = match[2];
       parts.push(
-        <img
+        <a
           key={key++}
-          src={imageUrl}
-          alt={altText || 'Skill image'}
+          href={linkUrl}
+          target="_blank"
+          rel="noopener noreferrer"
           style={{
-            maxWidth: '100%',
-            height: 'auto',
-            margin: '10px 0',
-            borderRadius: '8px',
-            display: 'block'
+            color: '#4e98ff',
+            textDecoration: 'underline',
+            fontWeight: '500'
           }}
-          onError={(e) => {
-            (e.target as HTMLImageElement).style.display = 'none';
-          }}
-        />
+        >
+          {linkText}
+        </a>
       );
       lastIndex = match.index + match[0].length;
     }
 
     // Add remaining text
-    if (lastIndex < description.length) {
-      parts.push(description.substring(lastIndex));
+    if (lastIndex < text.length) {
+      parts.push(text.substring(lastIndex));
     }
 
-    // If no images found, return the description as-is
-    if (parts.length === 0) {
-      return <span>{description}</span>;
-    }
-
-    return <div>{parts}</div>;
+    return parts.length > 0 ? parts : [text];
   };
 
   // Convert YouTube URL to embed URL
@@ -595,12 +789,12 @@ function MainMenu() {
             <span className="nav-text">Guild</span>
           </div>
 
-          {/* Tech Support Card */}
-          <div className="nav-item support">
+          {/* Shop Card */}
+          <div className="nav-item shop" onClick={() => navigate('/shop')}>
             <div className="nav-icon-wrapper">
-              <img src={supportIcon} alt="Tech Support" className="nav-icon" />
+              <span className="nav-icon-text">🛒</span>
             </div>
-            <span className="nav-text">Tech Support</span>
+            <span className="nav-text">Shop</span>
           </div>
 
           {/* Leaderboard Card */}

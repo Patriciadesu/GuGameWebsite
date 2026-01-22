@@ -86,9 +86,16 @@ interface ApprovalRequest {
     discriminator: string;
     avatar: string | null;
   };
+  skill?: {
+    _id: string;
+    title: string;
+    description?: string;
+    minAP?: number;
+    maxAP?: number;
+  };
 }
 
-type AdminSection = 'dashboard' | 'guilds' | 'users' | 'skilltree' | 'approvals' | 'settings';
+type AdminSection = 'dashboard' | 'guilds' | 'users' | 'skilltree' | 'approvals' | 'images' | 'shop' | 'preorders' | 'settings';
 
 function AdminPage() {
   const navigate = useNavigate();
@@ -172,6 +179,81 @@ function AdminPage() {
   const [selectedApprovalRequest, setSelectedApprovalRequest] = useState<ApprovalRequest | null>(null);
   const [approveAPAmount, setApproveAPAmount] = useState(0);
 
+  // Image Management states
+  const [uploadedImages, setUploadedImages] = useState<Array<{
+    filename: string;
+    url: string;
+    size: number;
+    uploadedAt: string;
+    modifiedAt: string;
+    isUsed: boolean;
+  }>>([]);
+
+  // Shop Item Management states
+  const [shopItems, setShopItems] = useState<Array<{
+    _id: string;
+    title: string;
+    description?: string;
+    price: number;
+    imageUrl: string;
+    isActive: boolean;
+    createdAt: string;
+    updatedAt: string;
+  }>>([]);
+  const [showCreateShopItem, setShowCreateShopItem] = useState(false);
+  const [showEditShopItem, setShowEditShopItem] = useState(false);
+  const [selectedShopItem, setSelectedShopItem] = useState<{
+    _id: string;
+    title: string;
+    description?: string;
+    price: number;
+    imageUrl: string;
+    isActive: boolean;
+  } | null>(null);
+  const [shopItemTitle, setShopItemTitle] = useState('');
+  const [shopItemDescription, setShopItemDescription] = useState('');
+  const [shopItemPrice, setShopItemPrice] = useState(0);
+  const [shopItemImageUrl, setShopItemImageUrl] = useState('');
+  const [shopItemIsActive, setShopItemIsActive] = useState(true);
+  const [showShopItemAnalytics, setShowShopItemAnalytics] = useState(false);
+  const [selectedShopItemAnalytics, setSelectedShopItemAnalytics] = useState<{
+    itemId: string;
+    itemTitle: string;
+    purchases: Array<{
+      userId: string;
+      user: {
+        username: string;
+        nickname?: string;
+        discriminator: string;
+        avatar: string | null;
+      } | null;
+      purchasedAt: string;
+      status: string;
+    }>;
+  } | null>(null);
+
+  // Preorders states
+  const [preorders, setPreorders] = useState<Array<{
+    _id: string;
+    userId: string;
+    user: {
+      username: string;
+      nickname?: string;
+      discriminator: string;
+      avatar: string | null;
+    } | null;
+    shopItem: {
+      _id: string;
+      title: string;
+      price: number;
+      imageUrl: string;
+    };
+    status: 'preorder' | 'completed';
+    purchasedAt: string;
+    createdAt: string;
+    updatedAt: string;
+  }>>([]);
+
   useEffect(() => {
     checkAuth();
   }, []);
@@ -197,6 +279,15 @@ function AdminPage() {
   useEffect(() => {
     if (activeSection === 'approvals' && user) {
       loadApprovalRequests();
+    }
+    if (activeSection === 'images' && user?.role === 'super-admin') {
+      loadUploadedImages();
+    }
+    if (activeSection === 'shop' && user) {
+      loadShopItems();
+    }
+    if (activeSection === 'preorders' && user) {
+      loadPreorders();
     }
   }, [activeSection, user]);
 
@@ -924,6 +1015,159 @@ function AdminPage() {
     setShowApproveModal(true);
   };
 
+  const loadUploadedImages = async () => {
+    try {
+      const response = await axios.get('/api/admin/images');
+      if (response.data.success) {
+        setUploadedImages(response.data.images);
+      }
+    } catch (error) {
+      console.error('Error loading uploaded images:', error);
+      alert('Failed to load uploaded images');
+    }
+  };
+
+  const loadShopItems = async () => {
+    try {
+      const response = await axios.get('/api/admin/shop/items');
+      if (response.data.success) {
+        setShopItems(response.data.items);
+      }
+    } catch (error) {
+      console.error('Error loading shop items:', error);
+      alert('Failed to load shop items');
+    }
+  };
+
+  const loadPreorders = async () => {
+    try {
+      const response = await axios.get('/api/admin/shop/purchases');
+      if (response.data.success) {
+        setPreorders(response.data.purchases);
+      }
+    } catch (error) {
+      console.error('Error loading preorders:', error);
+      alert('Failed to load preorders');
+    }
+  };
+
+  const handleViewShopItemAnalytics = async (itemId: string, itemTitle: string) => {
+    try {
+      const response = await axios.get(`/api/admin/shop/items/${itemId}/purchases`);
+      if (response.data.success) {
+        setSelectedShopItemAnalytics({
+          itemId,
+          itemTitle,
+          purchases: response.data.purchases
+        });
+        setShowShopItemAnalytics(true);
+      }
+    } catch (error: any) {
+      console.error('Error loading shop item analytics:', error);
+      alert(error.response?.data?.error || 'Failed to load analytics');
+    }
+  };
+
+  const handleCreateShopItem = async () => {
+    if (!shopItemTitle.trim() || !shopItemImageUrl.trim() || shopItemPrice < 0) {
+      alert('Please fill in title, image URL, and valid price');
+      return;
+    }
+
+    try {
+      await axios.post('/api/admin/shop/items', {
+        title: shopItemTitle,
+        description: shopItemDescription.trim() || '',
+        price: shopItemPrice,
+        imageUrl: shopItemImageUrl.trim(),
+        isActive: shopItemIsActive
+      });
+      alert('Shop item created successfully!');
+      resetShopItemForm();
+      setShowCreateShopItem(false);
+      loadShopItems();
+    } catch (error: any) {
+      console.error('Error creating shop item:', error);
+      alert(error.response?.data?.error || 'Failed to create shop item');
+    }
+  };
+
+  const handleUpdateShopItem = async () => {
+    if (!selectedShopItem || !shopItemTitle.trim() || !shopItemImageUrl.trim() || shopItemPrice < 0) {
+      alert('Please fill in title, image URL, and valid price');
+      return;
+    }
+
+    try {
+      await axios.put(`/api/admin/shop/items/${selectedShopItem._id}`, {
+        title: shopItemTitle,
+        description: shopItemDescription.trim() || '',
+        price: shopItemPrice,
+        imageUrl: shopItemImageUrl.trim(),
+        isActive: shopItemIsActive
+      });
+      alert('Shop item updated successfully!');
+      resetShopItemForm();
+      setShowEditShopItem(false);
+      setSelectedShopItem(null);
+      loadShopItems();
+    } catch (error: any) {
+      console.error('Error updating shop item:', error);
+      alert(error.response?.data?.error || 'Failed to update shop item');
+    }
+  };
+
+  const handleDeleteShopItem = async (itemId: string) => {
+    if (!confirm('Are you sure you want to delete this shop item?')) {
+      return;
+    }
+
+    try {
+      await axios.delete(`/api/admin/shop/items/${itemId}`);
+      alert('Shop item deleted successfully!');
+      loadShopItems();
+    } catch (error: any) {
+      console.error('Error deleting shop item:', error);
+      alert(error.response?.data?.error || 'Failed to delete shop item');
+    }
+  };
+
+  const startEditingShopItem = (item: typeof shopItems[0]) => {
+    setSelectedShopItem(item);
+    setShopItemTitle(item.title);
+    setShopItemDescription(item.description || '');
+    setShopItemPrice(item.price);
+    setShopItemImageUrl(item.imageUrl);
+    setShopItemIsActive(item.isActive);
+    setShowEditShopItem(true);
+  };
+
+  const resetShopItemForm = () => {
+    setShopItemTitle('');
+    setShopItemDescription('');
+    setShopItemPrice(0);
+    setShopItemImageUrl('');
+    setShopItemIsActive(true);
+    setSelectedShopItem(null);
+  };
+
+  const handleDeleteImage = async (filename: string) => {
+    if (!confirm(`Are you sure you want to delete "${filename}"?`)) {
+      return;
+    }
+
+    try {
+      const response = await axios.delete(`/api/admin/images/${filename}`);
+      if (response.data.success) {
+        alert('Image deleted successfully!');
+        loadUploadedImages();
+      }
+    } catch (error: any) {
+      console.error('Error deleting image:', error);
+      alert(error.response?.data?.error || 'Failed to delete image');
+    }
+  };
+
   const handleConfirmApprove = async () => {
     if (!selectedApprovalRequest) return;
     if (approveAPAmount < 0) {
@@ -1101,6 +1345,21 @@ function AdminPage() {
           onClick={() => setActiveSection('approvals')}
         >
           ✅ Approvals
+        </button>
+        {/* Image Management - Only visible to super-admin */}
+        {user?.role === 'super-admin' && (
+          <button 
+            className={`nav-tab ${activeSection === 'images' ? 'active' : ''}`}
+            onClick={() => setActiveSection('images')}
+          >
+            🖼️ Images
+          </button>
+        )}
+        <button 
+          className={`nav-tab ${activeSection === 'shop' ? 'active' : ''}`}
+          onClick={() => setActiveSection('shop')}
+        >
+          🛒 Shop
         </button>
         <button 
           className={`nav-tab ${activeSection === 'settings' ? 'active' : ''}`}
@@ -2323,7 +2582,7 @@ function AdminPage() {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 {approvalRequests.map((request) => {
-                  const skill = skills.find(s => s._id === request.skillId);
+                  const skill = request.skill || skills.find(s => s._id === request.skillId);
                   const displayName = request.user?.nickname || request.user?.username || 'Unknown User';
                   return (
                     <div 
@@ -2344,8 +2603,17 @@ function AdminPage() {
                             {displayName}
                             {request.user?.discriminator && <span style={{ color: '#6b7280' }}>#{request.user.discriminator}</span>}
                           </div>
-                          <div style={{ fontSize: '16px', color: '#4e98ff', marginBottom: '8px' }}>
-                            Quest: {skill?.title || 'Unknown Skill'}
+                          <div style={{ 
+                            fontSize: '20px', 
+                            fontWeight: '700', 
+                            color: '#14306d', 
+                            marginBottom: '8px',
+                            padding: '8px 12px',
+                            background: '#eff6ff',
+                            borderRadius: '8px',
+                            border: '2px solid #3b82f6'
+                          }}>
+                            📋 Quest: {skill?.title || 'Unknown Skill'}
                           </div>
                           {request.message && (
                             <div style={{ 
@@ -2390,6 +2658,522 @@ function AdminPage() {
                 })}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Image Management Section */}
+        {activeSection === 'images' && user?.role === 'super-admin' && (
+          <div className="images-section">
+            <h2 className="section-title">Image Management</h2>
+            <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <p style={{ fontSize: '14px', color: '#6b7280' }}>
+                Total: {uploadedImages.length} | Used: {uploadedImages.filter(img => img.isUsed).length} | Unused: {uploadedImages.filter(img => !img.isUsed).length}
+              </p>
+              <button
+                onClick={loadUploadedImages}
+                style={{
+                  padding: '8px 16px',
+                  background: '#3b82f6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                🔄 Refresh
+              </button>
+            </div>
+            {uploadedImages.length === 0 ? (
+              <p className="placeholder-text">No uploaded images found.</p>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
+                {uploadedImages.map((image) => (
+                  <div
+                    key={image.filename}
+                    style={{
+                      padding: '16px',
+                      background: 'white',
+                      border: `2px solid ${image.isUsed ? '#22c55e' : '#e5e7eb'}`,
+                      borderRadius: '12px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '12px'
+                    }}
+                  >
+                    <div style={{ position: 'relative', width: '100%', paddingBottom: '56.25%', background: '#f3f4f6', borderRadius: '8px', overflow: 'hidden' }}>
+                      <img
+                        src={image.url}
+                        alt={image.filename}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'contain'
+                        }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ fontSize: '12px', fontWeight: '600', color: '#374151', wordBreak: 'break-all' }}>
+                        {image.filename}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#6b7280' }}>
+                        Size: {(image.size / 1024).toFixed(2)} KB
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#6b7280' }}>
+                        Uploaded: {new Date(image.uploadedAt).toLocaleString()}
+                      </div>
+                      <div style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '4px 8px',
+                        borderRadius: '6px',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        width: 'fit-content',
+                        background: image.isUsed ? '#d1fae5' : '#fee2e2',
+                        color: image.isUsed ? '#065f46' : '#991b1b'
+                      }}>
+                        {image.isUsed ? '✓ In Use' : '✗ Unused'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <a
+                        href={image.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          flex: 1,
+                          padding: '8px 12px',
+                          background: '#3b82f6',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                          textAlign: 'center',
+                          textDecoration: 'none'
+                        }}
+                      >
+                        🔗 View
+                      </a>
+                      <button
+                        onClick={() => handleDeleteImage(image.filename)}
+                        disabled={image.isUsed}
+                        style={{
+                          flex: 1,
+                          padding: '8px 12px',
+                          background: image.isUsed ? '#9ca3af' : '#ef4444',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          cursor: image.isUsed ? 'not-allowed' : 'pointer',
+                          fontSize: '12px',
+                          opacity: image.isUsed ? 0.6 : 1
+                        }}
+                        title={image.isUsed ? 'Cannot delete: Image is in use' : 'Delete image'}
+                      >
+                        🗑️ Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Shop Item Management Section */}
+        {activeSection === 'shop' && (
+          <div className="shop-section">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 className="section-title">Shop Item Management</h2>
+              <button
+                onClick={() => {
+                  resetShopItemForm();
+                  setShowCreateShopItem(true);
+                }}
+                style={{
+                  padding: '10px 20px',
+                  background: 'linear-gradient(135deg, #10b981, #059669)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer'
+                }}
+              >
+                + Create Shop Item
+              </button>
+            </div>
+
+            {shopItems.length === 0 ? (
+              <p className="placeholder-text">No shop items found. Create your first item!</p>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
+                {shopItems.map((item) => (
+                  <div
+                    key={item._id}
+                    style={{
+                      padding: '16px',
+                      background: 'white',
+                      border: `2px solid ${item.isActive ? '#22c55e' : '#e5e7eb'}`,
+                      borderRadius: '12px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '12px'
+                    }}
+                  >
+                    <div style={{ position: 'relative', width: '100%', paddingBottom: '75%', background: '#f3f4f6', borderRadius: '8px', overflow: 'hidden' }}>
+                      <img
+                        src={item.imageUrl}
+                        alt={item.title}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover'
+                        }}
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="%23f3f4f6"/><text x="50%25" y="50%25" text-anchor="middle" dy=".3em" fill="%239ca3af">No Image</text></svg>';
+                        }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ fontSize: '16px', fontWeight: '600', color: '#374151' }}>
+                        {item.title}
+                      </div>
+                      {item.description && (
+                        <div style={{ fontSize: '13px', color: '#6b7280', lineHeight: '1.5', maxHeight: '60px', overflow: 'hidden' }}>
+                          {item.description}
+                        </div>
+                      )}
+                      <div style={{ fontSize: '18px', fontWeight: '700', color: '#4e98ff' }}>
+                        {item.price} AP
+                      </div>
+                      <div style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '4px 8px',
+                        borderRadius: '6px',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        width: 'fit-content',
+                        background: item.isActive ? '#d1fae5' : '#fee2e2',
+                        color: item.isActive ? '#065f46' : '#991b1b'
+                      }}>
+                        {item.isActive ? '✓ Active' : '✗ Inactive'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <button
+                        onClick={() => handleViewShopItemAnalytics(item._id, item.title)}
+                        style={{
+                          width: '100%',
+                          padding: '8px 12px',
+                          background: 'linear-gradient(135deg, #667eea, #764ba2)',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                          fontWeight: '600'
+                        }}
+                      >
+                        📊 View Analytics
+                      </button>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          onClick={() => startEditingShopItem(item)}
+                          style={{
+                            flex: 1,
+                            padding: '8px 12px',
+                            background: '#3b82f6',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            fontSize: '12px'
+                          }}
+                        >
+                          ✏️ Edit
+                        </button>
+                        <button
+                          onClick={() => handleDeleteShopItem(item._id)}
+                          style={{
+                            flex: 1,
+                            padding: '8px 12px',
+                            background: '#ef4444',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            fontSize: '12px'
+                          }}
+                        >
+                          🗑️ Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Preorders Section */}
+        {activeSection === 'preorders' && (
+          <div className="preorders-section">
+            <h2 className="section-title">Preordered Users</h2>
+            {preorders.length === 0 ? (
+              <p className="placeholder-text">No preorders found.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {preorders.map((preorder) => (
+                  <div
+                    key={preorder._id}
+                    style={{
+                      padding: '20px',
+                      background: 'white',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '12px',
+                      display: 'flex',
+                      gap: '20px',
+                      alignItems: 'flex-start'
+                    }}
+                  >
+                    {/* Item Image */}
+                    <div style={{
+                      width: '120px',
+                      height: '120px',
+                      background: '#f3f4f6',
+                      borderRadius: '8px',
+                      overflow: 'hidden',
+                      flexShrink: 0
+                    }}>
+                      <img
+                        src={preorder.shopItem.imageUrl}
+                        alt={preorder.shopItem.title}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover'
+                        }}
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="%23f3f4f6"/><text x="50%25" y="50%25" text-anchor="middle" dy=".3em" fill="%239ca3af">No Image</text></svg>';
+                        }}
+                      />
+                    </div>
+
+                    {/* Preorder Info */}
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ fontSize: '20px', fontWeight: '700', color: '#14306d' }}>
+                        {preorder.shopItem.title}
+                      </div>
+                      <div style={{ fontSize: '16px', color: '#4e98ff', fontWeight: '600' }}>
+                        {preorder.shopItem.price} AP
+                      </div>
+                      
+                      {/* User Info */}
+                      <div style={{ marginTop: '12px', padding: '12px', background: '#f3f4f6', borderRadius: '8px' }}>
+                        {preorder.user ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            {preorder.user.avatar && (
+                              <img
+                                src={`https://cdn.discordapp.com/avatars/${preorder.userId}/${preorder.user.avatar}.png`}
+                                alt={preorder.user.username}
+                                style={{
+                                  width: '40px',
+                                  height: '40px',
+                                  borderRadius: '50%'
+                                }}
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).src = `https://cdn.discordapp.com/embed/avatars/${Math.abs(parseInt(preorder.userId, 10)) % 5}.png`;
+                                }}
+                              />
+                            )}
+                            {!preorder.user.avatar && (
+                              <img
+                                src={`https://cdn.discordapp.com/embed/avatars/${Math.abs(parseInt(preorder.userId, 10)) % 5}.png`}
+                                alt={preorder.user.username}
+                                style={{
+                                  width: '40px',
+                                  height: '40px',
+                                  borderRadius: '50%'
+                                }}
+                              />
+                            )}
+                            <div>
+                              <div style={{ fontSize: '16px', fontWeight: '600', color: '#374151' }}>
+                                {preorder.user.nickname || preorder.user.username}
+                                {preorder.user.discriminator && (
+                                  <span style={{ color: '#6b7280' }}>#{preorder.user.discriminator}</span>
+                                )}
+                              </div>
+                              <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                                Discord ID: {preorder.userId}
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: '14px', color: '#6b7280' }}>
+                            User not found (Discord ID: {preorder.userId})
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Status and Date */}
+                      <div style={{ display: 'flex', gap: '16px', marginTop: '8px', fontSize: '14px', color: '#6b7280' }}>
+                        <div style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          padding: '4px 8px',
+                          borderRadius: '6px',
+                          fontSize: '12px',
+                          fontWeight: '600',
+                          background: preorder.status === 'preorder' ? '#fef3c7' : '#d1fae5',
+                          color: preorder.status === 'preorder' ? '#92400e' : '#065f46'
+                        }}>
+                          {preorder.status === 'preorder' ? '📋 Preorder' : '✅ Completed'}
+                        </div>
+                        <div>
+                          Purchased: {new Date(preorder.purchasedAt).toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Shop Item Analytics Modal */}
+        {showShopItemAnalytics && selectedShopItemAnalytics && (
+          <div className="modal-overlay" onClick={() => { setShowShopItemAnalytics(false); setSelectedShopItemAnalytics(null); }}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '700px', maxHeight: '80vh', overflowY: 'auto' }}>
+              <h3 style={{ marginBottom: '20px', fontSize: '24px', fontWeight: '700', color: '#14306d' }}>
+                📊 Analytics: {selectedShopItemAnalytics.itemTitle}
+              </h3>
+              
+              <div style={{ marginBottom: '16px', padding: '12px', background: '#f3f4f6', borderRadius: '8px' }}>
+                <div style={{ fontSize: '16px', fontWeight: '600', color: '#374151' }}>
+                  Total Preorders: <span style={{ color: '#667eea', fontSize: '20px' }}>{selectedShopItemAnalytics.purchases.length}</span>
+                </div>
+              </div>
+
+              {selectedShopItemAnalytics.purchases.length === 0 ? (
+                <p style={{ textAlign: 'center', padding: '40px', color: '#6b7280', fontSize: '16px' }}>
+                  No preorders for this item yet.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {selectedShopItemAnalytics.purchases.map((purchase, index) => (
+                    <div
+                      key={index}
+                      style={{
+                        padding: '16px',
+                        background: 'white',
+                        border: '2px solid #e5e7eb',
+                        borderRadius: '12px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '16px'
+                      }}
+                    >
+                      {purchase.user ? (
+                        <>
+                          {purchase.user.avatar && (
+                            <img
+                              src={`https://cdn.discordapp.com/avatars/${purchase.userId}/${purchase.user.avatar}.png`}
+                              alt={purchase.user.username}
+                              style={{
+                                width: '50px',
+                                height: '50px',
+                                borderRadius: '50%',
+                                border: '2px solid #e5e7eb'
+                              }}
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = `https://cdn.discordapp.com/embed/avatars/${Math.abs(parseInt(purchase.userId, 10)) % 5}.png`;
+                              }}
+                            />
+                          )}
+                          {!purchase.user.avatar && (
+                            <img
+                              src={`https://cdn.discordapp.com/embed/avatars/${Math.abs(parseInt(purchase.userId, 10)) % 5}.png`}
+                              alt={purchase.user.username}
+                              style={{
+                                width: '50px',
+                                height: '50px',
+                                borderRadius: '50%',
+                                border: '2px solid #e5e7eb'
+                              }}
+                            />
+                          )}
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: '16px', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
+                              {purchase.user.nickname || purchase.user.username}
+                              {purchase.user.discriminator && (
+                                <span style={{ color: '#6b7280' }}>#{purchase.user.discriminator}</span>
+                              )}
+                            </div>
+                            <div style={{ fontSize: '13px', color: '#6b7280', fontFamily: 'monospace' }}>
+                              Discord ID: {purchase.userId}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '4px' }}>
+                              Purchased: {new Date(purchase.purchasedAt).toLocaleString()}
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: '16px', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
+                            User Not Found
+                          </div>
+                          <div style={{ fontSize: '13px', color: '#6b7280', fontFamily: 'monospace' }}>
+                            Discord ID: {purchase.userId}
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '4px' }}>
+                            Purchased: {new Date(purchase.purchasedAt).toLocaleString()}
+                          </div>
+                        </div>
+                      )}
+                      <div style={{
+                        padding: '6px 12px',
+                        background: purchase.status === 'preorder' ? '#fef3c7' : '#d1fae5',
+                        color: purchase.status === 'preorder' ? '#92400e' : '#065f46',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                        fontWeight: '600'
+                      }}>
+                        {purchase.status === 'preorder' ? '📋 Preorder' : '✅ Completed'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+                <button
+                  className="cancel-btn"
+                  onClick={() => {
+                    setShowShopItemAnalytics(false);
+                    setSelectedShopItemAnalytics(null);
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -2672,10 +3456,36 @@ function AdminPage() {
                     <div className="form-group">
                       <label>Min AP (Recommended)</label>
                       <input
-                        type="number"
-                        min="0"
-                        value={skillMinAP ?? ''}
-                        onChange={(e) => setSkillMinAP(e.target.value ? Number(e.target.value) : undefined)}
+                        type="text"
+                        value={skillMinAP !== undefined && skillMinAP !== null ? skillMinAP.toString() : ''}
+                        onChange={(e) => {
+                          const value = e.target.value.trim();
+                          if (value === '') {
+                            setSkillMinAP(undefined);
+                          } else {
+                            const numValue = Number(value);
+                            if (!isNaN(numValue) && numValue >= 0) {
+                              setSkillMinAP(numValue);
+                            } else {
+                              // Allow typing, but don't update state if invalid
+                              // This allows user to type freely
+                            }
+                          }
+                        }}
+                        onBlur={(e) => {
+                          const value = e.target.value.trim();
+                          if (value === '') {
+                            setSkillMinAP(undefined);
+                          } else {
+                            const numValue = Number(value);
+                            if (!isNaN(numValue) && numValue >= 0) {
+                              setSkillMinAP(numValue);
+                            } else {
+                              setSkillMinAP(undefined);
+                              e.target.value = '';
+                            }
+                          }
+                        }}
                         placeholder="Optional"
                         className="skill-input"
                       />
@@ -2683,10 +3493,36 @@ function AdminPage() {
                     <div className="form-group">
                       <label>Max AP (Recommended)</label>
                       <input
-                        type="number"
-                        min="0"
-                        value={skillMaxAP ?? ''}
-                        onChange={(e) => setSkillMaxAP(e.target.value ? Number(e.target.value) : undefined)}
+                        type="text"
+                        value={skillMaxAP !== undefined && skillMaxAP !== null ? skillMaxAP.toString() : ''}
+                        onChange={(e) => {
+                          const value = e.target.value.trim();
+                          if (value === '') {
+                            setSkillMaxAP(undefined);
+                          } else {
+                            const numValue = Number(value);
+                            if (!isNaN(numValue) && numValue >= 0) {
+                              setSkillMaxAP(numValue);
+                            } else {
+                              // Allow typing, but don't update state if invalid
+                              // This allows user to type freely
+                            }
+                          }
+                        }}
+                        onBlur={(e) => {
+                          const value = e.target.value.trim();
+                          if (value === '') {
+                            setSkillMaxAP(undefined);
+                          } else {
+                            const numValue = Number(value);
+                            if (!isNaN(numValue) && numValue >= 0) {
+                              setSkillMaxAP(numValue);
+                            } else {
+                              setSkillMaxAP(undefined);
+                              e.target.value = '';
+                            }
+                          }
+                        }}
                         placeholder="Optional"
                         className="skill-input"
                       />
@@ -3062,10 +3898,36 @@ function AdminPage() {
                         <div className="form-group">
                           <label>Min AP (Recommended)</label>
                           <input
-                            type="number"
-                            min="0"
-                            value={skillMinAP ?? ''}
-                            onChange={(e) => setSkillMinAP(e.target.value ? Number(e.target.value) : undefined)}
+                            type="text"
+                            value={skillMinAP !== undefined && skillMinAP !== null ? skillMinAP.toString() : ''}
+                            onChange={(e) => {
+                              const value = e.target.value.trim();
+                              if (value === '') {
+                                setSkillMinAP(undefined);
+                              } else {
+                                const numValue = Number(value);
+                                if (!isNaN(numValue) && numValue >= 0) {
+                                  setSkillMinAP(numValue);
+                                } else {
+                                  // Allow typing, but don't update state if invalid
+                                  // This allows user to type freely
+                                }
+                              }
+                            }}
+                            onBlur={(e) => {
+                              const value = e.target.value.trim();
+                              if (value === '') {
+                                setSkillMinAP(undefined);
+                              } else {
+                                const numValue = Number(value);
+                                if (!isNaN(numValue) && numValue >= 0) {
+                                  setSkillMinAP(numValue);
+                                } else {
+                                  setSkillMinAP(undefined);
+                                  e.target.value = '';
+                                }
+                              }
+                            }}
                             placeholder="Optional"
                             className="skill-input"
                           />
@@ -3073,10 +3935,36 @@ function AdminPage() {
                         <div className="form-group">
                           <label>Max AP (Recommended)</label>
                           <input
-                            type="number"
-                            min="0"
-                            value={skillMaxAP ?? ''}
-                            onChange={(e) => setSkillMaxAP(e.target.value ? Number(e.target.value) : undefined)}
+                            type="text"
+                            value={skillMaxAP !== undefined && skillMaxAP !== null ? skillMaxAP.toString() : ''}
+                            onChange={(e) => {
+                              const value = e.target.value.trim();
+                              if (value === '') {
+                                setSkillMaxAP(undefined);
+                              } else {
+                                const numValue = Number(value);
+                                if (!isNaN(numValue) && numValue >= 0) {
+                                  setSkillMaxAP(numValue);
+                                } else {
+                                  // Allow typing, but don't update state if invalid
+                                  // This allows user to type freely
+                                }
+                              }
+                            }}
+                            onBlur={(e) => {
+                              const value = e.target.value.trim();
+                              if (value === '') {
+                                setSkillMaxAP(undefined);
+                              } else {
+                                const numValue = Number(value);
+                                if (!isNaN(numValue) && numValue >= 0) {
+                                  setSkillMaxAP(numValue);
+                                } else {
+                                  setSkillMaxAP(undefined);
+                                  e.target.value = '';
+                                }
+                              }
+                            }}
                             placeholder="Optional"
                             className="skill-input"
                           />
@@ -3390,6 +4278,398 @@ function AdminPage() {
               }}>
                 Cancel
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Create Shop Item Modal */}
+        {showCreateShopItem && (
+          <div className="modal-overlay" onClick={() => { setShowCreateShopItem(false); resetShopItemForm(); }}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
+              <h3>Create Shop Item</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '20px' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
+                    Title *
+                  </label>
+                  <input
+                    type="text"
+                    value={shopItemTitle}
+                    onChange={(e) => setShopItemTitle(e.target.value)}
+                    placeholder="Item title"
+                    style={{
+                      width: '100%',
+                      padding: '10px',
+                      fontSize: '16px',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '8px'
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
+                    Description (Optional)
+                  </label>
+                  <textarea
+                    value={shopItemDescription}
+                    onChange={(e) => setShopItemDescription(e.target.value)}
+                    placeholder="Item description"
+                    style={{
+                      width: '100%',
+                      minHeight: '100px',
+                      padding: '10px',
+                      fontSize: '16px',
+                      fontFamily: 'Dongle, sans-serif',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '8px',
+                      resize: 'vertical'
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
+                    Price (Asset Points) *
+                  </label>
+                  <input
+                    type="text"
+                    value={shopItemPrice.toString()}
+                    onChange={(e) => {
+                      const value = e.target.value.trim();
+                      if (value === '') {
+                        setShopItemPrice(0);
+                      } else {
+                        const numValue = Number(value);
+                        if (!isNaN(numValue) && numValue >= 0) {
+                          setShopItemPrice(numValue);
+                        }
+                      }
+                    }}
+                    placeholder="0"
+                    style={{
+                      width: '100%',
+                      padding: '10px',
+                      fontSize: '16px',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '8px'
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
+                    Image URL *
+                  </label>
+                  <div style={{ marginBottom: '8px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      style={{ display: 'none' }}
+                      id="shop-image-upload-input"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+
+                        const formData = new FormData();
+                        formData.append('image', file);
+
+                        try {
+                          const response = await axios.post('/api/upload/image', formData, {
+                            headers: { 'Content-Type': 'multipart/form-data' }
+                          });
+
+                          if (response.data.success) {
+                            setShopItemImageUrl(response.data.url);
+                          }
+                        } catch (error: any) {
+                          alert(error.response?.data?.error || 'Failed to upload image');
+                        }
+
+                        // Reset file input
+                        e.target.value = '';
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        document.getElementById('shop-image-upload-input')?.click();
+                      }}
+                      style={{
+                        padding: '6px 12px',
+                        background: '#10b981',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '14px'
+                      }}
+                    >
+                      📤 Upload Image
+                    </button>
+                    <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                      or enter URL below
+                    </span>
+                  </div>
+                  <input
+                    type="text"
+                    value={shopItemImageUrl}
+                    onChange={(e) => setShopItemImageUrl(e.target.value)}
+                    placeholder="https://example.com/image.png"
+                    style={{
+                      width: '100%',
+                      padding: '10px',
+                      fontSize: '16px',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '8px'
+                    }}
+                  />
+                  {shopItemImageUrl && (
+                    <div style={{ marginTop: '8px', width: '100%', paddingBottom: '56.25%', position: 'relative', background: '#f3f4f6', borderRadius: '8px', overflow: 'hidden' }}>
+                      <img
+                        src={shopItemImageUrl}
+                        alt="Preview"
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'contain'
+                        }}
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="checkbox"
+                    id="shop-item-active"
+                    checked={shopItemIsActive}
+                    onChange={(e) => setShopItemIsActive(e.target.checked)}
+                    style={{ width: '20px', height: '20px', cursor: 'pointer' }}
+                  />
+                  <label htmlFor="shop-item-active" style={{ fontSize: '14px', cursor: 'pointer' }}>
+                    Active (visible in shop)
+                  </label>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '20px' }}>
+                <button
+                  className="cancel-btn"
+                  onClick={() => {
+                    setShowCreateShopItem(false);
+                    resetShopItemForm();
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="submit-btn"
+                  onClick={handleCreateShopItem}
+                  style={{
+                    background: 'linear-gradient(135deg, #10b981, #059669)'
+                  }}
+                >
+                  Create Item
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Edit Shop Item Modal */}
+        {showEditShopItem && selectedShopItem && (
+          <div className="modal-overlay" onClick={() => { setShowEditShopItem(false); resetShopItemForm(); }}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
+              <h3>Edit Shop Item</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '20px' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
+                    Title *
+                  </label>
+                  <input
+                    type="text"
+                    value={shopItemTitle}
+                    onChange={(e) => setShopItemTitle(e.target.value)}
+                    placeholder="Item title"
+                    style={{
+                      width: '100%',
+                      padding: '10px',
+                      fontSize: '16px',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '8px'
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
+                    Description (Optional)
+                  </label>
+                  <textarea
+                    value={shopItemDescription}
+                    onChange={(e) => setShopItemDescription(e.target.value)}
+                    placeholder="Item description"
+                    style={{
+                      width: '100%',
+                      minHeight: '100px',
+                      padding: '10px',
+                      fontSize: '16px',
+                      fontFamily: 'Dongle, sans-serif',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '8px',
+                      resize: 'vertical'
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
+                    Price (Asset Points) *
+                  </label>
+                  <input
+                    type="text"
+                    value={shopItemPrice.toString()}
+                    onChange={(e) => {
+                      const value = e.target.value.trim();
+                      if (value === '') {
+                        setShopItemPrice(0);
+                      } else {
+                        const numValue = Number(value);
+                        if (!isNaN(numValue) && numValue >= 0) {
+                          setShopItemPrice(numValue);
+                        }
+                      }
+                    }}
+                    placeholder="0"
+                    style={{
+                      width: '100%',
+                      padding: '10px',
+                      fontSize: '16px',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '8px'
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
+                    Image URL *
+                  </label>
+                  <div style={{ marginBottom: '8px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      style={{ display: 'none' }}
+                      id="shop-image-upload-input"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+
+                        const formData = new FormData();
+                        formData.append('image', file);
+
+                        try {
+                          const response = await axios.post('/api/upload/image', formData, {
+                            headers: { 'Content-Type': 'multipart/form-data' }
+                          });
+
+                          if (response.data.success) {
+                            setShopItemImageUrl(response.data.url);
+                          }
+                        } catch (error: any) {
+                          alert(error.response?.data?.error || 'Failed to upload image');
+                        }
+
+                        // Reset file input
+                        e.target.value = '';
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        document.getElementById('shop-image-upload-input')?.click();
+                      }}
+                      style={{
+                        padding: '6px 12px',
+                        background: '#10b981',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '14px'
+                      }}
+                    >
+                      📤 Upload Image
+                    </button>
+                    <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                      or enter URL below
+                    </span>
+                  </div>
+                  <input
+                    type="text"
+                    value={shopItemImageUrl}
+                    onChange={(e) => setShopItemImageUrl(e.target.value)}
+                    placeholder="https://example.com/image.png"
+                    style={{
+                      width: '100%',
+                      padding: '10px',
+                      fontSize: '16px',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '8px'
+                    }}
+                  />
+                  {shopItemImageUrl && (
+                    <div style={{ marginTop: '8px', width: '100%', paddingBottom: '56.25%', position: 'relative', background: '#f3f4f6', borderRadius: '8px', overflow: 'hidden' }}>
+                      <img
+                        src={shopItemImageUrl}
+                        alt="Preview"
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'contain'
+                        }}
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="checkbox"
+                    id="shop-item-active-edit"
+                    checked={shopItemIsActive}
+                    onChange={(e) => setShopItemIsActive(e.target.checked)}
+                    style={{ width: '20px', height: '20px', cursor: 'pointer' }}
+                  />
+                  <label htmlFor="shop-item-active-edit" style={{ fontSize: '14px', cursor: 'pointer' }}>
+                    Active (visible in shop)
+                  </label>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '20px' }}>
+                <button
+                  className="cancel-btn"
+                  onClick={() => {
+                    setShowEditShopItem(false);
+                    resetShopItemForm();
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="submit-btn"
+                  onClick={handleUpdateShopItem}
+                  style={{
+                    background: 'linear-gradient(135deg, #3b82f6, #2563eb)'
+                  }}
+                >
+                  Save Changes
+                </button>
+              </div>
             </div>
           </div>
         )}

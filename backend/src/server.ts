@@ -15,6 +15,8 @@ import Guild, { IGuild } from './models/Guild';
 import Skill, { ISkill } from './models/Skill';
 import SkillTreeSettings from './models/SkillTreeSettings';
 import ApprovalRequest from './models/ApprovalRequest';
+import ShopItem from './models/ShopItem';
+import Purchase from './models/Purchase';
 import { VoiceTracker } from './services/voiceTracker';
 
 // Extend Express types for Passport
@@ -623,6 +625,75 @@ app.get('/api/user/guild-info', requireAdmin, async (req: Request, res: Response
   }
 });
 
+// Get user by ID (for authenticated users to get their own stats)
+app.get('/api/users/:userId', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const requestingUserId = req.user!.id; // Discord ID from session
+    const targetUserId = req.params.userId; // Can be Discord ID or MongoDB _id
+
+    // Users can only access their own data (unless admin)
+    const requestingUser = await User.findOne({ discordId: requestingUserId });
+    if (!requestingUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Allow admins to view any user, regular users can only view themselves
+    let targetUser;
+    if (requestingUser.role === 'admin' || requestingUser.role === 'super-admin') {
+      // Admin can view by Discord ID or MongoDB _id
+      const query: any[] = [{ discordId: targetUserId }];
+      
+      // Only try to query by _id if it's a valid MongoDB ObjectId
+      if (mongoose.Types.ObjectId.isValid(targetUserId)) {
+        try {
+          query.push({ _id: new mongoose.Types.ObjectId(targetUserId) });
+        } catch (e) {
+          // Invalid ObjectId, skip this query option
+        }
+      }
+      
+      targetUser = await User.findOne({ $or: query });
+    } else {
+      // Regular users can only view themselves
+      if (targetUserId !== requestingUserId) {
+        return res.status(403).json({ error: 'Forbidden: You can only view your own data' });
+      }
+      targetUser = requestingUser;
+    }
+
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Return user data with all stats
+    res.json({
+      success: true,
+      user: {
+        _id: targetUser._id,
+        discordId: targetUser.discordId,
+        username: targetUser.nickname || targetUser.username,
+        nickname: targetUser.nickname,
+        discriminator: targetUser.discriminator,
+        avatar: targetUser.avatar,
+        email: targetUser.email,
+        role: targetUser.role,
+        guildId: targetUser.guildId,
+        assetPoints: targetUser.assetPoints || 0,
+        techTokens: targetUser.techTokens || 0,
+        voiceMinutesToday: targetUser.voiceMinutesToday || 0,
+        totalVoiceMinutes: targetUser.totalVoiceMinutes || 0,
+        unlockedSkills: targetUser.unlockedSkills || [],
+        isAdmin: targetUser.isAdmin,
+        createdAt: targetUser.createdAt,
+        updatedAt: targetUser.updatedAt
+      }
+    });
+  } catch (error: any) {
+    console.error('Error fetching user:', error);
+    res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
 // Get all users (for guild assignment, admin and super-admin)
 app.get('/api/users', requireAdmin, async (req: Request, res: Response) => {
   try {
@@ -765,7 +836,7 @@ app.get('/api/skills/:id', requireAuth, async (req: Request, res: Response) => {
 // Create new skill (super-admin only)
 app.post('/api/skills', requireSuperAdmin, async (req: Request, res: Response) => {
   try {
-    const { title, description, cost, previewClip, contentYouTube, contentGoogleDrive, layer, position, prerequisites, nodeColor } = req.body;
+    const { title, description, cost, previewClip, contentYouTube, contentGoogleDrive, layer, position, prerequisites, nodeColor, minAP, maxAP } = req.body;
 
     if (!title || !description || cost === undefined || layer === undefined || position === undefined) {
       return res.status(400).json({ error: 'Missing required fields: title, description, cost, layer, position' });
@@ -787,10 +858,12 @@ app.post('/api/skills', requireSuperAdmin, async (req: Request, res: Response) =
       position,
       nodeColor: nodeColor || 'blue',
       prerequisites: prerequisites || [],
-      connections: []
+      connections: [],
+      minAP: minAP !== undefined ? minAP : undefined,
+      maxAP: maxAP !== undefined ? maxAP : undefined
     });
 
-    console.log(`✨ Creating skill: ${title}`, { layer, position, nodeColor });
+    console.log(`✨ Creating skill: ${title}`, { layer, position, nodeColor, minAP, maxAP });
 
     await skill.save();
     res.json({ success: true, skill });
@@ -803,7 +876,7 @@ app.post('/api/skills', requireSuperAdmin, async (req: Request, res: Response) =
 // Update skill (super-admin only)
 app.put('/api/skills/:id', requireSuperAdmin, async (req: Request, res: Response) => {
   try {
-    const { title, description, cost, previewClip, contentYouTube, contentGoogleDrive, layer, position, prerequisites, isActive, nodeColor, connections } = req.body;
+    const { title, description, cost, previewClip, contentYouTube, contentGoogleDrive, layer, position, prerequisites, isActive, nodeColor, connections, minAP, maxAP } = req.body;
 
     const skill = await Skill.findById(req.params.id);
     if (!skill) {
@@ -828,8 +901,10 @@ app.put('/api/skills/:id', requireSuperAdmin, async (req: Request, res: Response
     if (isActive !== undefined) skill.isActive = isActive;
     if (nodeColor !== undefined) skill.nodeColor = nodeColor;
     if (connections !== undefined) skill.connections = connections;
+    if (minAP !== undefined) skill.minAP = minAP !== null && minAP !== '' ? minAP : undefined;
+    if (maxAP !== undefined) skill.maxAP = maxAP !== null && maxAP !== '' ? maxAP : undefined;
 
-    console.log(`📝 Updating skill: ${skill.title}`, { connections: skill.connections });
+    console.log(`📝 Updating skill: ${skill.title}`, { connections: skill.connections, minAP, maxAP });
 
     await skill.save();
     res.json({ success: true, skill });
@@ -1336,9 +1411,10 @@ app.get('/api/approval-requests', requireAdmin, async (req: Request, res: Respon
       .sort({ createdAt: -1 })
       .lean();
 
-    // Since userId is a discordId string, we need to manually get user info
+    // Since userId is a discordId string, we need to manually get user and skill info
     const requestsWithUserInfo = await Promise.all(requests.map(async (req: any) => {
       const user = await User.findOne({ discordId: req.userId });
+      const skill = await Skill.findById(req.skillId);
       return {
         ...req,
         user: user ? {
@@ -1346,6 +1422,13 @@ app.get('/api/approval-requests', requireAdmin, async (req: Request, res: Respon
           nickname: user.nickname,
           discriminator: user.discriminator,
           avatar: user.avatar
+        } : null,
+        skill: skill ? {
+          _id: skill._id,
+          title: skill.title,
+          description: skill.description,
+          minAP: skill.minAP,
+          maxAP: skill.maxAP
         } : null
       };
     }));
@@ -1423,21 +1506,407 @@ app.post('/api/approval-requests/:id/approve', requireAdmin, async (req: Request
 });
 
 // Upload image endpoint (admin only)
-app.post('/api/upload/image', requireAdmin, upload.single('image'), (req: Request, res: Response) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
+app.post('/api/upload/image', requireAdmin, (req: Request, res: Response) => {
+  upload.single('image')(req, res, (err: any) => {
+    if (err) {
+      console.error('Multer error:', err);
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'File too large. Maximum size is 10MB.' });
+      }
+      if (err.message === 'Only image files are allowed!') {
+        return res.status(400).json({ error: 'Only image files are allowed!' });
+      }
+      return res.status(400).json({ error: err.message || 'Failed to upload image' });
     }
 
-    // Return the URL to access the uploaded file
-    // The base URL should match where the backend is accessible from the frontend
-    const baseUrl = process.env.BACKEND_URL || `http://localhost:${PORT}`;
-    const fileUrl = `${baseUrl}/uploads/${req.file.filename}`;
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded. Please select an image file.' });
+      }
+
+      console.log('✅ Image uploaded successfully:', req.file.filename, 'Size:', req.file.size);
+
+      // Return the URL to access the uploaded file
+      // The base URL should match where the backend is accessible from the frontend
+      // Use BACKEND_URL from env, or construct from request headers (for nginx proxy), or fallback to localhost
+      let baseUrl = process.env.BACKEND_URL;
+      
+      if (!baseUrl) {
+        // Try to construct from request headers (when behind nginx proxy)
+        const protocol = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
+        const host = req.headers['x-forwarded-host'] || req.headers.host;
+        const pathPrefix = req.headers['x-forwarded-prefix'] || '/gugame-back';
+        
+        if (host && host !== `localhost:${PORT}` && !host.includes('127.0.0.1')) {
+          // We're behind a proxy - construct the full URL
+          baseUrl = `${protocol}://${host}${pathPrefix}`;
+        } else {
+          // Fallback to localhost (development)
+          baseUrl = `http://localhost:${PORT}`;
+        }
+      }
+      
+      const fileUrl = `${baseUrl}/uploads/${req.file.filename}`;
+      
+      res.json({ success: true, url: fileUrl, filename: req.file.filename });
+    } catch (error: any) {
+      console.error('Error processing uploaded image:', error);
+      res.status(500).json({ error: error.message || 'Failed to process uploaded image' });
+    }
+  });
+});
+
+// Get all uploaded images (super-admin only)
+app.get('/api/admin/images', requireSuperAdmin, async (req: Request, res: Response) => {
+  try {
+    const files = fs.readdirSync(uploadsDir);
+    const images = files
+      .filter(file => /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(file))
+      .map(file => {
+        const filePath = path.join(uploadsDir, file);
+        const stats = fs.statSync(filePath);
+        const baseUrl = process.env.BACKEND_URL || (() => {
+          const protocol = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
+          const host = req.headers['x-forwarded-host'] || req.headers.host;
+          const pathPrefix = req.headers['x-forwarded-prefix'] || '/gugame-back';
+          if (host && host !== `localhost:${PORT}` && !host.includes('127.0.0.1')) {
+            return `${protocol}://${host}${pathPrefix}`;
+          }
+          return `http://localhost:${PORT}`;
+        })();
+        
+        return {
+          filename: file,
+          url: `${baseUrl}/uploads/${file}`,
+          size: stats.size,
+          uploadedAt: stats.birthtime,
+          modifiedAt: stats.mtime
+        };
+      })
+      .sort((a, b) => b.uploadedAt.getTime() - a.uploadedAt.getTime());
+
+    // Check which images are used in skills
+    const allSkills = await Skill.find({}).lean();
+    const usedImages = new Set<string>();
     
-    res.json({ success: true, url: fileUrl, filename: req.file.filename });
+    allSkills.forEach(skill => {
+      if (skill.description) {
+        // Extract image URLs from markdown syntax ![alt](url)
+        const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
+        let match;
+        while ((match = imageRegex.exec(skill.description)) !== null) {
+          const imageUrl = match[2];
+          const filename = path.basename(imageUrl);
+          usedImages.add(filename);
+        }
+      }
+    });
+
+    const imagesWithUsage = images.map(img => ({
+      ...img,
+      isUsed: usedImages.has(img.filename)
+    }));
+
+    res.json({ 
+      success: true, 
+      images: imagesWithUsage,
+      total: imagesWithUsage.length,
+      used: imagesWithUsage.filter(img => img.isUsed).length,
+      unused: imagesWithUsage.filter(img => !img.isUsed).length
+    });
   } catch (error: any) {
-    console.error('Error uploading image:', error);
-    res.status(500).json({ error: error.message || 'Failed to upload image' });
+    console.error('Error fetching images:', error);
+    res.status(500).json({ error: 'Failed to fetch images' });
+  }
+});
+
+// Delete an uploaded image (super-admin only)
+app.delete('/api/admin/images/:filename', requireSuperAdmin, async (req: Request, res: Response) => {
+  try {
+    const filename = req.params.filename;
+    
+    // Security: only allow deleting files in uploads directory, prevent path traversal
+    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+      return res.status(400).json({ error: 'Invalid filename' });
+    }
+
+    const filePath = path.join(uploadsDir, filename);
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Image not found' });
+    }
+
+    // Check if image is used in any skill
+    const allSkills = await Skill.find({}).lean();
+    const imageUrl = `${process.env.BACKEND_URL || 'http://localhost:3001'}/uploads/${filename}`;
+    
+    let isUsed = false;
+    for (const skill of allSkills) {
+      if (skill.description && skill.description.includes(imageUrl)) {
+        isUsed = true;
+        break;
+      }
+      // Also check with just filename in case URL format differs
+      if (skill.description && skill.description.includes(filename)) {
+        isUsed = true;
+        break;
+      }
+    }
+
+    if (isUsed) {
+      return res.status(400).json({ 
+        error: 'Image is currently used in a skill description. Please remove it from the skill first.' 
+      });
+    }
+
+    fs.unlinkSync(filePath);
+    
+    res.json({ 
+      success: true, 
+      message: 'Image deleted successfully' 
+    });
+  } catch (error: any) {
+    console.error('Error deleting image:', error);
+    res.status(500).json({ error: error.message || 'Failed to delete image' });
+  }
+});
+
+// Shop Item Management Endpoints (admin only)
+
+// Get all shop items (public - active only)
+app.get('/api/shop/items', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id; // Discord ID
+    const items = await ShopItem.find({ isActive: true }).sort({ createdAt: -1 });
+    
+    // Get user's purchases to check which items are already purchased
+    const purchases = await Purchase.find({ userId });
+    const purchasedItemIds = new Set(purchases.map(p => p.shopItemId.toString()));
+    
+    // Add purchased status to each item
+    const itemsWithPurchaseStatus = items.map(item => ({
+      ...item.toObject(),
+      isPurchased: purchasedItemIds.has(item._id.toString())
+    }));
+    
+    res.json({ success: true, items: itemsWithPurchaseStatus });
+  } catch (error: any) {
+    console.error('Error fetching shop items:', error);
+    res.status(500).json({ error: 'Failed to fetch shop items' });
+  }
+});
+
+// Get all shop items (admin only - includes inactive)
+app.get('/api/admin/shop/items', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const items = await ShopItem.find({}).sort({ createdAt: -1 });
+    res.json({ success: true, items });
+  } catch (error: any) {
+    console.error('Error fetching shop items:', error);
+    res.status(500).json({ error: 'Failed to fetch shop items' });
+  }
+});
+
+// Create shop item (admin only)
+app.post('/api/admin/shop/items', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { title, description, price, imageUrl, isActive } = req.body;
+
+    if (!title || price === undefined || !imageUrl) {
+      return res.status(400).json({ error: 'Missing required fields: title, price, imageUrl' });
+    }
+
+    if (price < 0) {
+      return res.status(400).json({ error: 'Price must be non-negative' });
+    }
+
+    const shopItem = new ShopItem({
+      title,
+      description: description || '',
+      price,
+      imageUrl,
+      isActive: isActive !== undefined ? isActive : true
+    });
+
+    await shopItem.save();
+    res.json({ success: true, item: shopItem });
+  } catch (error: any) {
+    console.error('Error creating shop item:', error);
+    res.status(500).json({ error: error.message || 'Failed to create shop item' });
+  }
+});
+
+// Update shop item (admin only)
+app.put('/api/admin/shop/items/:id', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { title, description, price, imageUrl, isActive } = req.body;
+
+    const shopItem = await ShopItem.findById(req.params.id);
+    if (!shopItem) {
+      return res.status(404).json({ error: 'Shop item not found' });
+    }
+
+    if (title !== undefined) shopItem.title = title;
+    if (description !== undefined) shopItem.description = description;
+    if (price !== undefined) {
+      if (price < 0) {
+        return res.status(400).json({ error: 'Price must be non-negative' });
+      }
+      shopItem.price = price;
+    }
+    if (imageUrl !== undefined) shopItem.imageUrl = imageUrl;
+    if (isActive !== undefined) shopItem.isActive = isActive;
+
+    await shopItem.save();
+    res.json({ success: true, item: shopItem });
+  } catch (error: any) {
+    console.error('Error updating shop item:', error);
+    res.status(500).json({ error: error.message || 'Failed to update shop item' });
+  }
+});
+
+// Delete shop item (admin only)
+app.delete('/api/admin/shop/items/:id', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const shopItem = await ShopItem.findByIdAndDelete(req.params.id);
+    if (!shopItem) {
+      return res.status(404).json({ error: 'Shop item not found' });
+    }
+    res.json({ success: true, message: 'Shop item deleted successfully' });
+  } catch (error: any) {
+    console.error('Error deleting shop item:', error);
+    res.status(500).json({ error: error.message || 'Failed to delete shop item' });
+  }
+});
+
+// Get all purchases/preorders (admin only)
+app.get('/api/admin/shop/purchases', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const purchases = await Purchase.find({})
+      .populate('shopItemId', 'title price imageUrl')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Get user information for each purchase
+    const purchasesWithUserInfo = await Promise.all(purchases.map(async (purchase: any) => {
+      const user = await User.findOne({ discordId: purchase.userId });
+      return {
+        _id: purchase._id,
+        userId: purchase.userId,
+        user: user ? {
+          username: user.nickname || user.username,
+          nickname: user.nickname,
+          discriminator: user.discriminator,
+          avatar: user.avatar
+        } : null,
+        shopItem: purchase.shopItemId,
+        status: purchase.status,
+        purchasedAt: purchase.purchasedAt,
+        createdAt: purchase.createdAt,
+        updatedAt: purchase.updatedAt
+      };
+    }));
+
+    res.json({ success: true, purchases: purchasesWithUserInfo });
+  } catch (error: any) {
+    console.error('Error fetching purchases:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch purchases' });
+  }
+});
+
+// Get purchases for a specific shop item (admin only)
+app.get('/api/admin/shop/items/:id/purchases', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const itemId = req.params.id;
+    
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(itemId)) {
+      return res.status(400).json({ error: 'Invalid item ID' });
+    }
+
+    const purchases = await Purchase.find({ shopItemId: itemId })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Get user information for each purchase
+    const purchasesWithUserInfo = await Promise.all(purchases.map(async (purchase: any) => {
+      const user = await User.findOne({ discordId: purchase.userId });
+      return {
+        userId: purchase.userId,
+        user: user ? {
+          username: user.nickname || user.username,
+          nickname: user.nickname,
+          discriminator: user.discriminator,
+          avatar: user.avatar
+        } : null,
+        purchasedAt: purchase.purchasedAt,
+        status: purchase.status
+      };
+    }));
+
+    res.json({ success: true, purchases: purchasesWithUserInfo });
+  } catch (error: any) {
+    console.error('Error fetching item purchases:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch item purchases' });
+  }
+});
+
+// Purchase shop item (authenticated users)
+app.post('/api/shop/items/:id/purchase', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id; // Discord ID
+    const itemId = req.params.id;
+
+    // Find the shop item
+    const shopItem = await ShopItem.findById(itemId);
+    if (!shopItem) {
+      return res.status(404).json({ error: 'Shop item not found' });
+    }
+
+    if (!shopItem.isActive) {
+      return res.status(400).json({ error: 'This item is not available for purchase' });
+    }
+
+    // Get user with current asset points (find by discordId)
+    const user = await User.findOne({ discordId: userId });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Check if user has enough asset points
+    if (user.assetPoints < shopItem.price) {
+      return res.status(400).json({ 
+        error: `Insufficient Asset Points. You need ${shopItem.price} AP but only have ${user.assetPoints} AP.` 
+      });
+    }
+
+    // Check if user has already purchased this item
+    const existingPurchase = await Purchase.findOne({ userId, shopItemId: itemId });
+    if (existingPurchase) {
+      return res.status(400).json({ error: 'You have already purchased this item!' });
+    }
+
+    // Deduct asset points
+    user.assetPoints -= shopItem.price;
+    await user.save();
+
+    // Create purchase record
+    const purchase = new Purchase({
+      userId,
+      shopItemId: itemId,
+      status: 'preorder',
+      purchasedAt: new Date()
+    });
+    await purchase.save();
+
+    res.json({ 
+      success: true, 
+      message: `Successfully purchased "${shopItem.title}"!`,
+      remainingAP: user.assetPoints
+    });
+  } catch (error: any) {
+    console.error('Error purchasing shop item:', error);
+    res.status(500).json({ error: error.message || 'Failed to purchase item' });
   }
 });
 

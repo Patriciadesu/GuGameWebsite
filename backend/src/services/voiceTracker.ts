@@ -14,7 +14,8 @@ export class VoiceTracker {
   private activeSessions: Map<string, VoiceSession> = new Map(); // userId -> session
   private resetInterval: NodeJS.Timeout | null = null;
   private periodicUpdateInterval: NodeJS.Timeout | null = null;
-  private updateIntervalMinutes: number = 5; // Update every 5 minutes
+  private hourlyRewardInterval: NodeJS.Timeout | null = null;
+  private updateIntervalMinutes: number = 1; // Update every 1 minute for more frequent updates
 
   constructor(adminGuildId: string) {
     this.adminGuildId = adminGuildId;
@@ -38,6 +39,7 @@ export class VoiceTracker {
       this.setupVoiceStateTracking();
       this.startMidnightResetScheduler();
       this.startPeriodicUpdates();
+      this.startHourlyRewardScheduler();
     });
 
     this.client.on('error', (error) => {
@@ -130,9 +132,13 @@ export class VoiceTracker {
     const durationMs = now.getTime() - session.lastUpdateTime.getTime();
     const durationMinutes = Math.floor(durationMs / 60000); // Convert to minutes
 
-    if (durationMinutes <= 0) {
-      return; // Ignore sessions shorter than 1 minute
+    if (durationMinutes < 0) {
+      console.warn(`⚠️ Negative duration detected for user ${userId}: ${durationMinutes} minutes. Skipping update.`);
+      return;
     }
+    
+    // Update even if duration is 0 to ensure lastUpdateTime is refreshed
+    // This helps with tracking very short sessions
 
     try {
       const user = await User.findOne({ discordId: userId });
@@ -289,6 +295,82 @@ export class VoiceTracker {
     }, intervalMs);
   }
 
+  private startHourlyRewardScheduler(): void {
+    // Calculate time until next hour (e.g., if it's 2:30, wait until 3:00)
+    const now = new Date();
+    const nextHour = new Date(now);
+    nextHour.setMinutes(0, 0, 0);
+    nextHour.setHours(nextHour.getHours() + 1);
+    
+    const msUntilNextHour = nextHour.getTime() - now.getTime();
+    
+    console.log(`💰 Next hourly voice reward scheduled for ${nextHour.toISOString()} (in ${Math.floor(msUntilNextHour / 1000 / 60)} minutes)`);
+    
+    // Schedule first reward at the next hour
+    setTimeout(() => {
+      this.awardHourlyVoiceRewards();
+      // Then schedule every hour
+      this.hourlyRewardInterval = setInterval(() => {
+        this.awardHourlyVoiceRewards();
+      }, 60 * 60 * 1000); // 1 hour
+    }, msUntilNextHour);
+  }
+
+  private async awardHourlyVoiceRewards(): Promise<void> {
+    const now = new Date();
+    const sessions = Array.from(this.activeSessions.values());
+    
+    if (sessions.length === 0) {
+      console.log('💰 No active voice sessions for hourly reward');
+      return;
+    }
+
+    console.log(`💰 Processing hourly voice rewards for ${sessions.length} active session(s)...`);
+    
+    for (const session of sessions) {
+      try {
+        const user = await User.findOne({ discordId: session.userId });
+        if (!user) {
+          console.log(`⚠️ User ${session.userId} not found for hourly reward`);
+          continue;
+        }
+
+        // Check if user has been continuously in voice for at least 1 hour
+        // We check if the session has been active for at least 1 hour
+        const sessionDuration = now.getTime() - session.startTime.getTime();
+        const sessionDurationHours = sessionDuration / (1000 * 60 * 60);
+
+        // Also check if it's been at least 1 hour since last reward
+        const lastRewardTime = user.lastVoiceRewardTime || session.startTime;
+        const timeSinceLastReward = now.getTime() - new Date(lastRewardTime).getTime();
+        const hoursSinceLastReward = timeSinceLastReward / (1000 * 60 * 60);
+
+        // Award 50 Asset Points if:
+        // 1. User has been in this voice session for at least 1 hour, AND
+        // 2. It's been at least 1 hour since their last reward
+        if (sessionDurationHours >= 1 && hoursSinceLastReward >= 1) {
+          // Get custom asset point name from guild
+          let assetPointName = 'Asset Point';
+          if (user.guildId) {
+            const Guild = (await import('../models/Guild')).default;
+            const guild = await Guild.findById(user.guildId);
+            if (guild && guild.assetPointName) {
+              assetPointName = guild.assetPointName;
+            }
+          }
+
+          user.assetPoints = (user.assetPoints || 0) + 50;
+          user.lastVoiceRewardTime = now;
+          await user.save();
+          
+          console.log(`💰 Awarded 50 ${assetPointName} to user ${session.userId} for 1 hour in voice chat (session duration: ${sessionDurationHours.toFixed(2)} hours)`);
+        }
+      } catch (error) {
+        console.error(`❌ Error awarding hourly reward to user ${session.userId}:`, error);
+      }
+    }
+  }
+
   private async updateAllActiveSessions(): Promise<void> {
     const sessions = Array.from(this.activeSessions.values());
     if (sessions.length === 0) {
@@ -316,6 +398,9 @@ export class VoiceTracker {
     }
     if (this.periodicUpdateInterval) {
       clearInterval(this.periodicUpdateInterval);
+    }
+    if (this.hourlyRewardInterval) {
+      clearInterval(this.hourlyRewardInterval);
     }
     await this.processAllActiveSessions();
     if (this.client) {

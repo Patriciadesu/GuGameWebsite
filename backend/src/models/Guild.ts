@@ -5,6 +5,7 @@ export interface IGuild extends Document {
   guildLeaderIds?: string[]; // Discord IDs of the guild leaders
   adminIds: string[]; // Discord IDs of assigned admins
   createdBy: string; // Discord ID of super-admin who created it
+  assetPointName?: string; // Custom name for "Asset Point" in this guild (e.g., "Gold", "Coins", "Credits")
   createdAt: Date;
   updatedAt: Date;
 }
@@ -28,6 +29,11 @@ const GuildSchema = new Schema<IGuild>(
     createdBy: {
       type: String,
       required: true
+    },
+    assetPointName: {
+      type: String,
+      default: 'Asset Point',
+      trim: true
     }
   },
   {

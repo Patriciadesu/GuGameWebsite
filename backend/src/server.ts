@@ -17,7 +17,41 @@ import SkillTreeSettings from './models/SkillTreeSettings';
 import ApprovalRequest from './models/ApprovalRequest';
 import ShopItem from './models/ShopItem';
 import Purchase from './models/Purchase';
+import FictionContribution from './models/FictionContribution';
+import FictionWritingLock from './models/FictionWritingLock';
+import OfficeQuestCache from './models/OfficeQuestCache';
 import { VoiceTracker } from './services/voiceTracker';
+import { getOfficeCatalogItem, getOfficeCatalogItems, OfficeCatalogItem } from './services/officeCatalog';
+import { getOfficeQuestDescription, getOfficeQuestDescriptionParts, getOfficeQuestDetailHash, getOfficeQuests } from './services/officeQuestCatalog';
+import { AsyncTtlCache, KeyedAsyncTtlCache } from './services/asyncCache';
+import { CachedSessionStore } from './services/cachedSessionStore';
+import { KeyedBatchLoader } from './services/keyedBatchLoader';
+import {
+  PurchaseOperationError,
+  reserveLocalPurchase,
+  rollbackLocalPurchase
+} from './services/purchaseService';
+import { completeQuestStepOnce, unlockSkillOnce } from './services/progressionService';
+import {
+  ApprovalOperationError,
+  approveQuestRequest
+} from './services/approvalService';
+import {
+  acquireFictionWritingLock,
+  contributeToFiction,
+  FictionOperationError
+} from './services/fictionService';
+import {
+  ensureHamsterQuestUser,
+  getHamsterQuestErrorMessage,
+  getHamsterQuestInventory,
+  getHamsterQuestLinkUrl,
+  grantHamsterQuestItem,
+  isHamsterQuestConfigured,
+  isHamsterQuestUnauthorized,
+  useHamsterQuestItem,
+  validateHamsterQuestToken
+} from './services/hamsterQuest';
 
 // Extend Express types for Passport
 declare global {
@@ -31,6 +65,19 @@ declare global {
       isAdmin: boolean;
       role: 'user' | 'admin' | 'super-admin';
       guildId?: string;
+      state?: {
+        nickname?: string;
+        assetPoints: number;
+        techTokens: number;
+        voiceMinutesToday: number;
+        totalVoiceMinutes: number;
+        unlockedSkills: string[];
+        completedQuestSteps: Array<{ skillId: string; stepId: string; completedAt: Date }>;
+        completedQuestRewards: string[];
+        hamsterQuestLinked: boolean;
+        createdAt?: Date;
+        updatedAt?: Date;
+      };
     }
   }
 }
@@ -41,11 +88,431 @@ dotenv.config({ path: path.join(__dirname, '../.env') });
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
 const MONGODB_URI = process.env.MONGODB_URI || '';
+const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || '';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 const ADMIN_GUILD_ID = process.env.ADMIN_GUILD_ID || '';
 const ADMIN_ROLE_IDS = process.env.ADMIN_ROLE_IDS?.split(',') || [];
 const SUPER_ADMIN_ROLE_IDS = process.env.SUPER_ADMIN_ROLE_IDS?.split(',') || [];
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
+const TEST_BYPASS_KEY = process.env.TEST_BYPASS_KEY || '';
+const HAMSTERQUEST_USABLE_ITEM_TYPES = new Set(['GachaItem', 'DiscordNotifyItem']);
+const hamsterInventorySyncCache = new KeyedAsyncTtlCache<any[]>(30_000, 2_000);
+const userInventoryCache = new KeyedAsyncTtlCache<any[]>(15_000, 2_000);
+const inventoryShopItemsCache = new AsyncTtlCache<Map<string, any>>(30_000);
+const inventoryPurchasesLoader = new KeyedBatchLoader<any[]>(async discordIds => {
+  const purchases = await Purchase.find({
+    userId: { $in: discordIds },
+    $or: [{ quantity: { $gt: 0 } }, { quantity: { $exists: false } }]
+  }).sort({ updatedAt: -1 }).lean();
+  const purchasesByUserId = new Map(discordIds.map(discordId => [discordId, [] as any[]]));
+  purchases.forEach(purchase => {
+    purchasesByUserId.get(purchase.userId)?.push(purchase);
+  });
+  return purchasesByUserId;
+});
+
+const getInventoryShopItemsById = () => inventoryShopItemsCache.get(async () => {
+  const items = await ShopItem.find({}).lean();
+  return new Map(items.map(item => [item._id.toString(), item]));
+});
+
+const invalidateInventoryItemCache = () => {
+  inventoryShopItemsCache.clear();
+  userInventoryCache.clear();
+};
+
+const getUserSummariesByDiscordId = async (discordIds: string[]) => {
+  const uniqueIds = [...new Set(discordIds)];
+  if (uniqueIds.length === 0) return new Map<string, any>();
+  const users = await User.find({ discordId: { $in: uniqueIds } })
+    .select('discordId username nickname discriminator avatar guildId')
+    .lean();
+  return new Map(users.map(user => [user.discordId, user]));
+};
+
+const presentUserSummary = (user: any) => user ? {
+  username: user.nickname || user.username,
+  nickname: user.nickname,
+  discriminator: user.discriminator,
+  avatar: user.avatar,
+  guildId: user.guildId
+} : null;
+
+const presentShopItems = async (items: any[]) => {
+  const itemObjects = items.map(item => typeof item.toObject === 'function' ? item.toObject() : item);
+  const externalItemIds = itemObjects
+    .filter(item => item.externalSource === 'office-catalog' && item.externalItemId)
+    .map(item => item.externalItemId as string);
+
+  if (externalItemIds.length === 0) {
+    return itemObjects;
+  }
+
+  let catalogById = new Map<string, OfficeCatalogItem>();
+  try {
+    const catalogItems = await getOfficeCatalogItems();
+    catalogById = new Map(catalogItems.map(item => [item._id, item]));
+  } catch (error) {
+    console.error('Unable to resolve Office catalog items:', error);
+  }
+
+  return itemObjects.map(item => {
+    if (item.externalSource !== 'office-catalog' || !item.externalItemId) {
+      return item;
+    }
+
+    const catalogItem = catalogById.get(item.externalItemId);
+    return {
+      ...item,
+      title: catalogItem?.name || item.title || 'Unavailable Office catalog item',
+      description: catalogItem?.description || item.description || '',
+      imageUrl: catalogItem?.icon || item.imageUrl || '',
+      externalItemType: catalogItem?.type || item.externalItemType,
+      externalRarity: catalogItem?.rarity || item.externalRarity,
+      externalItem: catalogItem || null,
+      externalItemUnavailable: !catalogItem,
+      isInventoryUsable: HAMSTERQUEST_USABLE_ITEM_TYPES.has(catalogItem?.type || item.externalItemType)
+    };
+  });
+};
+
+const performHamsterQuestInventorySync = async (discordId: string) => {
+  if (!isHamsterQuestConfigured()) {
+    throw new Error('HamsterQuest integration is not configured');
+  }
+
+  const [remoteInventory, catalogItems] = await Promise.all([
+    getHamsterQuestInventory(discordId),
+    getOfficeCatalogItems().catch(() => [] as OfficeCatalogItem[])
+  ]);
+  const catalogById = new Map(catalogItems.map(item => [item._id, item]));
+  const remoteByItemId = new Map<string, { quantity: number; item: typeof remoteInventory[number] }>();
+
+  remoteInventory.forEach(item => {
+    if (!item.itemId) return;
+    const current = remoteByItemId.get(item.itemId);
+    if (current) {
+      current.quantity += Math.max(1, Number(item.quantity) || 1);
+    } else {
+      remoteByItemId.set(item.itemId, {
+        quantity: Math.max(1, Number(item.quantity) || 1),
+        item
+      });
+    }
+  });
+
+  if (remoteByItemId.size > 0) {
+    try {
+      await ShopItem.bulkWrite([...remoteByItemId].map(([externalItemId, remoteEntry]) => {
+        const catalogItem = catalogById.get(externalItemId);
+        return {
+          updateOne: {
+            filter: { externalSource: 'office-catalog', externalItemId },
+            update: {
+              $set: {
+                title: catalogItem?.name || remoteEntry.item.itemName || 'HamsterQuest Item',
+                description: catalogItem?.description || '',
+                imageUrl: catalogItem?.icon || remoteEntry.item.icon || '',
+                externalItemType: catalogItem?.type || remoteEntry.item.itemType,
+                externalRarity: catalogItem?.rarity || remoteEntry.item.rarity
+              },
+              $setOnInsert: {
+                price: 0,
+                isActive: false,
+                isInventoryOnly: true,
+                itemType: 'normal',
+                availableToAllGuilds: true,
+                guildIds: []
+              }
+            },
+            upsert: true
+          }
+        };
+      }), { ordered: false });
+    } catch (error: any) {
+      const writeErrors = error?.writeErrors || [];
+      if (writeErrors.length === 0 || writeErrors.some((writeError: any) => writeError?.code !== 11000)) {
+        throw error;
+      }
+    }
+    invalidateInventoryItemCache();
+  }
+
+  const existingExternalItems = await ShopItem.find({
+    externalSource: 'office-catalog',
+    externalItemId: { $exists: true }
+  }).select('_id externalItemId');
+
+  const purchaseOperations = existingExternalItems.flatMap(shopItem => {
+    const externalItemId = shopItem.externalItemId || '';
+    const quantity = remoteByItemId.get(externalItemId)?.quantity || 0;
+    if (quantity === 0) {
+      return [{
+        updateOne: {
+          filter: { userId: discordId, shopItemId: shopItem._id },
+          update: { $set: { quantity: 0 } },
+          upsert: false
+        }
+      }];
+    }
+    return [{
+      updateOne: {
+        filter: { userId: discordId, shopItemId: shopItem._id },
+        update: {
+          $set: { quantity, status: 'completed' },
+          $setOnInsert: { purchasedAt: new Date(), contributionCredits: 0 }
+        },
+        upsert: true
+      }
+    }];
+  });
+  if (purchaseOperations.length > 0) {
+    await Purchase.bulkWrite(purchaseOperations as any[], { ordered: false });
+  }
+
+  userInventoryCache.delete(discordId);
+  return remoteInventory;
+};
+
+const syncHamsterQuestInventory = async (discordId: string, forceRefresh = false) => {
+  if (forceRefresh) hamsterInventorySyncCache.delete(discordId);
+  return hamsterInventorySyncCache.get(discordId, () => performHamsterQuestInventorySync(discordId));
+};
+
+const loadPresentedUserInventory = async (discordId: string, resolveCatalog: boolean) => {
+  const [purchases, shopItemsById] = await Promise.all([
+    inventoryPurchasesLoader.load(discordId),
+    getInventoryShopItemsById()
+  ]);
+  const inventoryRows = purchases.flatMap(purchase => {
+    const shopItem = shopItemsById.get(purchase.shopItemId.toString());
+    return shopItem ? [{ purchase, shopItem }] : [];
+  });
+  const presentedItems = resolveCatalog
+    ? await presentShopItems(inventoryRows.map(row => row.shopItem))
+    : inventoryRows.map(row => row.shopItem);
+
+  return inventoryRows.flatMap(({ purchase }, index) => {
+    const item = presentedItems[index];
+    if (!item || item.itemType === 'fiction') return [];
+    const externalType = item.externalItem?.type || item.externalItemType;
+    return [{
+      _id: purchase._id,
+      shopItemId: item._id,
+      title: item.title,
+      description: item.description,
+      imageUrl: item.imageUrl,
+      quantity: purchase.quantity ?? 1,
+      itemType: item.itemType,
+      externalSource: item.externalSource,
+      externalItemId: item.externalItemId,
+      externalItemType: externalType,
+      externalRarity: item.externalItem?.rarity || item.externalRarity,
+      isUsable: item.externalSource === 'office-catalog' && HAMSTERQUEST_USABLE_ITEM_TYPES.has(externalType),
+      purchasedAt: purchase.purchasedAt,
+      lastUsedAt: purchase.lastUsedAt
+    }];
+  });
+};
+
+const presentUserInventory = (discordId: string, resolveCatalog = true) => {
+  if (resolveCatalog) return loadPresentedUserInventory(discordId, true);
+  return userInventoryCache.get(discordId, () => loadPresentedUserInventory(discordId, false));
+};
+
+const getShopGuildScope = async (availableToAllGuilds: unknown, guildIds: unknown) => {
+  if (availableToAllGuilds !== false) {
+    return { availableToAllGuilds: true, guildIds: [] as string[] };
+  }
+
+  if (!Array.isArray(guildIds)) {
+    throw new Error('Select at least one guild or make the item available to all guilds');
+  }
+
+  const selectedGuildIds = [...new Set(guildIds.filter((guildId): guildId is string => typeof guildId === 'string' && guildId.trim().length > 0))];
+  if (selectedGuildIds.length === 0) {
+    throw new Error('Select at least one guild or make the item available to all guilds');
+  }
+
+  const validGuilds = await Guild.find({ _id: { $in: selectedGuildIds } }).select('_id').lean();
+  if (validGuilds.length !== selectedGuildIds.length) {
+    throw new Error('One or more selected guilds no longer exist');
+  }
+
+  return { availableToAllGuilds: false, guildIds: selectedGuildIds };
+};
+
+const isShopItemAvailableToUser = (shopItem: any, user: IUser): boolean =>
+  shopItem.availableToAllGuilds !== false || Boolean(user.guildId && shopItem.guildIds?.includes(user.guildId));
+
+interface ProgressionMember {
+  userId: string;
+  name: string;
+  avatar: string | null;
+  guildId?: string;
+  progress: number;
+}
+
+interface ProgressionGuild {
+  guildId: string;
+  name: string;
+  assetPointName: string;
+  memberCount: number;
+  progress: number;
+}
+
+interface ProgressionSnapshot {
+  totalSkills: number;
+  guildsById: Map<string, ProgressionGuild>;
+  membersByGuildId: Map<string, ProgressionMember[]>;
+  rankedGuilds: ProgressionGuild[];
+  pendingApprovalsByUserId: Map<string, string[]>;
+}
+
+const activeSkillsCache = new AsyncTtlCache<any[]>(30_000);
+const progressionCache = new AsyncTtlCache<ProgressionSnapshot>(10_000);
+const sessionUserCache = new KeyedAsyncTtlCache<Express.User | null>(15_000, 2_000);
+
+const getActiveSkills = () => activeSkillsCache.get(() =>
+  Skill.find({ isActive: true }).sort({ layer: 1, position: 1 }).lean()
+);
+
+const presentSkillsForUser = (skills: any[], user: { role: string; unlockedSkills?: string[] }) => {
+  const unlockedSkills = new Set(user.unlockedSkills || []);
+  const isAdmin = user.role === 'admin' || user.role === 'super-admin';
+  return skills.map(skill => {
+    const isAssetNode = skill.nodeType === 'asset' || skill.nodeColor === 'blue';
+    if (!isAdmin && isAssetNode && !unlockedSkills.has(skill._id.toString())) {
+      return { ...skill, contentYouTube: [], contentGoogleDrive: [] };
+    }
+    return skill;
+  });
+};
+
+const getProgressionSnapshot = () => progressionCache.get(async () => {
+  const [users, guilds, skills, pendingApprovals] = await Promise.all([
+    User.find().select('discordId username nickname avatar guildId unlockedSkills').lean(),
+    Guild.find().select('name assetPointName').lean(),
+    getActiveSkills(),
+    ApprovalRequest.find({ status: 'pending' }).select('userId skillId').lean()
+  ]);
+  const progressSkillIds = new Set(
+    skills
+      .filter(skill => skill.nodeType !== 'marker' && skill.nodeColor !== 'yellow')
+      .map(skill => skill._id.toString())
+  );
+  const membersByGuildId = new Map<string, ProgressionMember[]>();
+
+  for (const user of users) {
+    if (!user.guildId) continue;
+    const guildId = user.guildId.toString();
+    const progress = new Set((user.unlockedSkills || []).filter(skillId => progressSkillIds.has(skillId))).size;
+    const members = membersByGuildId.get(guildId) || [];
+    members.push({
+      userId: user.discordId,
+      name: user.nickname || user.username,
+      avatar: user.avatar,
+      guildId,
+      progress
+    });
+    membersByGuildId.set(guildId, members);
+  }
+
+  const compareProgress = <T extends { progress: number; name: string }>(a: T, b: T) =>
+    b.progress - a.progress || a.name.localeCompare(b.name);
+  membersByGuildId.forEach(members => members.sort(compareProgress));
+
+  const guildsById = new Map<string, ProgressionGuild>();
+  for (const guild of guilds) {
+    const guildId = guild._id.toString();
+    const members = membersByGuildId.get(guildId) || [];
+    guildsById.set(guildId, {
+      guildId,
+      name: guild.name,
+      assetPointName: guild.assetPointName || 'Asset Point',
+      memberCount: members.length,
+      // Use average unlocked quests so larger guilds do not get an automatic score advantage.
+      progress: members.length > 0
+        ? members.reduce((total, member) => total + member.progress, 0) / members.length
+        : 0
+    });
+  }
+
+  return {
+    totalSkills: progressSkillIds.size,
+    guildsById,
+    membersByGuildId,
+    rankedGuilds: [...guildsById.values()].sort(compareProgress),
+    pendingApprovalsByUserId: pendingApprovals.reduce((requestsByUser, request) => {
+      const requests = requestsByUser.get(request.userId) || [];
+      requests.push(request.skillId);
+      requestsByUser.set(request.userId, requests);
+      return requestsByUser;
+    }, new Map<string, string[]>())
+  };
+});
+
+const presentProgressionLeaderboard = (
+  snapshot: ProgressionSnapshot,
+  currentUserId: string,
+  currentGuildId?: string
+) => {
+  const currentGuild = currentGuildId ? snapshot.guildsById.get(currentGuildId) : undefined;
+  return {
+    totalSkills: snapshot.totalSkills,
+    currentGuild: currentGuild ? { id: currentGuild.guildId, name: currentGuild.name } : null,
+    guildMembers: (currentGuildId ? snapshot.membersByGuildId.get(currentGuildId) || [] : [])
+      .slice(0, 8)
+      .map((member, index) => ({
+        userId: member.userId,
+        name: member.name,
+        avatar: member.avatar,
+        progress: member.progress,
+        isCurrentUser: member.userId === currentUserId,
+        rank: index + 1
+      })),
+    guilds: snapshot.rankedGuilds.slice(0, 8).map((guild, index) => ({
+      guildId: guild.guildId,
+      name: guild.name,
+      memberCount: guild.memberCount,
+      progress: guild.progress,
+      rank: index + 1
+    }))
+  };
+};
+
+const invalidateSkillCaches = () => {
+  activeSkillsCache.clear();
+  progressionCache.clear();
+};
+
+const invalidateProgressionCache = () => {
+  progressionCache.clear();
+};
+
+const toSessionUser = (user: any): Express.User => ({
+  id: user.discordId,
+  username: user.nickname || user.username,
+  discriminator: user.discriminator,
+  avatar: user.avatar,
+  email: user.email,
+  isAdmin: user.isAdmin,
+  role: user.role,
+  guildId: user.guildId,
+  state: {
+    nickname: user.nickname,
+    assetPoints: user.assetPoints || 0,
+    techTokens: user.techTokens || 0,
+    voiceMinutesToday: user.voiceMinutesToday || 0,
+    totalVoiceMinutes: user.totalVoiceMinutes || 0,
+    unlockedSkills: user.unlockedSkills || [],
+    completedQuestSteps: user.completedQuestSteps || [],
+    completedQuestRewards: user.completedQuestRewards || [],
+    hamsterQuestLinked: Boolean(user.hamsterQuestLinkedAt),
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt
+  }
+});
 
 if (!MONGODB_URI) {
   console.error('❌ MONGODB_URI not found in environment variables');
@@ -162,7 +629,7 @@ app.use(cors({
 }));
 
 // MongoDB connection
-mongoose.connect(MONGODB_URI)
+mongoose.connect(MONGODB_URI, MONGODB_DB_NAME ? { dbName: MONGODB_DB_NAME } : undefined)
   .then(() => {
     console.log('✅ Connected to MongoDB');
     
@@ -183,14 +650,17 @@ mongoose.connect(MONGODB_URI)
   });
 
 // Session configuration
+const persistentSessionStore = MongoStore.create({
+  mongoUrl: MONGODB_URI,
+  ...(MONGODB_DB_NAME ? { dbName: MONGODB_DB_NAME } : {}),
+  touchAfter: 24 * 3600
+});
+
 app.use(session({
   secret: process.env.SESSION_SECRET || 'your-secret-key',
   resave: false,
   saveUninitialized: false,
-  store: MongoStore.create({
-    mongoUrl: MONGODB_URI,
-    touchAfter: 24 * 3600
-  }),
+  store: new CachedSessionStore(persistentSessionStore),
   cookie: {
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     httpOnly: true,
@@ -256,16 +726,17 @@ async (accessToken: string, refreshToken: string, profile: any, done: any) => {
       });
     }
 
-    return done(null, {
-      id: user.discordId,
-      username: user.nickname || user.username, // Use nickname if available
-      discriminator: user.discriminator,
-      avatar: user.avatar,
-      email: user.email,
-      isAdmin: user.isAdmin,
-      role: user.role,
-      guildId: user.guildId
-    });
+    if (isHamsterQuestConfigured()) {
+      try {
+        await ensureHamsterQuestUser(user.discordId);
+      } catch (error) {
+        console.error(`Unable to sync HamsterQuest account for Discord user ${user.discordId}:`, getHamsterQuestErrorMessage(error));
+      }
+    }
+
+    const sessionUser = toSessionUser(user);
+    sessionUserCache.set(user.discordId, sessionUser);
+    return done(null, sessionUser);
   } catch (error) {
     return done(error, null);
   }
@@ -279,21 +750,13 @@ passport.serializeUser((user: Express.User, done) => {
 // Deserialize user
 passport.deserializeUser(async (id: string, done) => {
   try {
-    const user = await User.findOne({ discordId: id });
-    if (user) {
-      done(null, {
-        id: user.discordId,
-        username: user.nickname || user.username, // Use nickname if available
-        discriminator: user.discriminator,
-        avatar: user.avatar,
-        email: user.email,
-        isAdmin: user.isAdmin,
-        role: user.role,
-        guildId: user.guildId
-      });
-    } else {
-      done(null, false);
-    }
+    const user = await sessionUserCache.get(id, async () => {
+      const storedUser = await User.findOne({ discordId: id })
+        .select('discordId username nickname discriminator avatar email isAdmin role guildId assetPoints techTokens voiceMinutesToday totalVoiceMinutes unlockedSkills completedQuestSteps completedQuestRewards hamsterQuestLinkedAt createdAt updatedAt')
+        .lean();
+      return storedUser ? toSessionUser(storedUser) : null;
+    });
+    done(null, user || false);
   } catch (error) {
     done(error, null);
   }
@@ -341,9 +804,128 @@ app.get('/api/auth/discord/callback',
 // Check authentication status
 app.get('/api/auth/user', (req: Request, res: Response) => {
   if (req.isAuthenticated()) {
-    res.json({ authenticated: true, user: req.user });
+    const { state: _state, ...user } = req.user!;
+    res.json({ authenticated: true, user });
   } else {
     res.json({ authenticated: false });
+  }
+});
+
+const presentMainMenuUser = (user: Express.User, assetPointName: string) => ({
+  discordId: user.id,
+  username: user.username,
+  nickname: user.state?.nickname,
+  discriminator: user.discriminator,
+  avatar: user.avatar,
+  email: user.email,
+  role: user.role,
+  guildId: user.guildId,
+  assetPoints: user.state?.assetPoints || 0,
+  assetPointName,
+  techTokens: user.state?.techTokens || 0,
+  voiceMinutesToday: user.state?.voiceMinutesToday || 0,
+  totalVoiceMinutes: user.state?.totalVoiceMinutes || 0,
+  unlockedSkills: user.state?.unlockedSkills || [],
+  isAdmin: user.isAdmin,
+  createdAt: user.state?.createdAt,
+  updatedAt: user.state?.updatedAt
+});
+
+const loadMainMenuState = async (user: Express.User, includeInitialData: boolean) => {
+  const progressionSnapshot = await getProgressionSnapshot();
+  if (!user.state) return null;
+
+  const guildId = user.guildId?.toString();
+  const assetPointName = guildId
+    ? progressionSnapshot.guildsById.get(guildId)?.assetPointName || 'Asset Point'
+    : 'Asset Point';
+  const commonState = {
+    userStats: presentMainMenuUser(user, assetPointName),
+    unlockedSkills: user.state.unlockedSkills,
+    questProgress: {
+      completedSteps: user.state.completedQuestSteps.map(step => ({
+        skillId: step.skillId,
+        stepId: step.stepId
+      })),
+      completedQuests: user.state.completedQuestRewards,
+      pendingApprovalSkillIds: progressionSnapshot.pendingApprovalsByUserId.get(user.id) || []
+    },
+    progressionLeaderboard: presentProgressionLeaderboard(
+      progressionSnapshot,
+      user.id,
+      guildId
+    )
+  };
+
+  if (!includeInitialData) return commonState;
+  const [skills, inventoryItems] = await Promise.all([
+    getActiveSkills(),
+    presentUserInventory(user.id, false)
+  ]);
+  return {
+    ...commonState,
+    skills: presentSkillsForUser(skills, {
+      role: user.role,
+      unlockedSkills: user.state.unlockedSkills
+    }),
+    inventory: {
+      items: inventoryItems,
+      hamsterQuestLinked: user.state.hamsterQuestLinked,
+      hamsterQuestConfigured: isHamsterQuestConfigured(),
+      syncWarning: null
+    }
+  };
+};
+
+app.get('/api/mainmenu/bootstrap', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const state = await loadMainMenuState(req.user!, true);
+    if (!state) return res.status(404).json({ error: 'User not found' });
+    res.json({ success: true, ...state });
+  } catch (error) {
+    console.error('Error loading Main Menu bootstrap:', error);
+    res.status(500).json({ error: 'Failed to load Main Menu' });
+  }
+});
+
+app.get('/api/mainmenu/status', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const state = await loadMainMenuState(req.user!, false);
+    if (!state) return res.status(404).json({ error: 'User not found' });
+    res.json({ success: true, ...state });
+  } catch (error) {
+    console.error('Error refreshing Main Menu status:', error);
+    res.status(500).json({ error: 'Failed to refresh Main Menu status' });
+  }
+});
+
+// Test-only entrypoint. The secret is server-side only and establishes a normal Passport session.
+app.get('/api/auth/test-login', async (req: Request, res: Response) => {
+  if (!TEST_BYPASS_KEY || req.query.key !== TEST_BYPASS_KEY) {
+    return res.status(404).end();
+  }
+
+  try {
+    const requestedUserId = typeof req.query.userId === 'string' ? req.query.userId.trim() : '';
+    const testUser = requestedUserId
+      ? await User.findOne({ discordId: requestedUserId })
+      : await User.findOne({ role: 'super-admin' }) || await User.findOne({ role: 'admin' });
+    if (!testUser) {
+      return res.status(503).json({ error: 'No admin account is available for test login' });
+    }
+
+    const sessionUser = toSessionUser(testUser);
+    sessionUserCache.set(testUser.discordId, sessionUser);
+    req.login(sessionUser, (error) => {
+      if (error) {
+        console.error('Test login failed:', error);
+        return res.status(500).json({ error: 'Failed to create test session' });
+      }
+      res.redirect(`${FRONTEND_URL}/admin`);
+    });
+  } catch (error) {
+    console.error('Error creating test login:', error);
+    res.status(500).json({ error: 'Failed to create test session' });
   }
 });
 
@@ -420,6 +1002,7 @@ app.post('/api/guilds', requireSuperAdmin, async (req: Request, res: Response) =
       createdBy: req.user!.id
     });
 
+    invalidateProgressionCache();
     res.json({ success: true, guild });
   } catch (error) {
     console.error('Error creating guild:', error);
@@ -455,7 +1038,7 @@ app.get('/api/guilds/:id', requireAdmin, async (req: Request, res: Response) => 
 // Update guild (super-admin only)
 app.put('/api/guilds/:id', requireSuperAdmin, async (req: Request, res: Response) => {
   try {
-    const { name, guildLeaderIds, adminIds } = req.body;
+    const { name, guildLeaderIds, adminIds, assetPointName } = req.body;
     const guild = await Guild.findById(req.params.id);
 
     if (!guild) {
@@ -481,8 +1064,10 @@ app.put('/api/guilds/:id', requireSuperAdmin, async (req: Request, res: Response
 
     if (name) guild.name = name;
     if (adminIds !== undefined) guild.adminIds = adminIds;
+    if (assetPointName !== undefined) guild.assetPointName = assetPointName;
 
     await guild.save();
+    invalidateProgressionCache();
     res.json({ success: true, guild });
   } catch (error) {
     console.error('Error updating guild:', error);
@@ -501,6 +1086,8 @@ app.delete('/api/guilds/:id', requireSuperAdmin, async (req: Request, res: Respo
     // Remove guild association from all users
     await User.updateMany({ guildId: req.params.id }, { $unset: { guildId: '' } });
 
+    sessionUserCache.clear();
+    invalidateProgressionCache();
     res.json({ success: true, message: 'Guild deleted successfully' });
   } catch (error) {
     console.error('Error deleting guild:', error);
@@ -592,6 +1179,26 @@ app.get('/api/guilds/:id/stats', requireAdmin, async (req: Request, res: Respons
   }
 });
 
+// Helper function to get asset point name for a user based on their guild
+async function getAssetPointName(userId: string): Promise<string> {
+  try {
+    const user = await User.findOne({ discordId: userId });
+    if (!user || !user.guildId) {
+      return 'Asset Point'; // Default name if no guild
+    }
+    
+    const guild = await Guild.findById(user.guildId);
+    if (!guild) {
+      return 'Asset Point'; // Default name if guild not found
+    }
+    
+    return guild.assetPointName || 'Asset Point';
+  } catch (error) {
+    console.error('Error getting asset point name:', error);
+    return 'Asset Point'; // Default on error
+  }
+}
+
 // Get user's guild info (for dashboard)
 app.get('/api/user/guild-info', requireAdmin, async (req: Request, res: Response) => {
   try {
@@ -615,6 +1222,7 @@ app.get('/api/user/guild-info', requireAdmin, async (req: Request, res: Response
       guild: {
         _id: guild._id,
         name: guild.name,
+        assetPointName: guild.assetPointName || 'Asset Point',
         totalMembers,
         totalAssetPoints
       }
@@ -631,15 +1239,9 @@ app.get('/api/users/:userId', requireAuth, async (req: Request, res: Response) =
     const requestingUserId = req.user!.id; // Discord ID from session
     const targetUserId = req.params.userId; // Can be Discord ID or MongoDB _id
 
-    // Users can only access their own data (unless admin)
-    const requestingUser = await User.findOne({ discordId: requestingUserId });
-    if (!requestingUser) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
     // Allow admins to view any user, regular users can only view themselves
     let targetUser;
-    if (requestingUser.role === 'admin' || requestingUser.role === 'super-admin') {
+    if (req.user!.role === 'admin' || req.user!.role === 'super-admin') {
       // Admin can view by Discord ID or MongoDB _id
       const query: any[] = [{ discordId: targetUserId }];
       
@@ -658,12 +1260,17 @@ app.get('/api/users/:userId', requireAuth, async (req: Request, res: Response) =
       if (targetUserId !== requestingUserId) {
         return res.status(403).json({ error: 'Forbidden: You can only view your own data' });
       }
-      targetUser = requestingUser;
+      targetUser = await User.findOne({ discordId: requestingUserId });
     }
 
     if (!targetUser) {
       return res.status(404).json({ error: 'User not found' });
     }
+
+    const progressionSnapshot = await getProgressionSnapshot();
+    const assetPointName = targetUser.guildId
+      ? progressionSnapshot.guildsById.get(targetUser.guildId.toString())?.assetPointName || 'Asset Point'
+      : 'Asset Point';
 
     // Return user data with all stats
     res.json({
@@ -679,6 +1286,7 @@ app.get('/api/users/:userId', requireAuth, async (req: Request, res: Response) =
         role: targetUser.role,
         guildId: targetUser.guildId,
         assetPoints: targetUser.assetPoints || 0,
+        assetPointName: assetPointName, // Include custom asset point name
         techTokens: targetUser.techTokens || 0,
         voiceMinutesToday: targetUser.voiceMinutesToday || 0,
         totalVoiceMinutes: targetUser.totalVoiceMinutes || 0,
@@ -712,6 +1320,7 @@ app.get('/api/users', requireAdmin, async (req: Request, res: Response) => {
       techTokens: user.techTokens,
       voiceMinutesToday: user.voiceMinutesToday,
       totalVoiceMinutes: user.totalVoiceMinutes || 0,
+      unlockedSkills: user.unlockedSkills || [], // Include unlocked skills
       isAdmin: user.isAdmin,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt
@@ -763,6 +1372,8 @@ app.post('/api/users/:userId/guild', async (req: Request, res: Response) => {
     user.guildId = guildId || undefined;
     await user.save();
 
+    sessionUserCache.delete(targetUserId);
+    invalidateProgressionCache();
     res.json({ success: true, user: { ...user.toObject(), accessToken: undefined, refreshToken: undefined } });
   } catch (error) {
     console.error('Error assigning user to guild:', error);
@@ -774,6 +1385,12 @@ app.post('/api/users/:userId/guild', async (req: Request, res: Response) => {
 app.post('/api/users/:userId/asset-points', requireAdmin, async (req: Request, res: Response) => {
   try {
     const { amount, operation } = req.body; // operation: 'add' or 'subtract'
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) {
+      return res.status(400).json({ error: 'Amount must be a non-negative number' });
+    }
+    if (!['add', 'subtract', 'set'].includes(operation)) {
+      return res.status(400).json({ error: 'Invalid operation. Use "add", "subtract", or "set"' });
+    }
     const user = await User.findOne({ discordId: req.params.userId });
 
     if (!user) {
@@ -792,6 +1409,7 @@ app.post('/api/users/:userId/asset-points', requireAdmin, async (req: Request, r
 
     await user.save();
 
+    sessionUserCache.delete(user.discordId);
     res.json({ 
       success: true, 
       user: { 
@@ -808,11 +1426,310 @@ app.post('/api/users/:userId/asset-points', requireAdmin, async (req: Request, r
 
 // ==================== SKILL MANAGEMENT API ====================
 
+const presentOfficeQuestCatalog = async () => {
+  const [quests, importedSkills] = await Promise.all([
+    OfficeQuestCache.find({}).sort({ title: 1 }).lean(),
+    Skill.find({ externalSource: 'office-quest' }).select('externalQuestId').lean()
+  ]);
+  const importedIds = new Set(importedSkills.map(skill => skill.externalQuestId).filter(Boolean));
+  return quests.map(quest => ({ ...quest, imported: importedIds.has(quest.externalId) }));
+};
+
+const normalizeDescriptionParts = (value: unknown): Array<{ type: string; content: string }> => Array.isArray(value)
+  ? value.filter((part: any) => part && typeof part.content === 'string' && part.content.trim()).slice(0, 100)
+    .map((part: any) => ({ type: typeof part.type === 'string' ? part.type.slice(0, 40) : 'Text', content: part.content.trim().slice(0, 100000) }))
+  : [];
+
+const normalizeSubQuests = (value: unknown): Array<{ externalId?: string; title: string; description: string; descriptionParts?: Array<{ type: string; content: string }>; type?: string }> => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((subQuest: any) => subQuest && typeof subQuest.title === 'string' && subQuest.title.trim())
+    .slice(0, 100)
+    .map((subQuest: any) => ({
+      externalId: typeof subQuest.externalId === 'string' ? subQuest.externalId : undefined,
+      title: subQuest.title.trim().slice(0, 500),
+      description: typeof subQuest.description === 'string' ? subQuest.description.slice(0, 100000) : '',
+      descriptionParts: normalizeDescriptionParts(subQuest.descriptionParts),
+      type: typeof subQuest.type === 'string' ? subQuest.type.slice(0, 80) : undefined
+    }));
+};
+
+const validControlPoints = (value: unknown): value is Array<{ x: number; y: number }> =>
+  Array.isArray(value) && value.length === 2 && value.every(point =>
+    point && Number.isFinite((point as { x?: number }).x) && Number.isFinite((point as { y?: number }).y)
+  );
+
+// Cached Office quest catalog. Reading this endpoint never calls Office.
+app.get('/api/admin/office-quest-catalog', requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const items = await presentOfficeQuestCatalog();
+    const latestSync = await OfficeQuestCache.findOne({}).sort({ syncedAt: -1 }).select('syncedAt').lean();
+    res.json({ success: true, items, syncedAt: latestSync?.syncedAt || null });
+  } catch (error) {
+    console.error('Error loading cached Office quests:', error);
+    res.status(500).json({ error: 'Unable to load the cached Office quest catalog' });
+  }
+});
+
+// Sync is explicit because the Office quest catalog can be large.
+app.post('/api/admin/office-quest-catalog/sync', requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const sourceQuests = await getOfficeQuests();
+    const seenDetails = new Set<string>();
+    const syncedAt = new Date();
+    const uniqueQuests = sourceQuests.filter(quest => {
+      if (!quest?._id || !quest.title?.trim()) return false;
+      const detailHash = getOfficeQuestDetailHash(quest);
+      if (seenDetails.has(detailHash)) return false;
+      seenDetails.add(detailHash);
+      return true;
+    });
+
+    const syncOperations = uniqueQuests.map(quest => {
+      const tags = (Array.isArray(quest.tags) ? quest.tags : [])
+        .map(tag => ({ externalId: String(tag?._id || tag?.id || ''), name: String(tag?.name || '').trim(), color: tag?.color }))
+        .filter(tag => tag.externalId && tag.name);
+      return {
+        updateOne: {
+          filter: { externalId: quest._id },
+          update: {
+            $set: {
+              title: String(quest.title).trim(),
+              type: quest.type?.trim() || undefined,
+              description: getOfficeQuestDescription(quest.description),
+              tags,
+              subQuestCount: Array.isArray(quest.subQuests) ? quest.subQuests.length : 0,
+              subQuests: normalizeSubQuests((quest.subQuests || []).map(subQuest => ({
+                externalId: subQuest?._id,
+                title: subQuest?.title,
+                description: getOfficeQuestDescription(subQuest?.description),
+                descriptionParts: getOfficeQuestDescriptionParts(subQuest?.description),
+                type: subQuest?.subQuestType
+              }))),
+              sourceCreatedAt: quest.createdAt ? new Date(quest.createdAt) : undefined,
+              sourceUpdatedAt: quest.updatedAt ? new Date(quest.updatedAt) : undefined,
+              detailHash: getOfficeQuestDetailHash(quest),
+              syncedAt
+            }
+          },
+          upsert: true
+        }
+      };
+    });
+    if (syncOperations.length > 0) await OfficeQuestCache.bulkWrite(syncOperations);
+    await OfficeQuestCache.deleteMany({ externalId: { $nin: uniqueQuests.map(quest => quest._id) } });
+
+    const importedQuestSteps = uniqueQuests.map(quest => ({
+      updateOne: {
+        filter: { externalSource: 'office-quest' as const, externalQuestId: quest._id },
+        update: {
+          $set: {
+            subQuests: normalizeSubQuests((quest.subQuests || []).map(subQuest => ({
+              externalId: subQuest?._id,
+              title: subQuest?.title,
+              description: getOfficeQuestDescription(subQuest?.description),
+              descriptionParts: getOfficeQuestDescriptionParts(subQuest?.description),
+              type: subQuest?.subQuestType
+            })))
+          }
+        }
+      }
+    }));
+    if (importedQuestSteps.length > 0) await Skill.bulkWrite(importedQuestSteps);
+
+    res.json({ success: true, syncedAt, sourceCount: sourceQuests.length, uniqueCount: uniqueQuests.length });
+  } catch (error: any) {
+    console.error('Error syncing Office quest catalog:', error);
+    res.status(502).json({ error: error.message || 'Unable to sync the Office quest catalog' });
+  }
+});
+
+app.post('/api/admin/office-quest-catalog/:externalQuestId/import', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const quest = await OfficeQuestCache.findOne({ externalId: req.params.externalQuestId });
+    if (!quest) return res.status(404).json({ error: 'Quest is not in the cached catalog. Sync it first.' });
+
+    const existing = await Skill.findOne({ externalSource: 'office-quest', externalQuestId: quest.externalId });
+    if (existing) return res.status(409).json({ error: 'This Office quest has already been imported' });
+
+    const count = await Skill.countDocuments();
+    const skill = await Skill.create({
+      title: quest.title,
+      description: quest.description || 'Imported from Office.',
+      cost: 0,
+      layer: 0,
+      position: count * 100,
+      treePosition: { x: ((count % 3) - 1) * 180, y: 620 - Math.floor(count / 3) * 180 },
+      nodeColor: 'green',
+      nodeType: 'quest',
+      externalSource: 'office-quest',
+      externalQuestId: quest.externalId,
+      subQuests: quest.subQuests || [],
+      isActive: true
+    });
+    invalidateSkillCaches();
+    res.status(201).json({ success: true, skill });
+  } catch (error: any) {
+    if (error?.code === 11000) return res.status(409).json({ error: 'This Office quest has already been imported' });
+    console.error('Error importing cached Office quest:', error);
+    res.status(500).json({ error: 'Failed to import Office quest' });
+  }
+});
+
+// Re-import refreshes Office-owned content without disturbing the Quest Tree layout or GuGame settings.
+app.post('/api/admin/office-quest-catalog/:externalQuestId/reimport', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const quest = await OfficeQuestCache.findOne({ externalId: req.params.externalQuestId });
+    if (!quest) return res.status(404).json({ error: 'Quest is not in the cached catalog. Sync it first.' });
+
+    const skill = await Skill.findOne({ externalSource: 'office-quest', externalQuestId: quest.externalId });
+    if (!skill) return res.status(404).json({ error: 'This Office quest has not been imported yet.' });
+
+    skill.title = quest.title;
+    skill.description = quest.description || 'Imported from Office.';
+    skill.subQuests = normalizeSubQuests(quest.subQuests || []);
+    await skill.save();
+    invalidateSkillCaches();
+
+    res.json({ success: true, skill });
+  } catch (error) {
+    console.error('Error re-importing cached Office quest:', error);
+    res.status(500).json({ error: 'Failed to re-import Office quest' });
+  }
+});
+
+app.get('/api/admin/quest-tree/json', requireSuperAdmin, async (_req: Request, res: Response) => {
+  try {
+    const skills = await Skill.find({}).sort({ createdAt: 1 });
+    res.json({
+      version: 1,
+      quests: skills.map((skill) => ({
+        key: skill._id.toString(),
+        title: skill.title,
+        description: skill.description,
+        cost: skill.cost,
+        nextQuestCost: skill.nextQuestCost,
+        nodeColor: skill.nodeColor,
+        treePosition: skill.treePosition,
+        previewClip: skill.previewClip || [],
+        contentYouTube: skill.contentYouTube || [],
+        contentGoogleDrive: skill.contentGoogleDrive || [],
+        subQuests: skill.subQuests || [],
+        prerequisites: skill.prerequisites || [],
+        minAP: skill.minAP,
+        maxAP: skill.maxAP,
+        isActive: skill.isActive,
+        isAdvancedLocked: skill.isAdvancedLocked === true,
+        connections: (skill.connections || []).map((connection) => ({
+          targetKey: connection.targetSkillId,
+          connectionType: connection.connectionType,
+          hasArrowhead: connection.hasArrowhead !== false,
+          curveMode: connection.curveMode === 'bezier' ? 'bezier' : 'auto',
+          controlPoints: connection.controlPoints || []
+        }))
+      }))
+    });
+  } catch (error) {
+    console.error('Error exporting quest tree JSON:', error);
+    res.status(500).json({ error: 'Failed to export quest tree JSON' });
+  }
+});
+
+app.post('/api/admin/quest-tree/import', requireSuperAdmin, async (req: Request, res: Response) => {
+  try {
+    const quests = Array.isArray(req.body?.quests) ? req.body.quests : req.body;
+    if (!Array.isArray(quests) || quests.length === 0 || quests.length > 200) {
+      return res.status(400).json({ error: 'Provide a quests array containing between 1 and 200 quests' });
+    }
+
+    const allowedColors = new Set(['yellow', 'blue', 'green', 'white', 'purple']);
+    const keys = quests.map((quest: any, index: number) => String(quest.key || `quest-${index + 1}`));
+    if (new Set(keys).size !== keys.length) {
+      return res.status(400).json({ error: 'Every imported quest needs a unique key' });
+    }
+
+    for (let index = 0; index < quests.length; index++) {
+      const quest = quests[index] || {};
+      if (!quest.title || !quest.description || !Number.isFinite(quest.cost)) {
+        return res.status(400).json({ error: `Quest ${index + 1} requires title, description, and numeric cost` });
+      }
+      if (quest.nodeColor !== undefined && !allowedColors.has(quest.nodeColor)) {
+        return res.status(400).json({ error: `Quest ${index + 1} has an invalid nodeColor` });
+      }
+      if (quest.treePosition !== undefined &&
+        (!Number.isFinite(quest.treePosition?.x) || !Number.isFinite(quest.treePosition?.y))) {
+        return res.status(400).json({ error: `Quest ${index + 1} needs numeric treePosition.x and treePosition.y` });
+      }
+
+      const references = [
+        ...(Array.isArray(quest.prerequisites) ? quest.prerequisites : []),
+        ...(Array.isArray(quest.connections) ? quest.connections.map((connection: any) => connection.targetKey) : [])
+      ].filter(Boolean).map(String);
+      if (references.some((reference) => !keys.includes(reference))) {
+        return res.status(400).json({ error: `Quest ${index + 1} references a key that is not included in this import` });
+      }
+    }
+
+    const created = await Skill.insertMany(quests.map((quest: any, index: number) => new Skill({
+      title: String(quest.title).trim(),
+      description: String(quest.description).trim(),
+      cost: Number(quest.cost),
+      nextQuestCost: Number.isFinite(quest.nextQuestCost) ? Number(quest.nextQuestCost) : 25,
+      previewClip: Array.isArray(quest.previewClip) ? quest.previewClip : [],
+      contentYouTube: Array.isArray(quest.contentYouTube) ? quest.contentYouTube : [],
+      contentGoogleDrive: Array.isArray(quest.contentGoogleDrive) ? quest.contentGoogleDrive : [],
+      subQuests: normalizeSubQuests(quest.subQuests),
+      layer: 0,
+      position: index * 100,
+      treePosition: quest.treePosition || { x: ((index % 3) - 1) * 180, y: 620 - Math.floor(index / 3) * 180 },
+      nodeColor: quest.nodeColor || 'blue',
+      nodeType: quest.nodeType,
+      prerequisites: [],
+      connections: [],
+      minAP: quest.minAP,
+      maxAP: quest.maxAP,
+      isActive: quest.isActive !== false,
+      isAdvancedLocked: quest.isAdvancedLocked === true
+    })));
+
+    const importedIdByKey = new Map(keys.map((key, index) => [key, created[index]._id.toString()]));
+    await Promise.all(created.map(async (skill, index) => {
+      const quest = quests[index];
+      skill.prerequisites = (Array.isArray(quest.prerequisites) ? quest.prerequisites : [])
+        .map((key: string) => importedIdByKey.get(String(key)))
+        .filter(Boolean) as string[];
+      skill.connections = (Array.isArray(quest.connections) ? quest.connections : []).map((connection: any) => ({
+        targetSkillId: importedIdByKey.get(String(connection.targetKey)),
+        connectionType: connection.connectionType === 'special' ? 'special' : 'normal',
+        hasArrowhead: connection.hasArrowhead !== false,
+        breakPoints: [],
+        curveMode: connection.curveMode === 'bezier' ? 'bezier' : 'auto',
+        controlPoints: validControlPoints(connection.controlPoints) ? connection.controlPoints : []
+      })).filter((connection: any) => connection.targetSkillId);
+      await skill.save();
+    }));
+
+    invalidateSkillCaches();
+    res.status(201).json({ success: true, createdCount: created.length });
+  } catch (error) {
+    console.error('Error importing quest tree JSON:', error);
+    res.status(500).json({ error: 'Failed to import quest tree JSON' });
+  }
+});
+
 // Get all skills (authenticated users can view)
 app.get('/api/skills', requireAuth, async (req: Request, res: Response) => {
   try {
-    const skills = await Skill.find({ isActive: true }).sort({ layer: 1, position: 1 });
-    res.json({ success: true, skills });
+    if (!req.user!.state) return res.status(404).json({ error: 'User not found' });
+    const skills = await getActiveSkills();
+    
+    res.json({
+      success: true,
+      skills: presentSkillsForUser(skills, {
+        role: req.user!.role,
+        unlockedSkills: req.user!.state.unlockedSkills
+      })
+    });
   } catch (error) {
     console.error('Error fetching skills:', error);
     res.status(500).json({ error: 'Failed to fetch skills' });
@@ -822,11 +1739,30 @@ app.get('/api/skills', requireAuth, async (req: Request, res: Response) => {
 // Get single skill by ID
 app.get('/api/skills/:id', requireAuth, async (req: Request, res: Response) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid quest ID' });
+    }
     const skill = await Skill.findById(req.params.id);
     if (!skill) {
       return res.status(404).json({ error: 'Skill not found' });
     }
-    res.json({ success: true, skill });
+    
+    const unlockedSkills = req.user!.state?.unlockedSkills || [];
+    const isAdmin = req.user!.role === 'admin' || req.user!.role === 'super-admin';
+    const isUnlocked = unlockedSkills.includes(skill._id.toString());
+    
+    // For asset nodes, hide content links until unlocked (unless admin)
+    const isAssetNode = skill.nodeType === 'asset' || skill.nodeColor === 'blue';
+    const skillData = skill.toObject();
+    
+    // Admins can always see content, regular users need to unlock asset nodes
+    if (isAssetNode && !isUnlocked && !isAdmin) {
+      // Hide content links for locked asset nodes (non-admins only)
+      skillData.contentYouTube = [];
+      skillData.contentGoogleDrive = [];
+    }
+    
+    res.json({ success: true, skill: skillData });
   } catch (error) {
     console.error('Error fetching skill:', error);
     res.status(500).json({ error: 'Failed to fetch skill' });
@@ -836,36 +1772,54 @@ app.get('/api/skills/:id', requireAuth, async (req: Request, res: Response) => {
 // Create new skill (super-admin only)
 app.post('/api/skills', requireSuperAdmin, async (req: Request, res: Response) => {
   try {
-    const { title, description, cost, previewClip, contentYouTube, contentGoogleDrive, layer, position, prerequisites, nodeColor, minAP, maxAP } = req.body;
+    const { title, description, cost, nextQuestCost, previewClip, contentYouTube, contentGoogleDrive, layer, position, treePosition, prerequisites, nodeColor, subQuests, minAP, maxAP, isAdvancedLocked } = req.body;
 
-    if (!title || !description || cost === undefined || layer === undefined || position === undefined) {
-      return res.status(400).json({ error: 'Missing required fields: title, description, cost, layer, position' });
+    if (!title || !description || cost === undefined) {
+      return res.status(400).json({ error: 'Missing required fields: title, description, cost' });
+    }
+    if (typeof cost !== 'number' || !Number.isFinite(cost) || cost < 0) {
+      return res.status(400).json({ error: 'Cost must be a non-negative number' });
+    }
+    if (nextQuestCost !== undefined &&
+      (typeof nextQuestCost !== 'number' || !Number.isFinite(nextQuestCost) || nextQuestCost < 0)) {
+      return res.status(400).json({ error: 'Next quest cost must be a non-negative number' });
     }
 
-    // Validate layer is between 0 and 7
-    if (layer < 0 || layer > 7) {
-      return res.status(400).json({ error: 'Layer must be between 0 (center) and 7' });
+    if (treePosition !== undefined &&
+      (!Number.isFinite(treePosition?.x) || !Number.isFinite(treePosition?.y))) {
+      return res.status(400).json({ error: 'Tree position must contain numeric x and y values' });
     }
+
+    const questCount = await Skill.countDocuments();
+    const defaultTreePosition = {
+      x: ((questCount % 3) - 1) * 180,
+      y: 620 - Math.floor(questCount / 3) * 180
+    };
 
     const skill = new Skill({
       title,
       description,
       cost,
+      nextQuestCost: nextQuestCost !== undefined ? nextQuestCost : 25,
       previewClip,
       contentYouTube,
       contentGoogleDrive,
-      layer,
-      position,
+      layer: layer ?? 0,
+      position: position ?? questCount * 100,
+      treePosition: treePosition ?? defaultTreePosition,
       nodeColor: nodeColor || 'blue',
+      isAdvancedLocked: isAdvancedLocked === true,
       prerequisites: prerequisites || [],
       connections: [],
+      subQuests: normalizeSubQuests(subQuests),
       minAP: minAP !== undefined ? minAP : undefined,
       maxAP: maxAP !== undefined ? maxAP : undefined
     });
 
-    console.log(`✨ Creating skill: ${title}`, { layer, position, nodeColor, minAP, maxAP });
+    console.log(`✨ Creating skill: ${title}`, { treePosition: skill.treePosition, nodeColor, minAP, maxAP });
 
     await skill.save();
+    invalidateSkillCaches();
     res.json({ success: true, skill });
   } catch (error) {
     console.error('Error creating skill:', error);
@@ -876,8 +1830,11 @@ app.post('/api/skills', requireSuperAdmin, async (req: Request, res: Response) =
 // Update skill (super-admin only)
 app.put('/api/skills/:id', requireSuperAdmin, async (req: Request, res: Response) => {
   try {
-    const { title, description, cost, previewClip, contentYouTube, contentGoogleDrive, layer, position, prerequisites, isActive, nodeColor, connections, minAP, maxAP } = req.body;
+    const { title, description, cost, nextQuestCost, previewClip, contentYouTube, contentGoogleDrive, layer, position, treePosition, prerequisites, isActive, isAdvancedLocked, nodeColor, connections, subQuests, minAP, maxAP } = req.body;
 
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid quest ID' });
+    }
     const skill = await Skill.findById(req.params.id);
     if (!skill) {
       return res.status(404).json({ error: 'Skill not found' });
@@ -887,27 +1844,68 @@ app.put('/api/skills/:id', requireSuperAdmin, async (req: Request, res: Response
     if (layer !== undefined && (layer < 0 || layer > 7)) {
       return res.status(400).json({ error: 'Layer must be between 0 (center) and 7' });
     }
+    if (treePosition !== undefined &&
+      (!Number.isFinite(treePosition?.x) || !Number.isFinite(treePosition?.y))) {
+      return res.status(400).json({ error: 'Tree position must contain numeric x and y values' });
+    }
+    if (cost !== undefined && (typeof cost !== 'number' || !Number.isFinite(cost) || cost < 0)) {
+      return res.status(400).json({ error: 'Cost must be a non-negative number' });
+    }
+    if (nextQuestCost !== undefined &&
+      (typeof nextQuestCost !== 'number' || !Number.isFinite(nextQuestCost) || nextQuestCost < 0)) {
+      return res.status(400).json({ error: 'Next quest cost must be a non-negative number' });
+    }
 
     // Update fields
     if (title !== undefined) skill.title = title;
     if (description !== undefined) skill.description = description;
     if (cost !== undefined) skill.cost = cost;
-    if (previewClip !== undefined) skill.previewClip = previewClip;
-    if (contentYouTube !== undefined) skill.contentYouTube = contentYouTube;
-    if (contentGoogleDrive !== undefined) skill.contentGoogleDrive = contentGoogleDrive;
+    if (nextQuestCost !== undefined) skill.nextQuestCost = nextQuestCost;
+    if (previewClip !== undefined) {
+      // Ensure it's always an array (even if empty)
+      skill.previewClip = Array.isArray(previewClip) ? previewClip : (previewClip ? [previewClip] : []);
+    }
+    if (contentYouTube !== undefined) {
+      // Ensure it's always an array (even if empty) to allow clearing content
+      skill.contentYouTube = Array.isArray(contentYouTube) ? contentYouTube : (contentYouTube ? [contentYouTube] : []);
+    }
+    if (contentGoogleDrive !== undefined) {
+      // Ensure it's always an array (even if empty) to allow clearing content
+      skill.contentGoogleDrive = Array.isArray(contentGoogleDrive) ? contentGoogleDrive : (contentGoogleDrive ? [contentGoogleDrive] : []);
+    }
     if (layer !== undefined) skill.layer = layer;
     if (position !== undefined) skill.position = position;
+    if (treePosition !== undefined) skill.treePosition = treePosition;
     if (prerequisites !== undefined) skill.prerequisites = prerequisites;
     if (isActive !== undefined) skill.isActive = isActive;
+    if (isAdvancedLocked !== undefined) skill.isAdvancedLocked = isAdvancedLocked === true;
     if (nodeColor !== undefined) skill.nodeColor = nodeColor;
     if (connections !== undefined) skill.connections = connections;
+    if (subQuests !== undefined) skill.subQuests = normalizeSubQuests(subQuests);
     if (minAP !== undefined) skill.minAP = minAP !== null && minAP !== '' ? minAP : undefined;
     if (maxAP !== undefined) skill.maxAP = maxAP !== null && maxAP !== '' ? maxAP : undefined;
 
-    console.log(`📝 Updating skill: ${skill.title}`, { connections: skill.connections, minAP, maxAP });
+    console.log(`📝 Updating skill: ${skill.title}`, { 
+      connections: skill.connections, 
+      minAP, 
+      maxAP,
+      contentYouTube: skill.contentYouTube,
+      contentGoogleDrive: skill.contentGoogleDrive,
+      previewClip: skill.previewClip
+    });
 
     await skill.save();
-    res.json({ success: true, skill });
+    invalidateSkillCaches();
+    
+    // Reload from database to ensure we return the latest data
+    const updatedSkill = await Skill.findById(skill._id);
+    console.log(`✅ Skill updated successfully. Content after save:`, {
+      contentYouTube: updatedSkill?.contentYouTube,
+      contentGoogleDrive: updatedSkill?.contentGoogleDrive,
+      previewClip: updatedSkill?.previewClip
+    });
+    
+    res.json({ success: true, skill: updatedSkill });
   } catch (error) {
     console.error('Error updating skill:', error);
     res.status(500).json({ error: 'Failed to update skill' });
@@ -917,10 +1915,14 @@ app.put('/api/skills/:id', requireSuperAdmin, async (req: Request, res: Response
 // Delete skill (super-admin only)
 app.delete('/api/skills/:id', requireSuperAdmin, async (req: Request, res: Response) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid quest ID' });
+    }
     const skill = await Skill.findByIdAndDelete(req.params.id);
     if (!skill) {
       return res.status(404).json({ error: 'Skill not found' });
     }
+    invalidateSkillCaches();
     res.json({ success: true, message: 'Skill deleted successfully' });
   } catch (error) {
     console.error('Error deleting skill:', error);
@@ -931,10 +1933,19 @@ app.delete('/api/skills/:id', requireSuperAdmin, async (req: Request, res: Respo
 // Add connection to a skill (super-admin only)
 app.post('/api/skills/:id/connections', requireSuperAdmin, async (req: Request, res: Response) => {
   try {
-    const { targetSkillId, connectionType, hasArrowhead, breakPoints } = req.body;
+    const { targetSkillId, connectionType, hasArrowhead, breakPoints, curveMode, controlPoints } = req.body;
 
     if (!targetSkillId || !connectionType) {
       return res.status(400).json({ error: 'Missing targetSkillId or connectionType' });
+    }
+    if (!mongoose.Types.ObjectId.isValid(req.params.id) || !mongoose.Types.ObjectId.isValid(targetSkillId)) {
+      return res.status(400).json({ error: 'Invalid quest ID' });
+    }
+    if (controlPoints !== undefined && !validControlPoints(controlPoints)) {
+      return res.status(400).json({ error: 'controlPoints must contain two numeric x/y points' });
+    }
+    if (curveMode !== undefined && curveMode !== 'auto' && curveMode !== 'bezier') {
+      return res.status(400).json({ error: 'curveMode must be auto or bezier' });
     }
 
     const skill = await Skill.findById(req.params.id);
@@ -961,12 +1972,15 @@ app.post('/api/skills/:id/connections', requireSuperAdmin, async (req: Request, 
       targetSkillId, 
       connectionType,
       hasArrowhead: hasArrowhead !== undefined ? hasArrowhead : true,
-      breakPoints: breakPoints || []
+      breakPoints: breakPoints || [],
+      curveMode: curveMode === 'bezier' ? 'bezier' : 'auto',
+      controlPoints: controlPoints || []
     });
     
     console.log(`🔗 Adding connection: ${skill.title} -> ${targetSkillId} (${connectionType}, arrowhead: ${hasArrowhead})`);
     
     await skill.save();
+    invalidateSkillCaches();
     res.json({ success: true, skill });
   } catch (error) {
     console.error('Error adding connection:', error);
@@ -978,8 +1992,11 @@ app.post('/api/skills/:id/connections', requireSuperAdmin, async (req: Request, 
 app.put('/api/skills/:id/connections/:targetSkillId', requireSuperAdmin, async (req: Request, res: Response) => {
   try {
     const { id, targetSkillId } = req.params;
-    const { hasArrowhead, breakPoints, connectionType } = req.body;
+    const { hasArrowhead, breakPoints, connectionType, curveMode, controlPoints } = req.body;
 
+    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(targetSkillId)) {
+      return res.status(400).json({ error: 'Invalid quest ID' });
+    }
     const skill = await Skill.findById(id);
     if (!skill) {
       return res.status(404).json({ error: 'Skill not found' });
@@ -998,15 +2015,24 @@ app.put('/api/skills/:id/connections/:targetSkillId', requireSuperAdmin, async (
     if (!connection) {
       return res.status(404).json({ error: 'Connection not found' });
     }
+    if (controlPoints !== undefined && !validControlPoints(controlPoints)) {
+      return res.status(400).json({ error: 'controlPoints must contain two numeric x/y points' });
+    }
+    if (curveMode !== undefined && curveMode !== 'auto' && curveMode !== 'bezier') {
+      return res.status(400).json({ error: 'curveMode must be auto or bezier' });
+    }
 
     // Update properties
     if (hasArrowhead !== undefined) connection.hasArrowhead = hasArrowhead;
     if (breakPoints !== undefined) connection.breakPoints = breakPoints;
     if (connectionType !== undefined) connection.connectionType = connectionType;
+    if (curveMode !== undefined) connection.curveMode = curveMode;
+    if (controlPoints !== undefined) connection.controlPoints = controlPoints;
 
     console.log(`🔄 Updating connection: ${skill.title} -> ${targetSkillId}`, { hasArrowhead, breakPoints: breakPoints?.length });
 
     await skill.save();
+    invalidateSkillCaches();
     res.json({ success: true, skill });
   } catch (error) {
     console.error('Error updating connection:', error);
@@ -1019,6 +2045,9 @@ app.delete('/api/skills/:id/connections/:targetSkillId', requireSuperAdmin, asyn
   try {
     const { id, targetSkillId } = req.params;
 
+    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(targetSkillId)) {
+      return res.status(400).json({ error: 'Invalid quest ID' });
+    }
     const skill = await Skill.findById(id);
     if (!skill) {
       return res.status(404).json({ error: 'Skill not found' });
@@ -1037,6 +2066,7 @@ app.delete('/api/skills/:id/connections/:targetSkillId', requireSuperAdmin, asyn
     console.log(`🔓 Removing connection: ${skill.title} -> ${targetSkillId}`);
 
     await skill.save();
+    invalidateSkillCaches();
     res.json({ success: true, skill });
   } catch (error) {
     console.error('Error removing connection:', error);
@@ -1069,6 +2099,7 @@ app.post('/api/skills/migrate-node-type', requireSuperAdmin, async (req: Request
       }
     }
 
+    invalidateSkillCaches();
     res.json({ 
       success: true, 
       message: `Updated ${updatedCount} skills with nodeType based on nodeColor`,
@@ -1236,6 +2267,9 @@ app.post('/api/skills/:id/unlock', requireAuth, async (req: Request, res: Respon
     const skillId = req.params.id;
     const userId = req.user!.id;
 
+    if (!mongoose.Types.ObjectId.isValid(skillId)) {
+      return res.status(400).json({ error: 'Invalid quest ID' });
+    }
     // Get user and skill
     const user = await User.findOne({ discordId: userId });
     const skill = await Skill.findById(skillId);
@@ -1246,6 +2280,10 @@ app.post('/api/skills/:id/unlock', requireAuth, async (req: Request, res: Respon
 
     if (!skill) {
       return res.status(404).json({ error: 'Skill not found' });
+    }
+
+    if (skill.nodeType === 'quest' || skill.nodeColor === 'green') {
+      return res.status(400).json({ error: 'Quest nodes must be completed and approved by an admin' });
     }
 
     // Check if already unlocked
@@ -1268,7 +2306,7 @@ app.post('/api/skills/:id/unlock', requireAuth, async (req: Request, res: Respon
     }
 
     // Check prerequisites from connections (if any skill has a connection pointing to this skill, it's a prerequisite)
-    const allSkills = await Skill.find({});
+    const allSkills = await getActiveSkills();
     const prerequisiteSkillsFromConnections = allSkills.filter(
       (s) => s.connections && s.connections.some((conn: any) => conn.targetSkillId?.toString() === skillId)
     );
@@ -1290,32 +2328,28 @@ app.post('/api/skills/:id/unlock', requireAuth, async (req: Request, res: Respon
       }
     }
 
-    // Check if user has enough asset points (skip for Adventure and Marker nodes)
     const isAdventure = skill.nodeType === 'adventure' || skill.nodeColor === 'white';
     const isMarker = skill.nodeType === 'marker' || skill.nodeColor === 'yellow';
-    if (!isAdventure && !isMarker) {
-      if (user.assetPoints < skill.cost) {
-        return res.status(400).json({ 
-          error: 'Insufficient asset points',
-          required: skill.cost,
-          available: user.assetPoints
-        });
+    const cost = isAdventure || isMarker ? 0 : skill.cost;
+    const updatedUser = await unlockSkillOnce(userId, skillId, cost, isAdventure ? 25 : 0);
+    if (!updatedUser) {
+      const currentUser = await User.findOne({ discordId: userId }).select('assetPoints unlockedSkills').lean();
+      if (currentUser?.unlockedSkills?.includes(skillId)) {
+        return res.status(400).json({ error: 'Skill already unlocked' });
       }
-      // Deduct asset points for non-Adventure and non-Marker nodes
-      user.assetPoints -= skill.cost;
+      return res.status(400).json({
+        error: 'Insufficient asset points',
+        required: cost,
+        available: currentUser?.assetPoints || 0
+      });
     }
 
-    // Unlock the skill
-    if (!user.unlockedSkills) {
-      user.unlockedSkills = [];
-    }
-    user.unlockedSkills.push(skillId);
-    await user.save();
-
+    sessionUserCache.delete(userId);
+    invalidateProgressionCache();
     res.json({ 
       success: true, 
       message: 'Skill unlocked successfully',
-      remainingAssetPoints: user.assetPoints
+      remainingAssetPoints: updatedUser.assetPoints
     });
   } catch (error: any) {
     console.error('Error unlocking skill:', error);
@@ -1341,6 +2375,93 @@ app.get('/api/user/unlocked-skills', requireAuth, async (req: Request, res: Resp
   }
 });
 
+const QUEST_STEP_REWARD_AP = 5;
+
+const getMissingQuestPrerequisites = async (skill: any, unlockedSkills: string[]) => {
+  const missing = new Set<string>(
+    (skill.prerequisites || []).filter((prerequisiteId: string) => !unlockedSkills.includes(prerequisiteId))
+  );
+  const connectedPrerequisites = await Skill.find({
+    'connections.targetSkillId': skill.id
+  }).select('_id');
+  connectedPrerequisites.forEach(prerequisite => {
+    const prerequisiteId = prerequisite._id.toString();
+    if (!unlockedSkills.includes(prerequisiteId)) missing.add(prerequisiteId);
+  });
+  return [...missing];
+};
+
+app.get('/api/user/quest-progress', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const [user, pendingRequests] = await Promise.all([
+      User.findOne({ discordId: req.user!.id }).select('completedQuestSteps completedQuestRewards'),
+      ApprovalRequest.find({ userId: req.user!.id, status: 'pending' }).select('skillId')
+    ]);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({
+      success: true,
+      completedSteps: (user.completedQuestSteps || []).map(step => ({ skillId: step.skillId, stepId: step.stepId })),
+      completedQuests: user.completedQuestRewards || [],
+      pendingApprovalSkillIds: pendingRequests.map(request => request.skillId)
+    });
+  } catch (error) {
+    console.error('Error fetching quest progress:', error);
+    res.status(500).json({ error: 'Failed to fetch quest progress' });
+  }
+});
+
+app.post('/api/skills/:id/steps/:stepId/complete', requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid quest ID' });
+    }
+    const [user, skill] = await Promise.all([
+      User.findOne({ discordId: req.user!.id }),
+      Skill.findById(req.params.id)
+    ]);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!skill || !skill.isActive) return res.status(404).json({ error: 'Quest not found' });
+
+    const missingPrerequisites = await getMissingQuestPrerequisites(skill, user.unlockedSkills || []);
+    if (missingPrerequisites.length > 0) {
+      return res.status(400).json({ error: 'Complete the previous quest first', missingPrerequisites });
+    }
+
+    const steps = skill.subQuests || [];
+    const stepIndex = steps.findIndex((step, index) => (step.externalId || `step-${index}`) === req.params.stepId);
+    if (stepIndex < 0) return res.status(404).json({ error: 'Quest step not found' });
+
+    const stepId = steps[stepIndex].externalId || `step-${stepIndex}`;
+    const updatedUser = await completeQuestStepOnce(
+      req.user!.id,
+      skill.id,
+      stepId,
+      QUEST_STEP_REWARD_AP
+    );
+    if (!updatedUser) {
+      return res.status(400).json({ error: 'Quest step already completed' });
+    }
+
+    const completedSteps = updatedUser.completedQuestSteps || [];
+    const completeStepIds = new Set(completedSteps.filter(step => step.skillId === skill.id).map(step => step.stepId));
+    const questCompleted = steps.length > 0 && steps.every((step, index) => completeStepIds.has(step.externalId || `step-${index}`));
+    sessionUserCache.delete(req.user!.id);
+    res.json({
+      success: true,
+      stepReward: QUEST_STEP_REWARD_AP,
+      questReward: 0,
+      assetPoints: updatedUser.assetPoints,
+      completedSteps: completedSteps.filter(step => step.skillId === skill.id).map(step => step.stepId),
+      allStepsCompleted: questCompleted,
+      approvalRequired: questCompleted,
+      questCompleted: (updatedUser.completedQuestRewards || []).includes(skill.id)
+    });
+  } catch (error) {
+    console.error('Error completing quest step:', error);
+    res.status(500).json({ error: 'Failed to complete quest step' });
+  }
+});
+
 // Send approval request for quest node (authenticated users)
 app.post('/api/skills/:id/approval-request', requireAuth, async (req: Request, res: Response) => {
   try {
@@ -1348,6 +2469,9 @@ app.post('/api/skills/:id/approval-request', requireAuth, async (req: Request, r
     const userId = req.user!.id;
     const { message } = req.body;
 
+    if (!mongoose.Types.ObjectId.isValid(skillId)) {
+      return res.status(400).json({ error: 'Invalid quest ID' });
+    }
     // Get user and skill
     const user = await User.findOne({ discordId: userId });
     const skill = await Skill.findById(skillId);
@@ -1366,21 +2490,55 @@ app.post('/api/skills/:id/approval-request', requireAuth, async (req: Request, r
       return res.status(400).json({ error: 'Approval requests are only for quest nodes' });
     }
 
-    // Check if already unlocked
     const unlockedSkills = user.unlockedSkills || [];
+    const missingPrerequisites = await getMissingQuestPrerequisites(skill, unlockedSkills);
+    if (missingPrerequisites.length > 0) {
+      return res.status(400).json({ error: 'Complete the previous quest first', missingPrerequisites });
+    }
+
+    const steps = skill.subQuests || [];
+    const completedStepIds = new Set(
+      (user.completedQuestSteps || [])
+        .filter(step => step.skillId === skillId)
+        .map(step => step.stepId)
+    );
+    const allStepsCompleted =
+      steps.every((step, index) => completedStepIds.has(step.externalId || `step-${index}`));
+    if (!allStepsCompleted) {
+      return res.status(400).json({ error: 'Complete every quest step before requesting approval' });
+    }
+    const nextQuestCost = skill.nextQuestCost ?? 25;
+    if ((user.assetPoints || 0) < nextQuestCost) {
+      return res.status(400).json({
+        error: `You need ${nextQuestCost} AP before requesting approval`,
+        required: nextQuestCost,
+        available: user.assetPoints || 0
+      });
+    }
+
+    // Check if already unlocked
     if (unlockedSkills.includes(skillId)) {
       return res.status(400).json({ error: 'Skill already unlocked' });
     }
 
     // Check if there's already a pending request for this skill by this user
-    const existingRequest = await ApprovalRequest.findOne({
+    const existingPendingRequest = await ApprovalRequest.findOne({
       userId,
       skillId,
       status: 'pending'
     });
 
-    if (existingRequest) {
-      return res.status(400).json({ error: 'You already have a pending approval request for this skill' });
+    if (existingPendingRequest) {
+      return res.status(400).json({ error: 'You already have a pending approval request for this quest' });
+    }
+
+    const approvedRequest = await ApprovalRequest.findOne({
+      userId,
+      skillId,
+      status: 'approved'
+    });
+    if (approvedRequest) {
+      return res.status(400).json({ error: 'This quest has already been approved for you' });
     }
 
     // Create approval request
@@ -1393,12 +2551,16 @@ app.post('/api/skills/:id/approval-request', requireAuth, async (req: Request, r
 
     await approvalRequest.save();
 
+    invalidateProgressionCache();
     res.json({ 
       success: true, 
       message: 'Approval request sent successfully',
       requestId: approvalRequest._id
     });
   } catch (error: any) {
+    if (error?.code === 11000) {
+      return res.status(400).json({ error: 'You already have a pending approval request for this quest' });
+    }
     console.error('Error creating approval request:', error);
     res.status(500).json({ error: error.message || 'Failed to create approval request' });
   }
@@ -1407,31 +2569,60 @@ app.post('/api/skills/:id/approval-request', requireAuth, async (req: Request, r
 // Get all pending approval requests (admin only)
 app.get('/api/approval-requests', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const requests = await ApprovalRequest.find({ status: 'pending' })
+    const { guildId } = req.query; // Optional guild filter
+    
+    let query: any = { status: 'pending' };
+    
+    // If guildId filter is provided, only get requests from users in that guild
+    if (guildId && guildId !== 'all') {
+      const usersInGuild = await User.find({ guildId: guildId }).select('discordId').lean();
+      const userIds = usersInGuild.map(u => u.discordId);
+      query.userId = { $in: userIds };
+    }
+
+    const requests = await ApprovalRequest.find(query)
       .sort({ createdAt: -1 })
       .lean();
 
-    // Since userId is a discordId string, we need to manually get user and skill info
-    const requestsWithUserInfo = await Promise.all(requests.map(async (req: any) => {
-      const user = await User.findOne({ discordId: req.userId });
-      const skill = await Skill.findById(req.skillId);
+    const [usersById, skills] = await Promise.all([
+      getUserSummariesByDiscordId(requests.map(request => request.userId)),
+      Skill.find({
+        _id: {
+          $in: requests
+            .map(request => request.skillId)
+            .filter(skillId => mongoose.Types.ObjectId.isValid(skillId))
+        }
+      }).select('title description minAP maxAP nextQuestCost').lean()
+    ]);
+    const skillsById = new Map(skills.map(skill => [skill._id.toString(), skill]));
+    const guildIds = [...new Set(
+      [...usersById.values()]
+        .map(user => user.guildId)
+        .filter((guildId): guildId is string => Boolean(guildId) && mongoose.Types.ObjectId.isValid(guildId))
+    )];
+    const guilds = guildIds.length > 0
+      ? await Guild.find({ _id: { $in: guildIds } }).select('name').lean()
+      : [];
+    const guildsById = new Map(guilds.map(guild => [guild._id.toString(), guild]));
+
+    const requestsWithUserInfo = requests.map((request: any) => {
+      const user = usersById.get(request.userId);
+      const skill = skillsById.get(request.skillId);
+      const guild = user?.guildId ? guildsById.get(user.guildId) : null;
       return {
-        ...req,
-        user: user ? {
-          username: user.username,
-          nickname: user.nickname,
-          discriminator: user.discriminator,
-          avatar: user.avatar
-        } : null,
+        ...request,
+        user: presentUserSummary(user),
+        guild: guild ? { _id: guild._id, name: guild.name } : null,
         skill: skill ? {
           _id: skill._id,
           title: skill.title,
           description: skill.description,
           minAP: skill.minAP,
-          maxAP: skill.maxAP
+          maxAP: skill.maxAP,
+          nextQuestCost: skill.nextQuestCost
         } : null
       };
-    }));
+    });
 
     res.json({ 
       success: true, 
@@ -1450,54 +2641,30 @@ app.post('/api/approval-requests/:id/approve', requireAdmin, async (req: Request
     const { rewardAP } = req.body;
     const adminId = req.user!.id;
 
-    if (!rewardAP || rewardAP < 0) {
+    if (!Number.isFinite(rewardAP) || rewardAP < 0) {
       return res.status(400).json({ error: 'Valid reward AP amount is required' });
     }
-
-    const approvalRequest = await ApprovalRequest.findById(requestId);
-    if (!approvalRequest) {
-      return res.status(404).json({ error: 'Approval request not found' });
+    if (!mongoose.Types.ObjectId.isValid(requestId)) {
+      return res.status(400).json({ error: 'Invalid approval request ID' });
     }
 
-    if (approvalRequest.status !== 'pending') {
-      return res.status(400).json({ error: 'This request has already been processed' });
+    let approvalResult;
+    try {
+      approvalResult = await approveQuestRequest(requestId, adminId, rewardAP);
+    } catch (error) {
+      if (error instanceof ApprovalOperationError) {
+        return res.status(error.status).json({ error: error.message, code: error.code, ...error.details });
+      }
+      throw error;
     }
 
-    // Get user and skill
-    const user = await User.findOne({ discordId: approvalRequest.userId });
-    const skill = await Skill.findById(approvalRequest.skillId);
-
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    if (!skill) {
-      return res.status(404).json({ error: 'Skill not found' });
-    }
-
-    // Update approval request
-    approvalRequest.status = 'approved';
-    approvalRequest.rewardAP = rewardAP;
-    approvalRequest.reviewedBy = adminId;
-    approvalRequest.reviewedAt = new Date();
-    await approvalRequest.save();
-
-    // Unlock the skill for the user
-    if (!user.unlockedSkills) {
-      user.unlockedSkills = [];
-    }
-    if (!user.unlockedSkills.includes(approvalRequest.skillId)) {
-      user.unlockedSkills.push(approvalRequest.skillId);
-    }
-
-    // Award AP
-    user.assetPoints = (user.assetPoints || 0) + rewardAP;
-    await user.save();
-
+    sessionUserCache.delete(approvalResult.userId);
+    invalidateProgressionCache();
     res.json({ 
       success: true, 
       message: 'Approval request approved successfully',
-      remainingAssetPoints: user.assetPoints
+      remainingAssetPoints: approvalResult.remainingAssetPoints,
+      nextQuestCost: approvalResult.nextQuestCost
     });
   } catch (error: any) {
     console.error('Error approving request:', error);
@@ -1671,25 +2838,195 @@ app.delete('/api/admin/images/:filename', requireSuperAdmin, async (req: Request
   }
 });
 
+// Inventory and HamsterQuest account linking
+app.get('/api/inventory', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const shouldRefresh = req.query.refresh === 'true';
+    if (!req.user!.state) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    let syncWarning: string | null = null;
+    if (shouldRefresh && isHamsterQuestConfigured()) {
+      try {
+        await syncHamsterQuestInventory(userId, true);
+      } catch (error) {
+        syncWarning = getHamsterQuestErrorMessage(error);
+        console.error(`Unable to sync HamsterQuest inventory for ${userId}:`, syncWarning);
+      }
+    }
+
+    res.json({
+      success: true,
+      items: await presentUserInventory(userId, shouldRefresh),
+      hamsterQuestLinked: req.user!.state.hamsterQuestLinked,
+      hamsterQuestConfigured: isHamsterQuestConfigured(),
+      syncWarning
+    });
+  } catch (error: any) {
+    console.error('Error loading inventory:', error);
+    res.status(500).json({ error: error.message || 'Failed to load inventory' });
+  }
+});
+
+app.get('/api/inventory/hamsterquest/link-url', requireAuth, (req: Request, res: Response) => {
+  const callbackUrl = `${FRONTEND_URL}/hamster-link`;
+  res.json({ success: true, url: getHamsterQuestLinkUrl(callbackUrl) });
+});
+
+app.post('/api/inventory/hamsterquest/link', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    if (!token) {
+      return res.status(400).json({ error: 'HamsterQuest token is required' });
+    }
+
+    const profile = await validateHamsterQuestToken(token);
+    if (!profile?.discordId || String(profile.discordId) !== req.user!.id) {
+      return res.status(403).json({ error: 'The HamsterQuest account does not match your Discord account' });
+    }
+
+    await User.updateOne(
+      { discordId: req.user!.id },
+      { $set: { hamsterQuestAccessToken: token, hamsterQuestLinkedAt: new Date() } }
+    );
+    sessionUserCache.delete(req.user!.id);
+    await syncHamsterQuestInventory(req.user!.id, true);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error linking HamsterQuest account:', getHamsterQuestErrorMessage(error));
+    res.status(isHamsterQuestUnauthorized(error) ? 401 : 502).json({
+      error: isHamsterQuestUnauthorized(error)
+        ? 'HamsterQuest login expired. Please try linking again.'
+        : getHamsterQuestErrorMessage(error)
+    });
+  }
+});
+
+app.post('/api/inventory/:purchaseId/use', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    if (!mongoose.Types.ObjectId.isValid(req.params.purchaseId)) {
+      return res.status(400).json({ error: 'Invalid inventory item ID' });
+    }
+    const purchase = await Purchase.findOne({
+      _id: req.params.purchaseId,
+      userId,
+      quantity: { $gt: 0 }
+    });
+    if (!purchase) {
+      return res.status(404).json({ error: 'Inventory item not found' });
+    }
+
+    const shopItem = await ShopItem.findById(purchase.shopItemId);
+    if (!shopItem || shopItem.externalSource !== 'office-catalog' || !shopItem.externalItemId) {
+      return res.status(400).json({ error: 'This item cannot be used in GuGame' });
+    }
+
+    const catalogItem = await getOfficeCatalogItem(shopItem.externalItemId);
+    const externalItemType = catalogItem?.type || shopItem.externalItemType || '';
+    if (!HAMSTERQUEST_USABLE_ITEM_TYPES.has(externalItemType)) {
+      return res.status(400).json({ error: 'Only Gacha and Discord notification items can be used in GuGame' });
+    }
+
+    const user = await User.findOne({ discordId: userId }).select('+hamsterQuestAccessToken');
+    if (!user?.hamsterQuestAccessToken) {
+      return res.status(428).json({
+        error: 'Link HamsterQuest before using this item',
+        code: 'HAMSTERQUEST_LINK_REQUIRED',
+        linkUrl: getHamsterQuestLinkUrl(`${FRONTEND_URL}/hamster-link`)
+      });
+    }
+
+    const remoteInventory = await getHamsterQuestInventory(userId);
+    const remoteItem = remoteInventory.find(item => item.itemId === shopItem.externalItemId && item.quantity > 0);
+    if (!remoteItem) {
+      await syncHamsterQuestInventory(userId, true);
+      return res.status(409).json({ error: 'This item is no longer in your HamsterQuest inventory' });
+    }
+
+    let useResult: any;
+    try {
+      useResult = await useHamsterQuestItem(user.hamsterQuestAccessToken, remoteItem.inventoryItemId, 1);
+    } catch (error) {
+      if (isHamsterQuestUnauthorized(error)) {
+        user.hamsterQuestAccessToken = undefined;
+        user.hamsterQuestLinkedAt = undefined;
+        await user.save();
+        sessionUserCache.delete(userId);
+        return res.status(428).json({
+          error: 'HamsterQuest login expired. Link your account again.',
+          code: 'HAMSTERQUEST_LINK_REQUIRED',
+          linkUrl: getHamsterQuestLinkUrl(`${FRONTEND_URL}/hamster-link`)
+        });
+      }
+      throw error;
+    }
+
+    purchase.lastUsedAt = new Date();
+    await purchase.save();
+    await syncHamsterQuestInventory(userId, true);
+
+    res.json({
+      success: true,
+      message: useResult?.message || `${shopItem.title} used successfully`,
+      itemType: externalItemType,
+      result: useResult,
+      items: await presentUserInventory(userId)
+    });
+  } catch (error) {
+    console.error('Error using inventory item:', getHamsterQuestErrorMessage(error));
+    res.status(502).json({ error: getHamsterQuestErrorMessage(error) });
+  }
+});
+
 // Shop Item Management Endpoints (admin only)
 
 // Get all shop items (public - active only)
 app.get('/api/shop/items', requireAuth, async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id; // Discord ID
-    const items = await ShopItem.find({ isActive: true }).sort({ createdAt: -1 });
+    const visibilityFilter = req.user!.guildId
+      ? { $or: [{ availableToAllGuilds: { $ne: false } }, { guildIds: req.user!.guildId }] }
+      : { availableToAllGuilds: { $ne: false } };
+    const items = await ShopItem.find({ isActive: true, ...visibilityFilter }).sort({ createdAt: -1 });
     
     // Get user's purchases to check which items are already purchased
+    // For fiction items, we need to track both:
+    // - hasEverPurchased: if they've bought it at least once (for reading access)
+    // - isPurchased: if they have contribution credits available (for writing access)
     const purchases = await Purchase.find({ userId });
-    const purchasedItemIds = new Set(purchases.map(p => p.shopItemId.toString()));
+    const purchasedItemIds = new Set(); // Items with credits (for writing)
+    const everPurchasedItemIds = new Set(); // Any purchase (for reading)
+    
+    purchases.forEach(purchase => {
+      const shopItem = items.find(item => item._id.toString() === purchase.shopItemId.toString());
+      
+      if (shopItem && shopItem.itemType === 'fiction') {
+        // For fiction items, always mark as "ever purchased" for reading access
+        everPurchasedItemIds.add(purchase.shopItemId.toString());
+        // Mark as "purchased" (can contribute) if they have contribution credits
+        if (purchase.contributionCredits && purchase.contributionCredits > 0) {
+          purchasedItemIds.add(purchase.shopItemId.toString());
+        }
+      } else if (purchase.quantity > 0) {
+        // Consumable external items remain purchasable but show as owned while quantity is available.
+        purchasedItemIds.add(purchase.shopItemId.toString());
+        everPurchasedItemIds.add(purchase.shopItemId.toString());
+      }
+    });
     
     // Add purchased status to each item
+    // Check actual purchase status for all users (including admins)
     const itemsWithPurchaseStatus = items.map(item => ({
       ...item.toObject(),
-      isPurchased: purchasedItemIds.has(item._id.toString())
+      isPurchased: purchasedItemIds.has(item._id.toString()),
+      hasEverPurchased: everPurchasedItemIds.has(item._id.toString())
     }));
     
-    res.json({ success: true, items: itemsWithPurchaseStatus });
+    res.json({ success: true, items: await presentShopItems(itemsWithPurchaseStatus) });
   } catch (error: any) {
     console.error('Error fetching shop items:', error);
     res.status(500).json({ error: 'Failed to fetch shop items' });
@@ -1699,36 +3036,125 @@ app.get('/api/shop/items', requireAuth, async (req: Request, res: Response) => {
 // Get all shop items (admin only - includes inactive)
 app.get('/api/admin/shop/items', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const items = await ShopItem.find({}).sort({ createdAt: -1 });
-    res.json({ success: true, items });
+    const items = await ShopItem.find({ isInventoryOnly: { $ne: true } }).sort({ createdAt: -1 });
+    res.json({ success: true, items: await presentShopItems(items) });
   } catch (error: any) {
     console.error('Error fetching shop items:', error);
     res.status(500).json({ error: 'Failed to fetch shop items' });
   }
 });
 
+// Office catalog selection (admin only). Catalog details stay in Office; GuGame stores only the selected ID.
+app.get('/api/admin/office-catalog/items', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const [items, imports] = await Promise.all([
+      getOfficeCatalogItems(),
+      ShopItem.find({ externalSource: 'office-catalog', isInventoryOnly: { $ne: true } }).select('externalItemId price isActive').lean()
+    ]);
+    const importedByExternalId = new Map(imports.map(item => [item.externalItemId, item]));
+
+    res.json({
+      success: true,
+      items: items.map(item => ({
+        ...item,
+        imported: importedByExternalId.has(item._id),
+        importSettings: importedByExternalId.get(item._id) || null
+      }))
+    });
+  } catch (error: any) {
+    console.error('Error loading Office catalog:', error);
+    res.status(502).json({ error: 'Unable to load the Office item catalog' });
+  }
+});
+
+app.post('/api/admin/office-catalog/items/import', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { externalItemId, price, isActive } = req.body;
+    if (typeof externalItemId !== 'string' || !externalItemId.trim()) {
+      return res.status(400).json({ error: 'externalItemId is required' });
+    }
+    if (typeof price !== 'number' || !Number.isFinite(price) || price < 0) {
+      return res.status(400).json({ error: 'Price must be a non-negative number' });
+    }
+
+    const catalogItem = await getOfficeCatalogItem(externalItemId);
+    if (!catalogItem) {
+      return res.status(404).json({ error: 'Office catalog item not found' });
+    }
+
+    const existingItem = await ShopItem.findOne({
+      externalSource: 'office-catalog',
+      externalItemId: catalogItem._id
+    });
+    if (existingItem) {
+      if (!existingItem.isInventoryOnly) {
+        return res.status(409).json({ error: 'This Office item has already been imported' });
+      }
+      existingItem.title = catalogItem.name;
+      existingItem.description = catalogItem.description || '';
+      existingItem.imageUrl = catalogItem.icon || '';
+      existingItem.price = price;
+      existingItem.isActive = isActive !== false;
+      existingItem.isInventoryOnly = false;
+      existingItem.externalItemType = catalogItem.type;
+      existingItem.externalRarity = catalogItem.rarity;
+      await existingItem.save();
+      invalidateInventoryItemCache();
+      return res.json({ success: true, item: (await presentShopItems([existingItem]))[0] });
+    }
+
+    const shopItem = await ShopItem.create({
+      title: catalogItem.name,
+      description: catalogItem.description || '',
+      imageUrl: catalogItem.icon || '',
+      price,
+      isActive: isActive !== false,
+      itemType: 'normal',
+      isInventoryOnly: false,
+      externalSource: 'office-catalog',
+      externalItemId: catalogItem._id,
+      externalItemType: catalogItem.type,
+      externalRarity: catalogItem.rarity
+    });
+
+    invalidateInventoryItemCache();
+    res.status(201).json({ success: true, item: (await presentShopItems([shopItem]))[0] });
+  } catch (error: any) {
+    if (error?.code === 11000) {
+      return res.status(409).json({ error: 'This Office item has already been imported' });
+    }
+    console.error('Error importing Office catalog item:', error);
+    res.status(500).json({ error: error.message || 'Failed to import Office catalog item' });
+  }
+});
+
 // Create shop item (admin only)
 app.post('/api/admin/shop/items', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { title, description, price, imageUrl, isActive } = req.body;
+    const { title, description, price, imageUrl, isActive, itemType, productData, availableToAllGuilds, guildIds } = req.body;
 
     if (!title || price === undefined || !imageUrl) {
       return res.status(400).json({ error: 'Missing required fields: title, price, imageUrl' });
     }
 
-    if (price < 0) {
-      return res.status(400).json({ error: 'Price must be non-negative' });
+    if (typeof price !== 'number' || !Number.isFinite(price) || price < 0) {
+      return res.status(400).json({ error: 'Price must be a non-negative number' });
     }
 
+    const guildScope = await getShopGuildScope(availableToAllGuilds, guildIds);
     const shopItem = new ShopItem({
       title,
       description: description || '',
       price,
       imageUrl,
-      isActive: isActive !== undefined ? isActive : true
+      isActive: isActive !== undefined ? isActive : true,
+      itemType: itemType || 'normal',
+      productData: productData || '',
+      ...guildScope
     });
 
     await shopItem.save();
+    invalidateInventoryItemCache();
     res.json({ success: true, item: shopItem });
   } catch (error: any) {
     console.error('Error creating shop item:', error);
@@ -1739,25 +3165,38 @@ app.post('/api/admin/shop/items', requireAdmin, async (req: Request, res: Respon
 // Update shop item (admin only)
 app.put('/api/admin/shop/items/:id', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { title, description, price, imageUrl, isActive } = req.body;
+    const { title, description, price, imageUrl, isActive, itemType, productData, availableToAllGuilds, guildIds } = req.body;
 
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid item ID' });
+    }
     const shopItem = await ShopItem.findById(req.params.id);
     if (!shopItem) {
       return res.status(404).json({ error: 'Shop item not found' });
     }
 
-    if (title !== undefined) shopItem.title = title;
-    if (description !== undefined) shopItem.description = description;
+    if (!shopItem.externalItemId) {
+      if (title !== undefined) shopItem.title = title;
+      if (description !== undefined) shopItem.description = description;
+      if (imageUrl !== undefined) shopItem.imageUrl = imageUrl;
+      if (itemType !== undefined) shopItem.itemType = itemType;
+      if (productData !== undefined) shopItem.productData = productData;
+    }
     if (price !== undefined) {
-      if (price < 0) {
-        return res.status(400).json({ error: 'Price must be non-negative' });
+      if (typeof price !== 'number' || !Number.isFinite(price) || price < 0) {
+        return res.status(400).json({ error: 'Price must be a non-negative number' });
       }
       shopItem.price = price;
     }
-    if (imageUrl !== undefined) shopItem.imageUrl = imageUrl;
     if (isActive !== undefined) shopItem.isActive = isActive;
+    if (availableToAllGuilds !== undefined || guildIds !== undefined) {
+      const guildScope = await getShopGuildScope(availableToAllGuilds, guildIds);
+      shopItem.availableToAllGuilds = guildScope.availableToAllGuilds;
+      shopItem.guildIds = guildScope.guildIds;
+    }
 
     await shopItem.save();
+    invalidateInventoryItemCache();
     res.json({ success: true, item: shopItem });
   } catch (error: any) {
     console.error('Error updating shop item:', error);
@@ -1768,14 +3207,244 @@ app.put('/api/admin/shop/items/:id', requireAdmin, async (req: Request, res: Res
 // Delete shop item (admin only)
 app.delete('/api/admin/shop/items/:id', requireAdmin, async (req: Request, res: Response) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid item ID' });
+    }
     const shopItem = await ShopItem.findByIdAndDelete(req.params.id);
     if (!shopItem) {
       return res.status(404).json({ error: 'Shop item not found' });
     }
+    invalidateInventoryItemCache();
     res.json({ success: true, message: 'Shop item deleted successfully' });
   } catch (error: any) {
     console.error('Error deleting shop item:', error);
     res.status(500).json({ error: error.message || 'Failed to delete shop item' });
+  }
+});
+
+// Get fiction contributions for a shop item
+app.get('/api/shop/items/:id/fiction', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const itemId = req.params.id;
+    const userId = req.user!.id; // Discord ID
+
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(itemId)) {
+      return res.status(400).json({ error: 'Invalid item ID' });
+    }
+
+    // Check if item exists and is a fiction item
+    const shopItem = await ShopItem.findById(itemId);
+    if (!shopItem) {
+      return res.status(404).json({ error: 'Shop item not found' });
+    }
+
+    // Check if user is admin
+    const currentUser = await User.findOne({ discordId: userId });
+    if (!currentUser || !isShopItemAvailableToUser(shopItem, currentUser)) {
+      return res.status(404).json({ error: 'Shop item not found' });
+    }
+    const isAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'super-admin');
+    
+    // Check if user has purchased this item
+    const purchase = await Purchase.findOne({ userId, shopItemId: itemId });
+    
+    // Calculate purchase status
+    let hasEverPurchased = false;
+    let isPurchased = false;
+    
+    // Admins have full access - skip purchase checks
+    if (isAdmin) {
+      hasEverPurchased = true;
+      isPurchased = true;
+    } else if (purchase) {
+      hasEverPurchased = true;
+      // For fiction items, isPurchased means they have contribution credits available
+      if (shopItem.itemType === 'fiction') {
+        isPurchased = (purchase.contributionCredits && purchase.contributionCredits > 0) || false;
+      } else {
+        // For non-fiction items, if purchase exists, they've purchased
+        isPurchased = true;
+      }
+    }
+    
+    if (!isAdmin && !purchase && shopItem.itemType === 'fiction') {
+      return res.status(403).json({ error: 'You must purchase this item before viewing contributions' });
+    }
+
+    // Get all contributions for this fiction item, ordered by creation time
+    const contributions = await FictionContribution.find({ shopItemId: itemId })
+      .sort({ createdAt: 1 })
+      .lean();
+
+    const usersById = await getUserSummariesByDiscordId(
+      contributions.map(contribution => contribution.userId)
+    );
+    const contributionsWithUserInfo = contributions.map((contribution: any) => {
+      const user = usersById.get(contribution.userId);
+      return {
+        _id: contribution._id,
+        shopItemId: contribution.shopItemId,
+        userId: contribution.userId,
+        user: presentUserSummary(user),
+        content: contribution.content,
+        order: contribution.order,
+        createdAt: contribution.createdAt,
+        updatedAt: contribution.updatedAt
+      };
+    });
+
+    res.json({ 
+      success: true, 
+      contributions: contributionsWithUserInfo,
+      isPurchased,
+      hasEverPurchased
+    });
+  } catch (error: any) {
+    console.error('Error fetching fiction contributions:', error);
+    res.status(500).json({ error: 'Failed to fetch fiction contributions' });
+  }
+});
+
+// Get or acquire writing lock for a fiction item
+app.get('/api/shop/items/:id/fiction/writing-lock', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const itemId = req.params.id;
+    const userId = req.user!.id; // Discord ID
+
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(itemId)) {
+      return res.status(400).json({ error: 'Invalid item ID' });
+    }
+
+    // Check if item exists and is a fiction item
+    const shopItem = await ShopItem.findById(itemId);
+    if (!shopItem) {
+      return res.status(404).json({ error: 'Shop item not found' });
+    }
+
+    if (shopItem.itemType !== 'fiction') {
+      return res.status(400).json({ error: 'This item is not a fiction item' });
+    }
+
+    const currentUser = await User.findOne({ discordId: userId });
+    if (!currentUser || !isShopItemAvailableToUser(shopItem, currentUser)) {
+      return res.status(404).json({ error: 'Shop item not found' });
+    }
+
+    const now = new Date();
+    const lockResult = await acquireFictionWritingLock(itemId, userId);
+    const lockOwner = lockResult.acquired
+      ? currentUser
+      : await User.findOne({ discordId: lockResult.lock.userId });
+    return res.json({
+      success: true,
+      hasLock: lockResult.acquired,
+      isLocked: !lockResult.acquired,
+      ...(!lockResult.acquired
+        ? { lockedBy: lockOwner ? (lockOwner.nickname || lockOwner.username) : 'Another user' }
+        : {}),
+      expiresAt: lockResult.lock.expiresAt,
+      timeRemaining: Math.max(0, lockResult.lock.expiresAt.getTime() - now.getTime())
+    });
+  } catch (error: any) {
+    console.error('Error getting writing lock:', error);
+    res.status(500).json({ error: 'Failed to get writing lock' });
+  }
+});
+
+// Release writing lock (when user finishes writing or closes modal)
+app.post('/api/shop/items/:id/fiction/release-lock', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const itemId = req.params.id;
+    const userId = req.user!.id; // Discord ID
+
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(itemId)) {
+      return res.status(400).json({ error: 'Invalid item ID' });
+    }
+
+    const lock = await FictionWritingLock.findOne({ shopItemId: itemId, userId });
+    if (lock) {
+      await FictionWritingLock.deleteOne({ _id: lock._id });
+    }
+
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error('Error releasing writing lock:', error);
+    res.status(500).json({ error: 'Failed to release writing lock' });
+  }
+});
+
+// Add a contribution to a fiction item
+app.post('/api/shop/items/:id/fiction/contribute', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const itemId = req.params.id;
+    const userId = req.user!.id; // Discord ID
+    const { content } = req.body;
+
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(itemId)) {
+      return res.status(400).json({ error: 'Invalid item ID' });
+    }
+
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: 'Content is required' });
+    }
+
+    // Check content length (100 character limit)
+    const trimmedContent = content.trim();
+    if (trimmedContent.length > 100) {
+      return res.status(400).json({ error: 'Contribution must be 100 characters or less' });
+    }
+
+    // Check if item exists and is a fiction item
+    const shopItem = await ShopItem.findById(itemId);
+    if (!shopItem) {
+      return res.status(404).json({ error: 'Shop item not found' });
+    }
+
+    if (shopItem.itemType !== 'fiction') {
+      return res.status(400).json({ error: 'This item is not a fiction item' });
+    }
+
+    // Check if user is admin
+    const currentUser = await User.findOne({ discordId: userId });
+    if (!currentUser || !isShopItemAvailableToUser(shopItem, currentUser)) {
+      return res.status(404).json({ error: 'Shop item not found' });
+    }
+    const isAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'super-admin');
+    
+    let contribution;
+    try {
+      contribution = await contributeToFiction({
+        shopItemId: itemId,
+        userId,
+        content: trimmedContent,
+        isAdmin
+      });
+    } catch (error) {
+      if (error instanceof FictionOperationError) {
+        return res.status(error.status).json({ error: error.message, code: error.code });
+      }
+      throw error;
+    }
+
+    const contributionWithUser = {
+      _id: contribution._id,
+      shopItemId: contribution.shopItemId,
+      userId: contribution.userId,
+      user: presentUserSummary(currentUser),
+      content: contribution.content,
+      order: contribution.order,
+      createdAt: contribution.createdAt,
+      updatedAt: contribution.updatedAt
+    };
+
+    res.json({ success: true, contribution: contributionWithUser });
+  } catch (error: any) {
+    console.error('Error adding fiction contribution:', error);
+    res.status(500).json({ error: 'Failed to add contribution' });
   }
 });
 
@@ -1787,25 +3456,25 @@ app.get('/api/admin/shop/purchases', requireAdmin, async (req: Request, res: Res
       .sort({ createdAt: -1 })
       .lean();
 
-    // Get user information for each purchase
-    const purchasesWithUserInfo = await Promise.all(purchases.map(async (purchase: any) => {
-      const user = await User.findOne({ discordId: purchase.userId });
+    const usersById = await getUserSummariesByDiscordId(purchases.map(purchase => purchase.userId));
+    const purchasesWithUserInfo = purchases.map((purchase: any) => {
+      const user = usersById.get(purchase.userId);
       return {
         _id: purchase._id,
         userId: purchase.userId,
-        user: user ? {
-          username: user.nickname || user.username,
-          nickname: user.nickname,
-          discriminator: user.discriminator,
-          avatar: user.avatar
-        } : null,
-        shopItem: purchase.shopItemId,
+        user: presentUserSummary(user),
+        shopItem: purchase.shopItemId || {
+          _id: purchase.shopItemId,
+          title: 'Deleted item',
+          price: 0,
+          imageUrl: ''
+        },
         status: purchase.status,
         purchasedAt: purchase.purchasedAt,
         createdAt: purchase.createdAt,
         updatedAt: purchase.updatedAt
       };
-    }));
+    });
 
     res.json({ success: true, purchases: purchasesWithUserInfo });
   } catch (error: any) {
@@ -1828,21 +3497,16 @@ app.get('/api/admin/shop/items/:id/purchases', requireAdmin, async (req: Request
       .sort({ createdAt: -1 })
       .lean();
 
-    // Get user information for each purchase
-    const purchasesWithUserInfo = await Promise.all(purchases.map(async (purchase: any) => {
-      const user = await User.findOne({ discordId: purchase.userId });
+    const usersById = await getUserSummariesByDiscordId(purchases.map(purchase => purchase.userId));
+    const purchasesWithUserInfo = purchases.map((purchase: any) => {
+      const user = usersById.get(purchase.userId);
       return {
         userId: purchase.userId,
-        user: user ? {
-          username: user.nickname || user.username,
-          nickname: user.nickname,
-          discriminator: user.discriminator,
-          avatar: user.avatar
-        } : null,
+        user: presentUserSummary(user),
         purchasedAt: purchase.purchasedAt,
         status: purchase.status
       };
-    }));
+    });
 
     res.json({ success: true, purchases: purchasesWithUserInfo });
   } catch (error: any) {
@@ -1857,6 +3521,9 @@ app.post('/api/shop/items/:id/purchase', requireAuth, async (req: Request, res: 
     const userId = req.user!.id; // Discord ID
     const itemId = req.params.id;
 
+    if (!mongoose.Types.ObjectId.isValid(itemId)) {
+      return res.status(400).json({ error: 'Invalid item ID' });
+    }
     // Find the shop item
     const shopItem = await ShopItem.findById(itemId);
     if (!shopItem) {
@@ -1867,52 +3534,163 @@ app.post('/api/shop/items/:id/purchase', requireAuth, async (req: Request, res: 
       return res.status(400).json({ error: 'This item is not available for purchase' });
     }
 
+    let externalItem: OfficeCatalogItem | null = null;
+    if (shopItem.externalSource === 'office-catalog' && shopItem.externalItemId) {
+      externalItem = await getOfficeCatalogItem(shopItem.externalItemId);
+      if (!externalItem) {
+        return res.status(409).json({ error: 'This Office catalog item is no longer available' });
+      }
+    }
+    const displayTitle = externalItem?.name || shopItem.title;
+    const isExternalInventoryItem = shopItem.externalSource === 'office-catalog' && Boolean(shopItem.externalItemId);
+
     // Get user with current asset points (find by discordId)
     const user = await User.findOne({ discordId: userId });
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Check if user has enough asset points
-    if (user.assetPoints < shopItem.price) {
-      return res.status(400).json({ 
-        error: `Insufficient Asset Points. You need ${shopItem.price} AP but only have ${user.assetPoints} AP.` 
+    if (!isShopItemAvailableToUser(shopItem, user)) {
+      return res.status(403).json({ error: 'This item is only available to a different guild', code: 'GUILD_ITEM_UNAVAILABLE' });
+    }
+
+    const purchaseInput = {
+      userId,
+      itemId,
+      price: shopItem.price,
+      itemType: shopItem.itemType,
+      isExternalInventoryItem
+    };
+    let purchaseResult;
+    try {
+      purchaseResult = await reserveLocalPurchase(purchaseInput);
+    } catch (error) {
+      if (error instanceof PurchaseOperationError) {
+        return res.status(error.status).json({ error: error.message, code: error.code });
+      }
+      throw error;
+    }
+
+    if (isExternalInventoryItem && shopItem.externalItemId) {
+      try {
+        await grantHamsterQuestItem(userId, shopItem.externalItemId, 1);
+      } catch (error) {
+        await rollbackLocalPurchase(purchaseInput);
+        return res.status(502).json({
+          error: `HamsterQuest could not receive this item: ${getHamsterQuestErrorMessage(error)}`
+        });
+      }
+      try {
+        await syncHamsterQuestInventory(userId, true);
+      } catch (error) {
+        console.error(`Purchased item was granted but inventory sync failed for ${userId}:`, getHamsterQuestErrorMessage(error));
+      }
+    }
+
+    // For normal items, return product data if available
+    let productData = null;
+    if (shopItem.itemType === 'normal' && shopItem.productData) {
+      productData = shopItem.productData;
+    }
+
+    const responseData = { 
+      success: true, 
+      message: `Successfully purchased "${displayTitle}"!`,
+      remainingAP: purchaseResult.remainingAP,
+      itemType: shopItem.itemType,
+      productData: productData,
+      externalItem,
+      inventoryQuantity: purchaseResult.quantity
+    };
+    
+    sessionUserCache.delete(userId);
+    userInventoryCache.delete(userId);
+    res.json(responseData);
+  } catch (error: any) {
+    console.error('Error purchasing shop item:', error);
+    const isTransientTransactionError = error?.hasErrorLabel?.('TransientTransactionError') ||
+      error?.hasErrorLabel?.('UnknownTransactionCommitResult');
+    res.status(isTransientTransactionError ? 503 : 500).json({
+      error: isTransientTransactionError
+        ? 'Purchase is busy. Please try again.'
+        : error.message || 'Failed to purchase item'
+    });
+  }
+});
+
+// Reset skill tree progress for users with nickname starting with prefix (super-admin only)
+app.post('/api/admin/reset-skills-by-nickname', requireSuperAdmin, async (req: Request, res: Response) => {
+  try {
+    const { nicknamePrefix } = req.body;
+    
+    if (!nicknamePrefix) {
+      return res.status(400).json({ error: 'nicknamePrefix is required' });
+    }
+
+    // Find all users with nickname starting with the prefix
+    const users = await User.find({
+      nickname: { $regex: `^${nicknamePrefix}`, $options: 'i' }
+    });
+
+    if (users.length === 0) {
+      return res.json({ 
+        success: true, 
+        message: `No users found with nickname starting with "${nicknamePrefix}"`,
+        resetCount: 0
       });
     }
 
-    // Check if user has already purchased this item
-    const existingPurchase = await Purchase.findOne({ userId, shopItemId: itemId });
-    if (existingPurchase) {
-      return res.status(400).json({ error: 'You have already purchased this item!' });
-    }
+    // Reset unlockedSkills for all matching users
+    const result = await User.updateMany(
+      { nickname: { $regex: `^${nicknamePrefix}`, $options: 'i' } },
+      { $set: { unlockedSkills: [] } }
+    );
 
-    // Deduct asset points
-    user.assetPoints -= shopItem.price;
-    await user.save();
-
-    // Create purchase record
-    const purchase = new Purchase({
-      userId,
-      shopItemId: itemId,
-      status: 'preorder',
-      purchasedAt: new Date()
-    });
-    await purchase.save();
-
+    invalidateProgressionCache();
     res.json({ 
       success: true, 
-      message: `Successfully purchased "${shopItem.title}"!`,
-      remainingAP: user.assetPoints
+      message: `Reset skill tree progress for ${result.modifiedCount} user(s) with nickname starting with "${nicknamePrefix}"`,
+      resetCount: result.modifiedCount,
+      affectedUsers: users.map(u => ({
+        discordId: u.discordId,
+        username: u.username,
+        nickname: u.nickname
+      }))
     });
   } catch (error: any) {
-    console.error('Error purchasing shop item:', error);
-    res.status(500).json({ error: error.message || 'Failed to purchase item' });
+    console.error('Error resetting skills by nickname:', error);
+    res.status(500).json({ error: error.message || 'Failed to reset skills' });
+  }
+});
+
+// ==================== PROGRESSION LEADERBOARD API ====================
+
+app.get('/api/leaderboard/progression', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const [currentUser, snapshot] = await Promise.all([
+      User.findOne({ discordId: req.user!.id }).select('guildId').lean(),
+      getProgressionSnapshot()
+    ]);
+
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const currentGuildId = currentUser.guildId?.toString();
+    res.json({
+      success: true,
+      ...presentProgressionLeaderboard(snapshot, req.user!.id, currentGuildId)
+    });
+  } catch (error) {
+    console.error('Error fetching progression leaderboard:', error);
+    res.status(500).json({ error: 'Failed to fetch progression leaderboard' });
   }
 });
 
 // Start server
-app.listen(PORT, '0.0.0.0', () => {
+const httpServer = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📡 Backend URL: http://localhost:${PORT}`);
   console.log(`🌐 Frontend URL: ${FRONTEND_URL}`);
 });
+httpServer.keepAliveTimeout = 65_000;
+httpServer.headersTimeout = 66_000;

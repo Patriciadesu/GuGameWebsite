@@ -17,7 +17,12 @@ export interface IUser extends Document {
   voiceMinutesToday: number; // Minutes spent in voice today (resets at midnight UTC+7)
   totalVoiceMinutes: number; // Total minutes spent in voice (cumulative)
   lastVoiceTimeReset: Date; // Last time voiceMinutesToday was reset
+  lastVoiceRewardTime?: Date; // Last time user received hourly voice reward (50 AP)
   unlockedSkills?: string[]; // Array of unlocked skill IDs
+  completedQuestSteps?: Array<{ skillId: string; stepId: string; completedAt: Date }>;
+  completedQuestRewards?: string[];
+  hamsterQuestAccessToken?: string;
+  hamsterQuestLinkedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -91,14 +96,40 @@ const UserSchema = new Schema<IUser>(
       type: Date,
       default: () => new Date()
     },
+    lastVoiceRewardTime: {
+      type: Date,
+      default: undefined
+    },
     unlockedSkills: {
       type: [String],
       default: []
+    },
+    completedQuestSteps: [{
+      skillId: { type: String, required: true },
+      stepId: { type: String, required: true },
+      completedAt: { type: Date, default: () => new Date() }
+    }],
+    completedQuestRewards: {
+      type: [String],
+      default: []
+    },
+    hamsterQuestAccessToken: {
+      type: String,
+      default: undefined,
+      select: false
+    },
+    hamsterQuestLinkedAt: {
+      type: Date,
+      default: undefined
     }
   },
   {
     timestamps: true
   }
 );
+
+UserSchema.index({ guildId: 1 });
+UserSchema.index({ role: 1 });
+UserSchema.index({ nickname: 1 });
 
 export default mongoose.model<IUser>('User', UserSchema);

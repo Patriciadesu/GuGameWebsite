@@ -27,6 +27,16 @@ const ApprovalRequestSchema = new Schema<IApprovalRequest>(
 
 // Index for efficient queries
 ApprovalRequestSchema.index({ status: 1 });
+ApprovalRequestSchema.index({ status: 1, createdAt: -1 });
 ApprovalRequestSchema.index({ userId: 1, skillId: 1 });
+ApprovalRequestSchema.index({ userId: 1, status: 1, skillId: 1 });
+ApprovalRequestSchema.index(
+  { userId: 1, skillId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { status: 'pending' },
+    name: 'unique_pending_approval_per_user_skill'
+  }
+);
 
 export default mongoose.model<IApprovalRequest>('ApprovalRequest', ApprovalRequestSchema);

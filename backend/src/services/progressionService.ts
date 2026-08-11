@@ -1,5 +1,12 @@
 import User from '../models/User';
 
+export const areQuestStepsComplete = (
+  steps: Array<{ externalId?: string }>,
+  completedStepIds: ReadonlySet<string>
+) => steps.length > 0 && steps.every((step, index) =>
+  completedStepIds.has(step.externalId || `step-${index}`)
+);
+
 export const completeQuestStepOnce = (
   userId: string,
   skillId: string,

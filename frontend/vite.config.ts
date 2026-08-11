@@ -6,6 +6,12 @@ export default defineConfig({
   base: '/gugame/',
   server: {
     port: 5173,
-    host: true
+    host: true,
+    proxy: {
+      '/api': {
+        target: process.env.VITE_PROXY_TARGET || 'http://localhost:3001',
+        changeOrigin: true
+      }
+    }
   }
 })

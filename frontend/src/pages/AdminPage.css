@@ -2,7 +2,7 @@
   min-height: 100vh;
   background: #e5e7eb;
   padding: 24px 80px;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
 }
 
 /* Admin Page Responsive Styles */
@@ -191,7 +191,7 @@
   min-height: 100vh;
   font-size: 2rem;
   color: #667eea;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
 }
 
 .admin-topbar {
@@ -210,7 +210,7 @@
   font-weight: 700;
   margin: 0;
   color: white;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
 }
 
 .back-to-menu-btn {
@@ -223,7 +223,7 @@
   font-weight: 400;
   cursor: pointer;
   transition: all 0.2s ease;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
   white-space: nowrap;
 }
 
@@ -245,7 +245,12 @@
   overflow-x: auto;
 }
 
+.admin-mobile-navigation { display: none; }
+
 .nav-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   padding: 12px 28px;
   background: transparent;
   color: rgba(20, 48, 109, 0.6);
@@ -255,8 +260,18 @@
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
   white-space: nowrap;
+}
+
+.nav-tab svg { width: 18px; height: 18px; flex: 0 0 auto; }
+.admin-title, .back-to-menu-btn, .delete-btn { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.admin-inline-error { margin: 14px 0 0; padding: 10px 12px; color: #b42318; background: #fff4f2; border: 1px solid #fecdca; border-radius: 6px; font-family: Arial, "Noto Sans Thai", sans-serif; font-size: 14px; line-height: 1.45; }
+
+@media (max-width: 900px) {
+  .admin-navbar { display: none; }
+  .admin-mobile-navigation { display: grid; margin-bottom: 12px; padding: 10px 12px; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; color: #475467; background: #ffffff; border: 1px solid #d9e0ea; border-radius: 8px; font-family: Arial, "Noto Sans Thai", sans-serif; font-size: 12px; font-weight: 800; }
+  .admin-mobile-navigation select { width: 100%; min-width: 0; min-height: 42px; padding: 0 10px; color: #182033; background: #ffffff; border: 1px solid #cfd7e3; border-radius: 6px; font: inherit; font-size: 14px; }
 }
 
 .nav-tab:hover {
@@ -428,7 +443,7 @@
   font-weight: 700;
   cursor: pointer;
   transition: all 0.2s ease;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
   box-shadow: 0px 4px 6px rgba(255, 165, 0, 0.3);
 }
 
@@ -499,7 +514,7 @@
   border: 2px solid #e5e7eb;
   border-radius: 10px;
   font-size: 1.3rem;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
   transition: border-color 0.2s;
   background: white;
 }
@@ -524,7 +539,7 @@
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
   align-self: flex-end;
 }
 
@@ -691,7 +706,7 @@
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
 }
 
 .view-user-btn:hover {
@@ -785,6 +800,34 @@
   align-items: center;
   margin-bottom: 32px;
 }
+
+.skill-editor-mode-switch {
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  margin-top: 10px;
+  overflow: hidden;
+  background: #eef3f9;
+  border: 1px solid #cfd8e5;
+  border-radius: 7px;
+}
+
+.skill-editor-mode-switch button {
+  min-height: 34px;
+  padding: 0 13px;
+  color: #59667a;
+  background: transparent;
+  border: 0;
+  border-right: 1px solid #cfd8e5;
+  border-radius: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Thai", sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.skill-editor-mode-switch button:last-child { border-right: 0; }
+.skill-editor-mode-switch button:hover { color: #1257b8; background: #f7faff; box-shadow: none; transform: none; }
+.skill-editor-mode-switch button.is-active { color: #ffffff; background: #1668dc; }
 
 .quest-tree-actions {
   display: flex;
@@ -1135,7 +1178,7 @@
   height: 34px;
   background: #4e98ff;
   border-radius: 7px;
-  font-family: Arial, sans-serif;
+  font-family: Arial, "Noto Sans Thai", sans-serif;
   font-size: 20px;
   font-weight: 700;
   line-height: 1;
@@ -1157,7 +1200,7 @@
   gap: 4px;
   margin-left: 5px;
   color: #214a87;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
   font-size: 1rem;
   line-height: 1;
   cursor: pointer;
@@ -1186,7 +1229,7 @@
   min-height: 32px;
   padding: 6px 10px;
   border-radius: 7px;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
   font-size: 1.05rem;
   line-height: 1;
 }
@@ -1209,7 +1252,7 @@
   flex-direction: column;
   max-width: 300px;
   color: #5b6f8f;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
   font-size: 1.2rem;
   line-height: 1.05;
   pointer-events: none;
@@ -1228,7 +1271,7 @@
 
 .quest-editor-stage-guide text {
   fill: #7890b2;
-  font-family: Arial, sans-serif;
+  font-family: Arial, "Noto Sans Thai", sans-serif;
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0;
@@ -1285,7 +1328,7 @@
 
 .quest-editor-node-title {
   fill: #132d62;
-  font-family: 'Itim', cursive;
+  font-family: 'Itim', 'Noto Sans Thai', cursive;
   font-size: 24px;
   font-weight: 700;
   pointer-events: none;
@@ -1304,7 +1347,7 @@
 
 .quest-editor-advanced-lock text {
   fill: #ffffff;
-  font-family: Arial, sans-serif;
+  font-family: Arial, "Noto Sans Thai", sans-serif;
   font-size: 8px;
   font-weight: 800;
   pointer-events: none;
@@ -1360,7 +1403,7 @@
 
 .quest-editor-connect text {
   fill: #ffffff;
-  font-family: Arial, sans-serif;
+  font-family: Arial, "Noto Sans Thai", sans-serif;
   font-size: 20px;
   font-weight: 700;
   pointer-events: none;
@@ -1368,7 +1411,7 @@
 
 .quest-editor-start-label {
   fill: #40618f;
-  font-family: Arial, sans-serif;
+  font-family: Arial, "Noto Sans Thai", sans-serif;
   font-size: 16px;
   font-weight: 700;
   letter-spacing: 0;
@@ -1396,7 +1439,7 @@
 
 .quest-editor-placeholder text {
   fill: #6580a7;
-  font-family: Arial, sans-serif;
+  font-family: Arial, "Noto Sans Thai", sans-serif;
   font-size: 15px;
   font-weight: 700;
   letter-spacing: 0;
@@ -1861,7 +1904,7 @@
   color: #183657;
   font-size: 2rem;
   line-height: 1.25;
-  font-family: 'Itim', cursive;
+  font-family: 'Itim', 'Noto Sans Thai', cursive;
 }
 
 .node-preview-cost {
@@ -1880,7 +1923,7 @@
   font-size: 1.4rem;
   line-height: 1.6;
   white-space: pre-wrap;
-  font-family: 'Itim', cursive;
+  font-family: 'Itim', 'Noto Sans Thai', cursive;
 }
 
 .node-preview-description img,
@@ -1905,7 +1948,7 @@
   color: #183657;
   font-size: 1.45rem;
   font-weight: 700;
-  font-family: 'Itim', cursive;
+  font-family: 'Itim', 'Noto Sans Thai', cursive;
 }
 
 .node-preview-section-heading span:last-child {
@@ -1938,7 +1981,7 @@
   font-size: 1.35rem;
   font-weight: 700;
   text-align: left;
-  font-family: 'Itim', cursive;
+  font-family: 'Itim', 'Noto Sans Thai', cursive;
 }
 
 .node-preview-step-trigger b {
@@ -1964,7 +2007,7 @@
   font-size: 1.35rem;
   line-height: 1.55;
   white-space: pre-wrap;
-  font-family: 'Itim', cursive;
+  font-family: 'Itim', 'Noto Sans Thai', cursive;
 }
 
 .node-preview-copy + .node-preview-copy {
@@ -2518,7 +2561,7 @@
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
   box-shadow: 0px 4px 6px rgba(78, 134, 255, 0.3);
 }
 
@@ -2543,7 +2586,7 @@
   border: 2px solid #e5e7eb;
   border-radius: 12px;
   font-size: 1.4rem;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
   transition: border-color 0.2s;
 }
 
@@ -2568,7 +2611,7 @@
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
 }
 
 .submit-btn:hover {
@@ -2735,7 +2778,7 @@
   border: 2px solid #e5e7eb;
   border-radius: 12px;
   font-size: 1.4rem;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
   cursor: pointer;
   transition: border-color 0.2s;
 }
@@ -2811,7 +2854,7 @@
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
 }
 
 .manage-btn {
@@ -2918,7 +2961,7 @@
   border: 2px solid #e5e7eb;
   border-radius: 12px;
   font-size: 1.6rem;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
 }
 
 .points-input:focus {
@@ -2941,7 +2984,7 @@
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
 }
 
 .add-btn {
@@ -2975,7 +3018,7 @@
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
-  font-family: 'Dongle', sans-serif;
+  font-family: 'Dongle', 'Noto Sans Thai', sans-serif;
 }
 
 .close-modal-btn:hover {

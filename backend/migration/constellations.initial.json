@@ -1,0 +1,226 @@
+{
+  "maps": [
+    {
+      "name": "Programming",
+      "slug": "programming",
+      "description": "Programming foundations and software design paths.",
+      "scope": "discipline",
+      "displayOrder": 0,
+      "visualTheme": {
+        "key": "programming-light",
+        "backgroundColor": "#f7fafc",
+        "surfaceColor": "#ffffff",
+        "textColor": "#14213d",
+        "mutedTextColor": "#607087",
+        "borderColor": "#cbd7e6",
+        "lineColor": "#7089a8",
+        "unlockedColor": "#087f8c",
+        "availableColor": "#c17b16",
+        "lockedColor": "#a0aabc",
+        "bossColor": "#cb3a45",
+        "capstoneColor": "#6252b8"
+      }
+    },
+    {
+      "name": "Unity Development",
+      "slug": "unity-development",
+      "description": "Unity workflows, gameplay systems, and real-time production.",
+      "scope": "discipline",
+      "displayOrder": 1,
+      "visualTheme": {
+        "key": "unity-light",
+        "backgroundColor": "#f8faf8",
+        "surfaceColor": "#ffffff",
+        "textColor": "#17251f",
+        "mutedTextColor": "#62736b",
+        "borderColor": "#cedbd3",
+        "lineColor": "#789184",
+        "unlockedColor": "#197a62",
+        "availableColor": "#b7791f",
+        "lockedColor": "#a2ada7",
+        "bossColor": "#c63f4b",
+        "capstoneColor": "#5457ad"
+      }
+    },
+    {
+      "name": "Game Art",
+      "slug": "game-art",
+      "description": "Art production paths for models, interface, effects, shaders, and sound.",
+      "scope": "discipline",
+      "displayOrder": 2,
+      "visualTheme": {
+        "key": "game-art-light",
+        "backgroundColor": "#fbfaf7",
+        "surfaceColor": "#ffffff",
+        "textColor": "#27211c",
+        "mutedTextColor": "#746b61",
+        "borderColor": "#ded7cc",
+        "lineColor": "#918477",
+        "unlockedColor": "#087f8c",
+        "availableColor": "#b97714",
+        "lockedColor": "#aaa49c",
+        "bossColor": "#d13d48",
+        "capstoneColor": "#6652b5"
+      }
+    },
+    {
+      "name": "Programming Foundations",
+      "slug": "programming-foundations",
+      "scope": "topic",
+      "parentSlug": "programming",
+      "gatewaySkillId": "6a632677fee412c4ead1a376",
+      "displayOrder": 0
+    },
+    {
+      "name": "Software Design",
+      "slug": "software-design",
+      "scope": "topic",
+      "parentSlug": "programming",
+      "gatewaySkillId": "6a632647fee412c4ead1a221",
+      "displayOrder": 1
+    },
+    {
+      "name": "Unity Basics",
+      "slug": "unity-basics",
+      "scope": "topic",
+      "parentSlug": "unity-development",
+      "gatewaySkillId": "6a63214a2a2eb52ef6574534",
+      "displayOrder": 0
+    },
+    {
+      "name": "Unity Systems",
+      "slug": "unity-systems",
+      "scope": "topic",
+      "parentSlug": "unity-development",
+      "gatewaySkillId": "6a6326c6fee412c4ead1aa96",
+      "displayOrder": 1
+    },
+    {
+      "name": "Gameplay",
+      "slug": "unity-gameplay",
+      "scope": "topic",
+      "parentSlug": "unity-development",
+      "gatewaySkillId": "6a6331d880fd6049dd423dd9",
+      "displayOrder": 2
+    },
+    {
+      "name": "Cinematics",
+      "slug": "unity-cinematics",
+      "scope": "topic",
+      "parentSlug": "unity-development",
+      "gatewaySkillId": "6a63260dfee412c4ead19db3",
+      "displayOrder": 3
+    },
+    {
+      "name": "3D Modelling",
+      "slug": "game-art-3d-modelling",
+      "scope": "topic",
+      "parentSlug": "game-art",
+      "gatewaySkillId": "6a63276bc2c9dc100f5a58d6",
+      "displayOrder": 0
+    },
+    {
+      "name": "UI Design",
+      "slug": "game-art-ui-design",
+      "scope": "topic",
+      "parentSlug": "game-art",
+      "gatewaySkillId": "6a63263dfee412c4ead1a0e8",
+      "displayOrder": 1
+    },
+    {
+      "name": "VFX",
+      "slug": "game-art-vfx",
+      "scope": "topic",
+      "parentSlug": "game-art",
+      "gatewaySkillId": "6a633c80c00c286afd879c45",
+      "displayOrder": 2
+    },
+    {
+      "name": "Shader Graph",
+      "slug": "game-art-shader-graph",
+      "scope": "topic",
+      "parentSlug": "game-art",
+      "gatewaySkillId": "6a633a147f42354101731236",
+      "displayOrder": 3
+    },
+    {
+      "name": "Sound",
+      "slug": "game-art-sound",
+      "scope": "topic",
+      "parentSlug": "game-art",
+      "gatewaySkillId": "6a6328d2a6fe4e858342fb5f",
+      "displayOrder": 4
+    }
+  ],
+  "skillAssignments": [
+    { "skillId": "6a632677fee412c4ead1a376", "mapSlug": "programming", "mapNodeRole": "topic-gateway", "constellationLabel": "Programming Foundations", "constellationPosition": { "x": 460, "y": 280 }, "nodePreview": { "summary": "Build a strong C# foundation for game programming.", "outcomes": ["Write reusable C# code", "Use Unity events and coroutines", "Apply object-oriented patterns"], "actionLabel": "View Path" } },
+    { "skillId": "6a632647fee412c4ead1a221", "mapSlug": "programming", "mapNodeRole": "topic-gateway", "constellationLabel": "Software Design", "constellationPosition": { "x": 1080, "y": 590 }, "nodePreview": { "summary": "Plan maintainable game systems before implementation.", "outcomes": ["Model game behavior", "Create system diagrams", "Communicate architecture clearly"], "actionLabel": "View Path" } },
+
+    { "skillId": "6a64a5c8f5708d1ce087257d", "mapSlug": "programming-foundations", "mapNodeRole": "lesson", "constellationPosition": { "x": 800, "y": 120 } },
+    { "skillId": "6a633685274314629680fd57", "mapSlug": "programming-foundations", "mapNodeRole": "lesson", "constellationPosition": { "x": 800, "y": 250 } },
+    { "skillId": "6a633685274314629680ff2c", "mapSlug": "programming-foundations", "mapNodeRole": "lesson", "constellationPosition": { "x": 520, "y": 390 } },
+    { "skillId": "6a63368627431462968100fc", "mapSlug": "programming-foundations", "mapNodeRole": "lesson", "constellationPosition": { "x": 1080, "y": 390 } },
+    { "skillId": "6a63368727431462968102d9", "mapSlug": "programming-foundations", "mapNodeRole": "lesson", "constellationPosition": { "x": 360, "y": 560 } },
+    { "skillId": "6a63368827431462968104d7", "mapSlug": "programming-foundations", "mapNodeRole": "lesson", "constellationPosition": { "x": 660, "y": 560 } },
+    { "skillId": "6a63368f27431462968108cd", "mapSlug": "programming-foundations", "mapNodeRole": "lesson", "constellationPosition": { "x": 940, "y": 560 } },
+    { "skillId": "6a6336902743146296810ad5", "mapSlug": "programming-foundations", "mapNodeRole": "lesson", "constellationPosition": { "x": 1240, "y": 560 } },
+    { "skillId": "6a6336922743146296810ced", "mapSlug": "programming-foundations", "mapNodeRole": "lesson", "constellationPosition": { "x": 560, "y": 740 } },
+    { "skillId": "6a63378a9388ebdc903e4de6", "mapSlug": "programming-foundations", "mapNodeRole": "boss", "constellationLabel": "Polymorphism Challenge", "constellationPosition": { "x": 800, "y": 740 } },
+    { "skillId": "6a6337ae9388ebdc903e567c", "mapSlug": "programming-foundations", "mapNodeRole": "capstone", "constellationLabel": "C# Mastery", "constellationPosition": { "x": 1040, "y": 740 } },
+
+    { "skillId": "6a6330ca80fd6049dd421eac", "mapSlug": "software-design", "mapNodeRole": "lesson", "constellationPosition": { "x": 800, "y": 150 } },
+    { "skillId": "6a6330ec80fd6049dd4221d6", "mapSlug": "software-design", "mapNodeRole": "lesson", "constellationPosition": { "x": 800, "y": 300 } },
+    { "skillId": "6a63310880fd6049dd42288d", "mapSlug": "software-design", "mapNodeRole": "lesson", "constellationPosition": { "x": 450, "y": 500 } },
+    { "skillId": "6a63312480fd6049dd422d53", "mapSlug": "software-design", "mapNodeRole": "lesson", "constellationPosition": { "x": 800, "y": 650 } },
+    { "skillId": "6a63314080fd6049dd4233b3", "mapSlug": "software-design", "mapNodeRole": "capstone", "constellationPosition": { "x": 1150, "y": 500 } },
+
+    { "skillId": "6a63214a2a2eb52ef6574534", "mapSlug": "unity-development", "mapNodeRole": "topic-gateway", "constellationLabel": "Unity Basics", "constellationPosition": { "x": 300, "y": 280 }, "nodePreview": { "summary": "Set up Unity and learn the editor workflow.", "outcomes": ["Configure a Unity project", "Navigate the editor", "Prepare a clean development workspace"], "actionLabel": "View Path" } },
+    { "skillId": "6a6326c6fee412c4ead1aa96", "mapSlug": "unity-development", "mapNodeRole": "topic-gateway", "constellationLabel": "Unity Systems", "constellationPosition": { "x": 650, "y": 590 }, "nodePreview": { "summary": "Build connected real-time game systems in Unity.", "outcomes": ["Compose gameplay systems", "Build levels", "Connect scenes and timelines"], "actionLabel": "View Path" } },
+    { "skillId": "6a6331d880fd6049dd423dd9", "mapSlug": "unity-development", "mapNodeRole": "topic-gateway", "constellationLabel": "Gameplay", "constellationPosition": { "x": 1000, "y": 280 }, "nodePreview": { "summary": "Create responsive players, collisions, and interactions.", "outcomes": ["Build player controllers", "Handle collisions", "Create responsive interactions"], "actionLabel": "View Path" } },
+    { "skillId": "6a63260dfee412c4ead19db3", "mapSlug": "unity-development", "mapNodeRole": "topic-gateway", "constellationLabel": "Cinematics", "constellationPosition": { "x": 1300, "y": 590 }, "nodePreview": { "summary": "Direct in-engine sequences with timeline and lighting.", "outcomes": ["Build Timeline sequences", "Control signals", "Light cinematic scenes"], "actionLabel": "View Path" } },
+
+    { "skillId": "6a6321682a2eb52ef6574580", "mapSlug": "unity-basics", "mapNodeRole": "lesson", "constellationPosition": { "x": 800, "y": 260 } },
+    { "skillId": "6a63260bfee412c4ead19d6e", "mapSlug": "unity-systems", "mapNodeRole": "lesson", "constellationPosition": { "x": 550, "y": 300 } },
+    { "skillId": "6a632648fee412c4ead1a2cb", "mapSlug": "unity-systems", "mapNodeRole": "lesson", "constellationPosition": { "x": 1050, "y": 520 } },
+    { "skillId": "6a632606fee412c4ead19d43", "mapSlug": "unity-gameplay", "mapNodeRole": "lesson", "constellationPosition": { "x": 800, "y": 210 } },
+    { "skillId": "6a633576274314629680ea02", "mapSlug": "unity-gameplay", "mapNodeRole": "lesson", "constellationPosition": { "x": 550, "y": 470 } },
+    { "skillId": "6a633577274314629680ebb1", "mapSlug": "unity-gameplay", "mapNodeRole": "boss", "constellationPosition": { "x": 1050, "y": 690 } },
+    { "skillId": "6a6337fe388e1299ce66391c", "mapSlug": "unity-cinematics", "mapNodeRole": "lesson", "constellationPosition": { "x": 800, "y": 180 } },
+    { "skillId": "6a6338b420467ec44d700cd6", "mapSlug": "unity-cinematics", "mapNodeRole": "lesson", "constellationPosition": { "x": 500, "y": 400 } },
+    { "skillId": "6a6339307f4235410172f248", "mapSlug": "unity-cinematics", "mapNodeRole": "lesson", "constellationPosition": { "x": 1100, "y": 400 } },
+    { "skillId": "6a633a107f4235410173091e", "mapSlug": "unity-cinematics", "mapNodeRole": "boss", "constellationPosition": { "x": 600, "y": 680 } },
+    { "skillId": "6a633a107f42354101730b52", "mapSlug": "unity-cinematics", "mapNodeRole": "capstone", "constellationPosition": { "x": 1000, "y": 680 } },
+
+    { "skillId": "6a63276bc2c9dc100f5a58d6", "mapSlug": "game-art", "mapNodeRole": "topic-gateway", "constellationLabel": "3D Modelling", "constellationPosition": { "x": 250, "y": 250 }, "nodePreview": { "summary": "Create and shape 3D assets for your games.", "outcomes": ["Build game-ready 3D assets", "Create props and environments", "Prepare models for Unity"], "actionLabel": "View Path" } },
+    { "skillId": "6a63263dfee412c4ead1a0e8", "mapSlug": "game-art", "mapNodeRole": "topic-gateway", "constellationLabel": "UI Design", "constellationPosition": { "x": 525, "y": 610 }, "nodePreview": { "summary": "Design clear interfaces and polished game HUDs.", "outcomes": ["Design game screens", "Build UI assets", "Animate interface feedback"], "actionLabel": "View Path" } },
+    { "skillId": "6a633c80c00c286afd879c45", "mapSlug": "game-art", "mapNodeRole": "topic-gateway", "constellationLabel": "VFX", "constellationPosition": { "x": 800, "y": 250 }, "nodePreview": { "summary": "Create effects that communicate action and atmosphere.", "outcomes": ["Build particle effects", "Integrate effects in gameplay", "Tune visual feedback"], "actionLabel": "View Path" } },
+    { "skillId": "6a633a147f42354101731236", "mapSlug": "game-art", "mapNodeRole": "topic-gateway", "constellationLabel": "Shader Graph", "constellationPosition": { "x": 1075, "y": 610 }, "nodePreview": { "summary": "Author stylized real-time materials without writing shader code.", "outcomes": ["Build Shader Graph materials", "Animate material properties", "Create stylized rendering effects"], "actionLabel": "View Path" } },
+    { "skillId": "6a6328d2a6fe4e858342fb5f", "mapSlug": "game-art", "mapNodeRole": "topic-gateway", "constellationLabel": "Sound", "constellationPosition": { "x": 1350, "y": 250 }, "nodePreview": { "summary": "Shape the sonic identity and feedback of a game.", "outcomes": ["Plan game audio", "Create useful feedback", "Integrate sound into scenes"], "actionLabel": "View Path" } },
+
+    { "skillId": "6a632b6b53cfd99a35e02078", "mapSlug": "game-art-3d-modelling", "mapNodeRole": "lesson", "constellationLabel": "Blender Setup", "constellationPosition": { "x": 800, "y": 100 } },
+    { "skillId": "6a632b6c53cfd99a35e0217f", "mapSlug": "game-art-3d-modelling", "mapNodeRole": "lesson", "constellationLabel": "Blender Basic", "constellationPosition": { "x": 800, "y": 210 } },
+    { "skillId": "6a632b6c53cfd99a35e022ad", "mapSlug": "game-art-3d-modelling", "mapNodeRole": "lesson", "constellationPosition": { "x": 800, "y": 320 } },
+    { "skillId": "6a632b6c53cfd99a35e023d2", "mapSlug": "game-art-3d-modelling", "mapNodeRole": "lesson", "constellationLabel": "Addons", "constellationPosition": { "x": 800, "y": 430 } },
+    { "skillId": "6a632b6e53cfd99a35e02500", "mapSlug": "game-art-3d-modelling", "mapNodeRole": "lesson", "constellationLabel": "Painting", "constellationPosition": { "x": 480, "y": 540 } },
+    { "skillId": "6a632b6f53cfd99a35e02640", "mapSlug": "game-art-3d-modelling", "mapNodeRole": "lesson", "constellationPosition": { "x": 380, "y": 650 } },
+    { "skillId": "6a632d33e1632d2720f8a243", "mapSlug": "game-art-3d-modelling", "mapNodeRole": "lesson", "constellationPosition": { "x": 580, "y": 650 } },
+    { "skillId": "6a632b7553cfd99a35e02db9", "mapSlug": "game-art-3d-modelling", "mapNodeRole": "lesson", "constellationLabel": "Sculpt", "constellationPosition": { "x": 1120, "y": 540 } },
+    { "skillId": "6a632b7053cfd99a35e02900", "mapSlug": "game-art-3d-modelling", "mapNodeRole": "lesson", "constellationPosition": { "x": 1020, "y": 650 } },
+    { "skillId": "6a632b7053cfd99a35e02796", "mapSlug": "game-art-3d-modelling", "mapNodeRole": "lesson", "constellationPosition": { "x": 1220, "y": 650 } },
+    { "skillId": "6a633be8c00c286afd878148", "mapSlug": "game-art-3d-modelling", "mapNodeRole": "boss", "constellationLabel": "SCENERY", "constellationPosition": { "x": 500, "y": 790 } },
+    { "skillId": "6a632b5ff3d57a2af0d95ca2", "mapSlug": "game-art-3d-modelling", "mapNodeRole": "boss", "constellationLabel": "ACTION!", "constellationPosition": { "x": 1100, "y": 790 } },
+    { "skillId": "6a632f6c60cda351dd7db24f", "mapSlug": "game-art-3d-modelling", "mapNodeRole": "capstone", "constellationLabel": "CINEMATIC", "constellationPosition": { "x": 800, "y": 850 } },
+
+    { "skillId": "6a633b4cc00c286afd8767d4", "mapSlug": "game-art-ui-design", "mapNodeRole": "lesson", "constellationPosition": { "x": 400, "y": 280 } },
+    { "skillId": "6a632638fee412c4ead19f53", "mapSlug": "game-art-ui-design", "mapNodeRole": "lesson", "constellationPosition": { "x": 800, "y": 180 } },
+    { "skillId": "6a63291ca6fe4e858342ff3f", "mapSlug": "game-art-ui-design", "mapNodeRole": "lesson", "constellationPosition": { "x": 1200, "y": 280 } },
+    { "skillId": "6a63263cfee412c4ead1a057", "mapSlug": "game-art-ui-design", "mapNodeRole": "lesson", "constellationPosition": { "x": 600, "y": 570 } },
+    { "skillId": "6a633b3dc00c286afd875f0e", "mapSlug": "game-art-ui-design", "mapNodeRole": "capstone", "constellationPosition": { "x": 1000, "y": 700 } },
+
+    { "skillId": "6a633b93c00c286afd877b6b", "mapSlug": "game-art-vfx", "mapNodeRole": "lesson", "constellationPosition": { "x": 800, "y": 300 } },
+    { "skillId": "6a633a147f423541017314b9", "mapSlug": "game-art-shader-graph", "mapNodeRole": "lesson", "constellationPosition": { "x": 800, "y": 180 } },
+    { "skillId": "6a633a157f4235410173174f", "mapSlug": "game-art-shader-graph", "mapNodeRole": "lesson", "constellationPosition": { "x": 500, "y": 430 } },
+    { "skillId": "6a633a157f42354101731a07", "mapSlug": "game-art-shader-graph", "mapNodeRole": "lesson", "constellationPosition": { "x": 1100, "y": 430 } },
+    { "skillId": "6a633a157f42354101731cca", "mapSlug": "game-art-shader-graph", "mapNodeRole": "capstone", "constellationPosition": { "x": 800, "y": 700 } }
+  ]
+}

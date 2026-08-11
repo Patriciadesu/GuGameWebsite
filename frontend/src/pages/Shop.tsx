@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { X } from 'lucide-react';
 import axios from '../config/axios';
 import './MainMenu.css';
 import './Shop.css';
@@ -67,6 +68,10 @@ function Shop() {
   } | null>(null);
   const lockCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fictionModalRef = useRef<HTMLDivElement | null>(null);
+  const fictionModalCloseRef = useRef<HTMLButtonElement | null>(null);
+  const fictionModalOpenerRef = useRef<HTMLElement | null>(null);
+  const isClosingFictionModalRef = useRef(false);
   const isExternalInventoryItem = (item: ShopItem) => item.externalSource === 'office-catalog';
 
   useEffect(() => {
@@ -162,6 +167,10 @@ function Shop() {
     const isInModal = selectedFictionItem && 
                       selectedFictionItem._id === item._id && 
                       showFictionModal;
+
+    if (!isInModal) {
+      fictionModalOpenerRef.current = document.activeElement as HTMLElement | null;
+    }
     
     console.log('Purchase check:', { 
       isInModal, 
@@ -437,6 +446,84 @@ function Shop() {
     }
   };
 
+  const closeFictionModal = async () => {
+    if (isClosingFictionModalRef.current) return;
+    isClosingFictionModalRef.current = true;
+
+    const itemId = selectedFictionItem?._id;
+    const opener = fictionModalOpenerRef.current;
+
+    if (lockCheckIntervalRef.current) {
+      clearInterval(lockCheckIntervalRef.current);
+      lockCheckIntervalRef.current = null;
+    }
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+
+    setShowFictionModal(false);
+    setSelectedFictionItem(null);
+    setFictionContributions([]);
+    setNewContribution('');
+    setWritingLock(null);
+
+    try {
+      if (itemId) await releaseWritingLock(itemId);
+    } finally {
+      window.requestAnimationFrame(() => {
+        if (opener?.isConnected) opener.focus();
+        isClosingFictionModalRef.current = false;
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (!showFictionModal) return;
+
+    const dialog = fictionModalRef.current;
+    const previousBodyOverflow = document.body.style.overflow;
+    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    ) || []).filter(element => !element.hasAttribute('hidden'));
+
+    document.body.style.overflow = 'hidden';
+    fictionModalCloseRef.current?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        void closeFictionModal();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+
+      const items = focusable();
+      if (items.length === 0) {
+        event.preventDefault();
+        dialog?.focus();
+        return;
+      }
+
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = previousBodyOverflow;
+    };
+  }, [showFictionModal]);
+
   const handleAddContribution = async () => {
     if (!selectedFictionItem || !newContribution.trim()) {
       alert('Please enter some content');
@@ -519,6 +606,7 @@ function Shop() {
   };
 
   const handleViewFiction = async (item: ShopItem) => {
+    fictionModalOpenerRef.current = document.activeElement as HTMLElement | null;
     setSelectedFictionItem(item);
     await loadFictionContributions(item._id);
     setShowFictionModal(true);
@@ -1069,17 +1157,9 @@ function Shop() {
       {/* Fiction Modal */}
       {showFictionModal && selectedFictionItem && (
         <div 
-          className="modal-overlay" 
-          onClick={async () => { 
-            // Release writing lock when closing modal
-            if (selectedFictionItem) {
-              await releaseWritingLock(selectedFictionItem._id);
-            }
-            setShowFictionModal(false); 
-            setSelectedFictionItem(null); 
-            setFictionContributions([]); 
-            setNewContribution('');
-            setWritingLock(null);
+          className="modal-overlay fiction-modal-overlay"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) void closeFictionModal();
           }}
           style={{
             position: 'fixed',
@@ -1096,8 +1176,13 @@ function Shop() {
           }}
         >
           <div 
-            className="modal-content" 
-            onClick={(e) => e.stopPropagation()} 
+            ref={fictionModalRef}
+            className="modal-content fiction-modal-content"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="fiction-modal-title"
+            tabIndex={-1}
+            onMouseDown={(event) => event.stopPropagation()}
             style={{ 
               maxWidth: '800px', 
               width: '100%',
@@ -1109,9 +1194,23 @@ function Shop() {
               boxShadow: '0 20px 60px rgba(0,0,0,0.3)'
             }}
           >
-            <h3 style={{ marginBottom: '20px', fontSize: '24px', fontWeight: '700', color: '#14306d' }}>
-              📖 {selectedFictionItem.title}
-            </h3>
+            <div className="fiction-modal-header">
+              <div>
+                <h3 id="fiction-modal-title" style={{ margin: 0, fontSize: '24px', fontWeight: '700', color: '#14306d' }}>
+                  📖 {selectedFictionItem.title}
+                </h3>
+              </div>
+              <button
+                ref={fictionModalCloseRef}
+                type="button"
+                className="fiction-modal-close"
+                aria-label="Close fiction"
+                title="Close"
+                onClick={() => void closeFictionModal()}
+              >
+                <X aria-hidden="true" size={22} strokeWidth={2} />
+              </button>
+            </div>
 
             {/* Fiction Content Display */}
             <div style={{ marginBottom: '24px', padding: '20px', background: '#f9fafb', borderRadius: '12px', border: '2px solid #e5e7eb' }}>

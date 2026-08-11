@@ -1,6 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ShieldCheck, ShoppingCart } from 'lucide-react';
 import axios from '../config/axios';
+import ConstellationTree from '../components/ConstellationTree';
+import type { ConstellationMap, ConstellationSkill } from '../components/constellationTypes';
+import { renderInlineMarkdown } from '../components/inlineMarkdown';
 import './MainMenu.css';
 
 interface User {
@@ -120,6 +124,54 @@ interface GachaReward {
   amountByInventoryId?: Record<string, number[]>;
 }
 
+const useAccessibleDialog = (isOpen: boolean, onClose?: () => void) => {
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    openerRef.current = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    ) || []);
+    window.requestAnimationFrame(() => (focusable()[0] || dialog)?.focus());
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && closeRef.current) {
+        event.preventDefault();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      if (items.length === 0) {
+        event.preventDefault();
+        dialog?.focus();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      window.requestAnimationFrame(() => openerRef.current?.focus());
+    };
+  }, [isOpen]);
+
+  return dialogRef;
+};
+
 function MainMenu() {
   const navigate = useNavigate();
   const [user, setUser] = useState<User | null>(null);
@@ -137,6 +189,9 @@ function MainMenu() {
 
   // Skill Tree states
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [constellationMaps, setConstellationMaps] = useState<ConstellationMap[]>([]);
+  const [constellationRevision, setConstellationRevision] = useState(0);
+  const [constellationLoadState, setConstellationLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const isCompactQuestTree = typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches;
   const defaultQuestTreeZoom = 2;
   const [zoom, setZoom] = useState(defaultQuestTreeZoom);
@@ -148,6 +203,8 @@ function MainMenu() {
   const [highlightedSkillId, setHighlightedSkillId] = useState<string | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [showSkillModal, setShowSkillModal] = useState(false);
+  const skillModalRef = useRef<HTMLDivElement | null>(null);
+  const skillModalOpenerRef = useRef<HTMLElement | null>(null);
   const [unlockedSkills, setUnlockedSkills] = useState<string[]>([]);
   const [completedQuestSteps, setCompletedQuestSteps] = useState<string[]>([]);
   const [completedQuests, setCompletedQuests] = useState<string[]>([]);
@@ -164,6 +221,13 @@ function MainMenu() {
   const [hamsterQuestLinked, setHamsterQuestLinked] = useState(false);
   const [inventorySyncWarning, setInventorySyncWarning] = useState('');
   const [gachaResult, setGachaResult] = useState<{ message: string; rewards: GachaReward[] } | null>(null);
+  const imageDialogRef = useAccessibleDialog(Boolean(expandedImage), () => setExpandedImage(null));
+  const gachaDialogRef = useAccessibleDialog(Boolean(gachaResult), () => setGachaResult(null));
+  const approvalDialogRef = useAccessibleDialog(showApprovalRequestModal, () => {
+    setShowApprovalRequestModal(false);
+    setApprovalMessage('');
+  });
+  const guildDialogRef = useAccessibleDialog(showGuildSelection);
 
   useEffect(() => {
     checkAuth();
@@ -172,6 +236,7 @@ function MainMenu() {
   useEffect(() => {
     if (user) {
       loadMainMenu();
+      loadConstellationMaps();
     }
   }, [user]);
 
@@ -179,6 +244,7 @@ function MainMenu() {
     if (user) {
       const handleFocus = () => {
         refreshMainMenuStatus();
+        loadConstellationMaps({ silent: true });
       };
 
       window.addEventListener('focus', handleFocus);
@@ -229,6 +295,21 @@ function MainMenu() {
     } finally {
       setLoadingProgression(false);
       setLoadingInventory(false);
+    }
+  };
+
+  const loadConstellationMaps = async (options: { silent?: boolean } = {}) => {
+    try {
+      if (!options.silent) setConstellationLoadState('loading');
+      const response = await axios.get('/api/constellation-maps', {
+        params: { scope: 'discipline', limit: 100 }
+      });
+      setConstellationMaps(response.data.maps || []);
+      setConstellationRevision(current => current + 1);
+      setConstellationLoadState('ready');
+    } catch (error) {
+      console.error('Error loading constellation maps:', error);
+      setConstellationLoadState('error');
     }
   };
 
@@ -308,9 +389,46 @@ function MainMenu() {
       alert('อันนี้เป็นเนื้อหา Advance สอนแค่ใน Starway/Starlight น้าาา');
       return;
     }
+    skillModalOpenerRef.current = document.activeElement as HTMLElement | null;
     setSelectedSkill(skill);
     setShowSkillModal(true);
   };
+
+  const closeSkillModal = () => {
+    setShowSkillModal(false);
+    setSelectedSkill(null);
+    window.requestAnimationFrame(() => skillModalOpenerRef.current?.focus());
+  };
+
+  useEffect(() => {
+    if (!showSkillModal) return;
+    const modal = skillModalRef.current;
+    const focusable = () => Array.from(modal?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    ) || []);
+    focusable()[0]?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeSkillModal();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [showSkillModal]);
 
   const handleCompleteQuestStep = async (skill: Skill, stepId: string) => {
     try {
@@ -336,7 +454,7 @@ function MainMenu() {
 
   const hasCompletedAllQuestSteps = (skill: Skill): boolean => {
     const steps = skill.subQuests || [];
-    return steps.every((step, index) =>
+    return steps.length > 0 && steps.every((step, index) =>
       completedQuestSteps.includes(`${skill._id}:${step.externalId || `step-${index}`}`)
     );
   };
@@ -400,7 +518,7 @@ function MainMenu() {
       if (response.data.success) {
         await refreshMainMenuStatus();
         // Close modal
-        setShowSkillModal(false);
+        closeSkillModal();
         setSelectedSkill(null);
         // Don't show notification for Adventure and Marker nodes
         const isAdventure = selectedSkill.nodeType === 'adventure' || selectedSkill.nodeColor === 'white';
@@ -427,7 +545,7 @@ function MainMenu() {
         setPendingApprovalSkills(current => current.includes(selectedSkill._id) ? current : [...current, selectedSkill._id]);
         setShowApprovalRequestModal(false);
         setApprovalMessage('');
-        setShowSkillModal(false);
+        closeSkillModal();
         setSelectedSkill(null);
       }
     } catch (error: any) {
@@ -446,20 +564,54 @@ function MainMenu() {
     let key = 0;
     let listItems: JSX.Element[] = [];
     let listKey = 0;
+    let codeLines: string[] = [];
+    let codeLanguage = '';
+    let inCodeBlock = false;
+
+    const flushList = () => {
+      if (listItems.length === 0) return;
+      elements.push(
+        <ul key={key++} style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
+          {listItems}
+        </ul>
+      );
+      listItems = [];
+    };
+
+    const flushCodeBlock = () => {
+      elements.push(
+        <div className="quest-code-block" key={`code-${key++}`}>
+          {codeLanguage && <div className="quest-code-language">{codeLanguage}</div>}
+          <pre><code>{codeLines.join('\n')}</code></pre>
+        </div>
+      );
+      codeLines = [];
+      codeLanguage = '';
+    };
 
     lines.forEach((line) => {
       const trimmedLine = line.trim();
+
+      if (trimmedLine.startsWith('```')) {
+        if (inCodeBlock) {
+          flushCodeBlock();
+          inCodeBlock = false;
+        } else {
+          flushList();
+          codeLanguage = trimmedLine.slice(3).trim();
+          inCodeBlock = true;
+        }
+        return;
+      }
+
+      if (inCodeBlock) {
+        codeLines.push(line);
+        return;
+      }
       
       // Skip empty lines
       if (!trimmedLine) {
-        if (listItems.length > 0) {
-          elements.push(
-            <ul key={key++} style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
-              {listItems}
-            </ul>
-          );
-          listItems = [];
-        }
+        flushList();
         return;
       }
 
@@ -476,7 +628,7 @@ function MainMenu() {
         const text = trimmedLine.substring(4);
         elements.push(
           <h3 key={key++} style={{ fontSize: '1.6rem', fontWeight: '700', color: '#14306d', marginTop: '16px', marginBottom: '8px' }}>
-            {parseInlineMarkdown(text, key)}
+            {renderInlineMarkdown(text, key)}
           </h3>
         );
         return;
@@ -494,7 +646,7 @@ function MainMenu() {
         const text = trimmedLine.substring(3);
         elements.push(
           <h2 key={key++} style={{ fontSize: '1.8rem', fontWeight: '700', color: '#14306d', marginTop: '20px', marginBottom: '12px' }}>
-            {parseInlineMarkdown(text, key)}
+            {renderInlineMarkdown(text, key)}
           </h2>
         );
         return;
@@ -512,7 +664,7 @@ function MainMenu() {
         const text = trimmedLine.substring(2);
         elements.push(
           <h1 key={key++} style={{ fontSize: '2rem', fontWeight: '700', color: '#14306d', marginTop: '24px', marginBottom: '16px' }}>
-            {parseInlineMarkdown(text, key)}
+            {renderInlineMarkdown(text, key)}
           </h1>
         );
         return;
@@ -523,21 +675,14 @@ function MainMenu() {
         const text = trimmedLine.substring(2);
         listItems.push(
           <li key={listKey++} style={{ marginBottom: '4px', fontSize: '1.4rem', lineHeight: '1.6' }}>
-            {parseInlineMarkdown(text, key * 1000 + listKey)}
+            {renderInlineMarkdown(text, key * 1000 + listKey)}
           </li>
         );
         return;
       }
 
       // Regular paragraph - close list if open
-      if (listItems.length > 0) {
-        elements.push(
-          <ul key={key++} style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
-            {listItems}
-          </ul>
-        );
-        listItems = [];
-      }
+      flushList();
 
       // Check for images in the line
       const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)|(https?:\/\/[^\s)]+\.(?:png|jpe?g|gif|webp|svg)(?:\?[^\s)]*)?)/gi;
@@ -551,7 +696,7 @@ function MainMenu() {
         // Add text before the image
         if (imageMatch.index > lastIndex) {
           const textBefore = trimmedLine.substring(lastIndex, imageMatch.index);
-          const parsed = parseInlineMarkdown(textBefore, key * 1000 + lineParts.length);
+          const parsed = renderInlineMarkdown(textBefore, key * 1000 + lineParts.length);
           lineParts.push(...parsed);
         }
         // Add the image
@@ -582,11 +727,11 @@ function MainMenu() {
       // Add remaining text
       if (lastIndex < trimmedLine.length) {
         const remainingText = trimmedLine.substring(lastIndex);
-        const parsed = parseInlineMarkdown(remainingText, key * 1000 + lineParts.length);
+        const parsed = renderInlineMarkdown(remainingText, key * 1000 + lineParts.length);
         lineParts.push(...parsed);
       } else if (!hasImages) {
         // No images found, parse entire line
-        const parsed = parseInlineMarkdown(trimmedLine, key * 1000);
+        const parsed = renderInlineMarkdown(trimmedLine, key * 1000);
         lineParts.push(...parsed);
       }
 
@@ -599,14 +744,8 @@ function MainMenu() {
       }
     });
 
-    // Close any open list
-    if (listItems.length > 0) {
-      elements.push(
-        <ul key={key++} style={{ marginLeft: '20px', marginTop: '8px', marginBottom: '8px' }}>
-          {listItems}
-        </ul>
-      );
-    }
+    flushList();
+    if (inCodeBlock) flushCodeBlock();
 
     return <div style={{ whiteSpace: 'pre-wrap' }}>{elements}</div>;
   };
@@ -621,50 +760,6 @@ function MainMenu() {
     }
 
     return [...new Set(imageUrls)];
-  };
-
-  // Parse inline markdown (links, bold, italic)
-  const parseInlineMarkdown = (text: string, baseKey: number): (string | JSX.Element)[] => {
-    const parts: (string | JSX.Element)[] = [];
-    let key = baseKey;
-    let lastIndex = 0;
-
-    // Match links [text](url)
-    const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
-    let match;
-
-    while ((match = linkRegex.exec(text)) !== null) {
-      // Add text before the link
-      if (match.index > lastIndex) {
-        parts.push(text.substring(lastIndex, match.index));
-      }
-      // Add the link
-      const linkText = match[1];
-      const linkUrl = match[2];
-      parts.push(
-        <a
-          key={key++}
-          href={linkUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{
-            color: '#4e98ff',
-            textDecoration: 'underline',
-            fontWeight: '500'
-          }}
-        >
-          {linkText}
-        </a>
-      );
-      lastIndex = match.index + match[0].length;
-    }
-
-    // Add remaining text
-    if (lastIndex < text.length) {
-      parts.push(text.substring(lastIndex));
-    }
-
-    return parts.length > 0 ? parts : [text];
   };
 
   // Convert YouTube URL to embed URL
@@ -1124,23 +1219,21 @@ function MainMenu() {
         {/* Navigation Cards */}
         <div className="nav-cards">
           {/* Shop Card */}
-          <div className="nav-item shop" onClick={() => navigate('/shop')}>
+          <button type="button" className="nav-item shop" onClick={() => navigate('/shop')}>
             <div className="nav-icon-wrapper">
-              <span className="nav-icon-text">🛒</span>
+              <ShoppingCart className="nav-icon-svg" aria-hidden="true" />
             </div>
             <span className="nav-text">Shop</span>
-          </div>
+          </button>
 
           {/* Admin Card - Only visible to admin and super-admin */}
           {user && (user.role === 'admin' || user.role === 'super-admin') && (
-            <div className="nav-item admin" onClick={() => navigate('/admin')}>
+            <button type="button" className="nav-item admin" onClick={() => navigate('/admin')}>
               <div className="nav-icon-wrapper">
-                <span className="nav-icon-text">
-                  {user.role === 'super-admin' ? '🔐' : '⚡'}
-                </span>
+                <ShieldCheck className="nav-icon-svg" aria-hidden="true" />
               </div>
               <span className="nav-text">Admin Panel</span>
-            </div>
+            </button>
           )}
         </div>
       </div>
@@ -1149,7 +1242,7 @@ function MainMenu() {
       <div className="main-panel">
         {/* Header with Logout */}
         <div className="panel-header">
-          <h2 className="panel-title">Quest Tree</h2>
+          <h2 className="panel-title">Learning Paths</h2>
           <button className="logout-btn" onClick={handleLogout}>
             Logout
           </button>
@@ -1157,6 +1250,30 @@ function MainMenu() {
 
         {/* Content */}
         <div className="panel-content">
+          {constellationLoadState === 'loading' ? (
+            <div className="constellation-load-state" role="status">Loading constellations...</div>
+          ) : constellationLoadState === 'error' ? (
+            <div className="constellation-load-state is-error" role="alert">
+              <strong>Constellations are temporarily unavailable.</strong>
+              <span>Your current page and progress are safe.</span>
+              <button type="button" onClick={() => { void loadConstellationMaps(); }}>Retry</button>
+            </div>
+          ) : constellationMaps.length > 0 ? (
+            <ConstellationTree
+              disciplineMaps={constellationMaps}
+              refreshRevision={constellationRevision}
+              unlockedSkillIds={unlockedSkills}
+              pendingSkillIds={pendingApprovalSkills}
+              canUnlockSkill={(skill: ConstellationSkill) => canUnlockSkill(skill as Skill)}
+              onOpenSkill={(skill: ConstellationSkill) => handleSkillClick(skill as Skill)}
+            />
+          ) : (
+            <div className="constellation-load-state" role="status">
+              <strong>No constellations published yet.</strong>
+              <span>Learning paths will appear here when they are ready.</span>
+            </div>
+          )}
+          {false && (
           <div className="skill-tree-view">
             <div className="skill-tree-container quest-tree-container">
               {skills.length > 0 && (
@@ -1369,6 +1486,7 @@ function MainMenu() {
             </div>
 
           </div>
+          )}
         </div>
       </div>
 
@@ -1513,10 +1631,19 @@ function MainMenu() {
 
       {/* Skill Detail Modal */}
       {showSkillModal && selectedSkill && (
-        <div className="guild-selection-modal-overlay" onClick={() => setShowSkillModal(false)}>
-          <div className="guild-selection-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '700px' }}>
+        <div className="guild-selection-modal-overlay" onClick={closeSkillModal}>
+          <div
+            ref={skillModalRef}
+            className="guild-selection-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="quest-detail-title"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '700px' }}
+          >
             <div className="guild-selection-header">
-              <h2 className="quest-title">{selectedSkill.title}</h2>
+              <button type="button" className="quest-modal-close" onClick={closeSkillModal} aria-label="Close quest details">&times;</button>
+              <h2 id="quest-detail-title" className="quest-title">{selectedSkill.title}</h2>
               <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '8px' }}>
                 <span style={{ fontSize: '1.4rem', color: '#6b7280' }}>
                   {(() => {
@@ -1608,7 +1735,7 @@ function MainMenu() {
                           {!isUnlocked && prereqSkill && (
                             <button
                               onClick={() => {
-                                setShowSkillModal(false);
+                                closeSkillModal();
                                 setHighlightedSkillId(prereqSkill._id);
                                 setTimeout(() => {
                                   setHighlightedSkillId(null);
@@ -1792,10 +1919,7 @@ function MainMenu() {
               )}
               <button
                 className="cancel-btn"
-                onClick={() => {
-                  setShowSkillModal(false);
-                  setSelectedSkill(null);
-                }}
+                onClick={closeSkillModal}
                 style={{
                   padding: '12px 24px',
                   background: '#6b7280',
@@ -1816,7 +1940,7 @@ function MainMenu() {
       )}
 
       {expandedImage && (
-        <div onClick={() => setExpandedImage(null)} style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', padding: '24px', background: 'rgba(11, 25, 56, 0.82)', cursor: 'zoom-out' }}>
+        <div ref={imageDialogRef as React.RefObject<HTMLDivElement>} role="dialog" aria-modal="true" aria-label={`Image preview: ${expandedImage.alt}`} tabIndex={-1} onClick={() => setExpandedImage(null)} style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', padding: '24px', background: 'rgba(11, 25, 56, 0.82)', cursor: 'zoom-out' }}>
           <img src={expandedImage.src} alt={expandedImage.alt} onClick={(event) => event.stopPropagation()} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '8px', boxShadow: '0 18px 60px rgba(0, 0, 0, 0.45)', cursor: 'default' }} />
           <button onClick={() => setExpandedImage(null)} aria-label="Close image" style={{ position: 'fixed', top: '22px', right: '24px', width: '42px', height: '42px', border: 'none', borderRadius: '50%', background: '#fff', color: '#14306d', fontSize: '26px', cursor: 'pointer' }}>×</button>
         </div>
@@ -1824,11 +1948,11 @@ function MainMenu() {
 
       {gachaResult && (
         <div className="guild-selection-modal-overlay gacha-result-overlay" onClick={() => setGachaResult(null)}>
-          <section className="gacha-result-modal" onClick={(event) => event.stopPropagation()}>
+          <section ref={gachaDialogRef as React.RefObject<HTMLElement>} className="gacha-result-modal" role="dialog" aria-modal="true" aria-labelledby="gacha-result-title" tabIndex={-1} onClick={(event) => event.stopPropagation()}>
             <div className="gacha-result-header">
               <div>
                 <span>Gacha Result</span>
-                <h2>{gachaResult.message}</h2>
+                <h2 id="gacha-result-title">{gachaResult.message}</h2>
               </div>
               <button type="button" aria-label="Close gacha result" onClick={() => setGachaResult(null)}>×</button>
             </div>
@@ -1852,9 +1976,9 @@ function MainMenu() {
       {/* Approval Request Modal */}
       {showApprovalRequestModal && selectedSkill && (
         <div className="guild-selection-modal-overlay" onClick={() => setShowApprovalRequestModal(false)}>
-          <div className="guild-selection-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px' }}>
+          <div ref={approvalDialogRef as React.RefObject<HTMLDivElement>} className="guild-selection-modal" role="dialog" aria-modal="true" aria-labelledby="approval-dialog-title" tabIndex={-1} onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px' }}>
             <div className="guild-selection-header">
-              <h2>Send Approval Request</h2>
+              <h2 id="approval-dialog-title">Send Approval Request</h2>
               <p style={{ fontSize: '1.4rem', color: '#6b7280', marginTop: '8px' }}>
                 Request approval for: <strong>{selectedSkill.title}</strong>
               </p>
@@ -1937,9 +2061,9 @@ function MainMenu() {
       {/* Guild Selection Modal */}
       {showGuildSelection && (
         <div className="guild-selection-modal-overlay" onClick={() => {}}>
-          <div className="guild-selection-modal" onClick={(e) => e.stopPropagation()}>
+          <div ref={guildDialogRef as React.RefObject<HTMLDivElement>} className="guild-selection-modal" role="dialog" aria-modal="true" aria-labelledby="guild-dialog-title" tabIndex={-1} onClick={(e) => e.stopPropagation()}>
             <div className="guild-selection-header">
-              <h2>Choose Your Guild</h2>
+              <h2 id="guild-dialog-title">Choose Your Guild</h2>
               <p>Please select a guild to join. You can change this later.</p>
             </div>
             
@@ -1949,7 +2073,8 @@ function MainMenu() {
               ) : (
                 <div className="guild-list">
                   {guilds.map((guild) => (
-                    <div
+                    <button
+                      type="button"
                       key={guild._id}
                       className={`guild-option ${selectedGuildId === guild._id ? 'selected' : ''}`}
                       onClick={() => setSelectedGuildId(guild._id)}
@@ -1960,7 +2085,7 @@ function MainMenu() {
                           👑 Leaders: {guild.guildLeaderIds.length}
                         </div>
                       )}
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}

@@ -9,6 +9,9 @@
     "test": "tsx --test src/**/*.test.ts",
     "test:integration": "RUN_INTEGRATION_TESTS=1 tsx --test src/**/*.integration.test.ts",
     "test:api": "tsx scripts/api-regression-test.ts",
+    "clear:quest-imports": "tsx scripts/clear-quest-import-data.ts",
+    "migrate:repeatable-quest-imports": "tsx scripts/allow-repeatable-star-master-imports.ts",
+    "migrate:constellations": "tsx scripts/migrate-constellation-system.ts",
     "test:load:seed": "tsx scripts/seed-load-test.ts",
     "test:load": "tsx scripts/load-test.ts",
     "start": "node dist/server.js"

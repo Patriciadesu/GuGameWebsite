@@ -1,4 +1,13 @@
-import mongoose, { Document, Schema } from 'mongoose';
+import mongoose, { Document, Schema, Types } from 'mongoose';
+
+export type MapNodeRole = 'topic-gateway' | 'lesson' | 'boss' | 'capstone';
+
+export interface INodePreview {
+  imageUrl?: string;
+  summary?: string;
+  outcomes: string[];
+  actionLabel: string;
+}
 
 export interface ISkill extends Document {
   title: string;
@@ -14,7 +23,15 @@ export interface ISkill extends Document {
     x: number;
     y: number;
   }; // Freeform editor coordinates
-  externalSource?: 'office-quest';
+  constellationPosition?: {
+    x: number;
+    y: number;
+  }; // Coordinates inside the owning Constellation Map
+  constellationMapId?: Types.ObjectId;
+  constellationLabel?: string;
+  mapNodeRole: MapNodeRole;
+  nodePreview?: INodePreview;
+  externalSource?: 'office-quest' | 'hamquest' | 'star-master';
   externalQuestId?: string;
   subQuests?: Array<{
     externalId?: string;
@@ -57,7 +74,24 @@ const SkillSchema = new Schema<ISkill>(
       x: { type: Number },
       y: { type: Number }
     },
-    externalSource: { type: String, enum: ['office-quest'] },
+    constellationPosition: {
+      x: { type: Number },
+      y: { type: Number }
+    },
+    constellationMapId: { type: Schema.Types.ObjectId, ref: 'ConstellationMap' },
+    constellationLabel: { type: String, trim: true, maxlength: 80 },
+    mapNodeRole: {
+      type: String,
+      enum: ['topic-gateway', 'lesson', 'boss', 'capstone'],
+      default: 'lesson'
+    },
+    nodePreview: {
+      imageUrl: { type: String, trim: true },
+      summary: { type: String, trim: true },
+      outcomes: { type: [String], default: [] },
+      actionLabel: { type: String, trim: true, default: 'View Path' }
+    },
+    externalSource: { type: String, enum: ['office-quest', 'hamquest', 'star-master'] },
     externalQuestId: { type: String },
     subQuests: [{
       externalId: { type: String },
@@ -102,7 +136,8 @@ SkillSchema.pre('save', function(next) {
 
 // Index for efficient queries
 SkillSchema.index({ layer: 1, position: 1 });
-SkillSchema.index({ externalSource: 1, externalQuestId: 1 }, { unique: true, sparse: true });
+SkillSchema.index({ constellationMapId: 1, layer: 1, position: 1 });
+SkillSchema.index({ externalSource: 1, externalQuestId: 1 }, { sparse: true });
 SkillSchema.index({ isActive: 1 });
 SkillSchema.index({ 'connections.targetSkillId': 1 });
 

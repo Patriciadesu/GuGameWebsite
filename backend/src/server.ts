@@ -13,6 +13,7 @@ import multer from 'multer';
 import User, { IUser } from './models/User';
 import Guild, { IGuild } from './models/Guild';
 import Skill, { ISkill } from './models/Skill';
+import ConstellationMap from './models/ConstellationMap';
 import SkillTreeSettings from './models/SkillTreeSettings';
 import ApprovalRequest from './models/ApprovalRequest';
 import ShopItem from './models/ShopItem';
@@ -22,7 +23,7 @@ import FictionWritingLock from './models/FictionWritingLock';
 import OfficeQuestCache from './models/OfficeQuestCache';
 import { VoiceTracker } from './services/voiceTracker';
 import { getOfficeCatalogItem, getOfficeCatalogItems, OfficeCatalogItem } from './services/officeCatalog';
-import { getOfficeQuestDescription, getOfficeQuestDescriptionParts, getOfficeQuestDetailHash, getOfficeQuests } from './services/officeQuestCatalog';
+import { getOfficeQuestById, getOfficeQuestDescription, getOfficeQuestDescriptionParts, getOfficeQuestDetailHash, getOfficeQuestImageUrl, getOfficeQuestPage, getOfficeQuestTags, getOfficeQuests } from './services/officeQuestCatalog';
 import { AsyncTtlCache, KeyedAsyncTtlCache } from './services/asyncCache';
 import { CachedSessionStore } from './services/cachedSessionStore';
 import { KeyedBatchLoader } from './services/keyedBatchLoader';
@@ -31,7 +32,16 @@ import {
   reserveLocalPurchase,
   rollbackLocalPurchase
 } from './services/purchaseService';
-import { completeQuestStepOnce, unlockSkillOnce } from './services/progressionService';
+import { areQuestStepsComplete, completeQuestStepOnce, unlockSkillOnce } from './services/progressionService';
+import {
+  assertConstellationMapCanBeDeleted,
+  assertSkillCanBeDeleted,
+  ConstellationOperationError,
+  normalizeConstellationLayout,
+  validateConstellationMapContents,
+  validateConstellationMapLinkage,
+  validateSkillMapAssignment
+} from './services/constellationService';
 import {
   ApprovalOperationError,
   approveQuestRequest
@@ -90,6 +100,13 @@ const PORT = parseInt(process.env.PORT || '3001', 10);
 const MONGODB_URI = process.env.MONGODB_URI || '';
 const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || '';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const FRONTEND_ORIGIN = (() => {
+  try {
+    return new URL(FRONTEND_URL).origin;
+  } catch {
+    return FRONTEND_URL;
+  }
+})();
 const ADMIN_GUILD_ID = process.env.ADMIN_GUILD_ID || '';
 const ADMIN_ROLE_IDS = process.env.ADMIN_ROLE_IDS?.split(',') || [];
 const SUPER_ADMIN_ROLE_IDS = process.env.SUPER_ADMIN_ROLE_IDS?.split(',') || [];
@@ -370,12 +387,73 @@ interface ProgressionSnapshot {
 }
 
 const activeSkillsCache = new AsyncTtlCache<any[]>(30_000);
+const constellationMapPageCache = new KeyedAsyncTtlCache<{
+  maps: any[];
+  nextCursor: string | null;
+}>(30_000, 500);
 const progressionCache = new AsyncTtlCache<ProgressionSnapshot>(10_000);
 const sessionUserCache = new KeyedAsyncTtlCache<Express.User | null>(15_000, 2_000);
 
 const getActiveSkills = () => activeSkillsCache.get(() =>
   Skill.find({ isActive: true }).sort({ layer: 1, position: 1 }).lean()
 );
+
+interface ConstellationMapPageOptions {
+  scope?: 'discipline' | 'topic';
+  parentMapId?: string;
+  gatewaySkillId?: string;
+  includeInactive: boolean;
+  limit: number;
+  cursor?: string;
+}
+
+const encodeConstellationCursor = (displayOrder: number, id: string) =>
+  Buffer.from(JSON.stringify({ displayOrder, id }), 'utf8').toString('base64url');
+
+const decodeConstellationCursor = (cursor: string) => {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+    if (!Number.isFinite(parsed.displayOrder) || !mongoose.Types.ObjectId.isValid(parsed.id)) {
+      throw new Error('Invalid cursor values');
+    }
+    return { displayOrder: Number(parsed.displayOrder), id: String(parsed.id) };
+  } catch {
+    throw new ConstellationOperationError('cursor is invalid');
+  }
+};
+
+const getConstellationMapPage = (options: ConstellationMapPageOptions) => {
+  const cacheKey = JSON.stringify(options);
+  return constellationMapPageCache.get(cacheKey, async () => {
+    const query: any = {
+      ...(options.includeInactive ? {} : { isActive: true }),
+      ...(options.scope ? { scope: options.scope } : {}),
+      ...(options.parentMapId ? { parentMapId: options.parentMapId } : {}),
+      ...(options.gatewaySkillId ? { gatewaySkillId: options.gatewaySkillId } : {})
+    };
+    if (options.cursor) {
+      const cursor = decodeConstellationCursor(options.cursor);
+      query.$or = [
+        { displayOrder: { $gt: cursor.displayOrder } },
+        { displayOrder: cursor.displayOrder, _id: { $gt: cursor.id } }
+      ];
+    }
+
+    const rows = await ConstellationMap.find(query)
+      .sort({ displayOrder: 1, _id: 1 })
+      .limit(options.limit + 1)
+      .lean();
+    const hasMore = rows.length > options.limit;
+    const maps = hasMore ? rows.slice(0, options.limit) : rows;
+    const lastMap = maps[maps.length - 1];
+    return {
+      maps,
+      nextCursor: hasMore && lastMap
+        ? encodeConstellationCursor(lastMap.displayOrder, lastMap._id.toString())
+        : null
+    };
+  });
+};
 
 const presentSkillsForUser = (skills: any[], user: { role: string; unlockedSkills?: string[] }) => {
   const unlockedSkills = new Set(user.unlockedSkills || []);
@@ -484,6 +562,87 @@ const presentProgressionLeaderboard = (
 const invalidateSkillCaches = () => {
   activeSkillsCache.clear();
   progressionCache.clear();
+};
+
+const invalidateConstellationMapCache = () => {
+  constellationMapPageCache.clear();
+};
+
+const deleteSkillsWithReferences = async (skillObjectIds: mongoose.Types.ObjectId[]) => {
+  if (skillObjectIds.length === 0) return 0;
+  const skillIds = skillObjectIds.map(id => id.toString());
+
+  await Promise.all([
+    Skill.updateMany(
+      { _id: { $nin: skillObjectIds } },
+      {
+        $pull: {
+          connections: { targetSkillId: { $in: skillIds } },
+          prerequisites: { $in: skillIds }
+        }
+      }
+    ),
+    User.updateMany({}, {
+      $pull: {
+        unlockedSkills: { $in: skillIds },
+        completedQuestSteps: { skillId: { $in: skillIds } },
+        completedQuestRewards: { $in: skillIds }
+      }
+    }),
+    ApprovalRequest.deleteMany({ skillId: { $in: skillIds } })
+  ]);
+
+  const result = await Skill.deleteMany({ _id: { $in: skillObjectIds } });
+  sessionUserCache.clear();
+  invalidateProgressionCache();
+  invalidateSkillCaches();
+  return result.deletedCount;
+};
+
+const collectConstellationMapIds = async (rootMapId: mongoose.Types.ObjectId) => {
+  const collected = [rootMapId];
+  let frontier = [rootMapId];
+  while (frontier.length > 0) {
+    const children = await ConstellationMap.find({ parentMapId: { $in: frontier } }).select('_id').lean();
+    frontier = children.map(child => child._id);
+    collected.push(...frontier);
+  }
+  return collected;
+};
+
+const sendConstellationError = (res: Response, error: unknown, fallbackMessage: string) => {
+  if (error instanceof ConstellationOperationError) {
+    return res.status(error.statusCode).json({ error: error.message });
+  }
+  if (error instanceof mongoose.Error.ValidationError || error instanceof mongoose.Error.CastError) {
+    return res.status(400).json({ error: error.message });
+  }
+  if ((error as { code?: number })?.code === 11000) {
+    return res.status(409).json({ error: 'Constellation map slug or gateway skill is already in use' });
+  }
+  console.error(fallbackMessage, error);
+  return res.status(500).json({ error: fallbackMessage });
+};
+
+const mutableConstellationMapFields = [
+  'name',
+  'slug',
+  'description',
+  'scope',
+  'parentMapId',
+  'gatewaySkillId',
+  'displayOrder',
+  'isActive',
+  'visualTheme',
+  'viewport',
+  'schemaVersion'
+] as const;
+
+const applyConstellationMapFields = (map: InstanceType<typeof ConstellationMap>, body: any) => {
+  for (const field of mutableConstellationMapFields) {
+    if (!Object.prototype.hasOwnProperty.call(body, field)) continue;
+    map.set(field, body[field] === null ? undefined : body[field]);
+  }
 };
 
 const invalidateProgressionCache = () => {
@@ -622,9 +781,16 @@ app.use('/uploads', express.static(uploadsDir));
 
 // CORS configuration
 app.use(cors({
-  origin: FRONTEND_URL,
+  origin: (origin, callback) => {
+    const isLocalDevelopmentOrigin = Boolean(origin && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin));
+    if (!origin || origin === FRONTEND_ORIGIN || isLocalDevelopmentOrigin) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error('Origin is not allowed by CORS'));
+  },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
@@ -784,6 +950,36 @@ const requireSuperAdmin = (req: Request, res: Response, next: any) => {
   res.status(403).json({ error: 'Forbidden', message: 'Super-admin access required' });
 };
 
+const requireConstellationSkillEditor = async (req: Request, res: Response, next: any) => {
+  if (!req.isAuthenticated() || !req.user || (req.user.role !== 'admin' && req.user.role !== 'super-admin')) {
+    return res.status(403).json({ error: 'Forbidden', message: 'Admin access required' });
+  }
+  if (req.user.role === 'super-admin') return next();
+
+  try {
+    const skillId = req.params.id;
+    if (!skillId) {
+      const constellationMapId = String(req.body.constellationMapId || '');
+      if (!mongoose.Types.ObjectId.isValid(constellationMapId)) {
+        return res.status(403).json({ error: 'Forbidden', message: 'Admins can only create Constellation stars' });
+      }
+      const mapExists = await ConstellationMap.exists({ _id: constellationMapId });
+      return mapExists ? next() : res.status(404).json({ error: 'Constellation map not found' });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(skillId)) {
+      return res.status(400).json({ error: 'Invalid skill ID' });
+    }
+    const constellationSkillExists = await Skill.exists({ _id: skillId, constellationMapId: { $exists: true } });
+    return constellationSkillExists
+      ? next()
+      : res.status(403).json({ error: 'Forbidden', message: 'Admins can only edit Constellation stars' });
+  } catch (error) {
+    console.error('Error authorizing Constellation editor:', error);
+    return res.status(500).json({ error: 'Unable to verify Constellation editor access' });
+  }
+};
+
 // Routes
 app.get('/', (req: Request, res: Response) => {
   res.json({ message: 'GuGame Backend API' });
@@ -901,7 +1097,11 @@ app.get('/api/mainmenu/status', requireAuth, async (req: Request, res: Response)
 
 // Test-only entrypoint. The secret is server-side only and establishes a normal Passport session.
 app.get('/api/auth/test-login', async (req: Request, res: Response) => {
-  if (!TEST_BYPASS_KEY || req.query.key !== TEST_BYPASS_KEY) {
+  const remoteAddress = req.socket.remoteAddress || '';
+  const isLoopbackDevelopmentRequest = process.env.NODE_ENV !== 'production' &&
+    /^(::1|127\.0\.0\.1|::ffff:127\.0\.0\.1)$/.test(remoteAddress);
+  const hasValidTestKey = Boolean(TEST_BYPASS_KEY && req.query.key === TEST_BYPASS_KEY);
+  if (!hasValidTestKey && !isLoopbackDevelopmentRequest) {
     return res.status(404).end();
   }
 
@@ -1459,6 +1659,201 @@ const validControlPoints = (value: unknown): value is Array<{ x: number; y: numb
     point && Number.isFinite((point as { x?: number }).x) && Number.isFinite((point as { y?: number }).y)
   );
 
+app.get('/api/admin/star-master/tags', requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const tags = await getOfficeQuestTags();
+    res.json({
+      success: true,
+      tags: tags
+        .filter(tag => tag._id && tag.name)
+        .map(tag => ({ id: tag._id, name: tag.name, color: tag.color }))
+        .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+    });
+  } catch (error: any) {
+    console.error('Error loading StarMaster tags:', error.response?.data || error.message || error);
+    res.status(500).json({ error: error.message || 'Unable to load StarMaster tags' });
+  }
+});
+
+app.get(['/api/admin/star-master/quests', '/api/admin/hamquest/quests'], requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 50));
+    const search = typeof req.query.search === 'string' ? req.query.search.trim().slice(0, 200) : undefined;
+    const type = typeof req.query.type === 'string' ? req.query.type.trim().slice(0, 80) : undefined;
+    const tagIds = typeof req.query.tagIds === 'string' ? req.query.tagIds.trim().slice(0, 3000) : undefined;
+    const includeNoTags = req.query.includeNoTags === 'true' || req.query.includeNoTags === '1';
+    const [{ quests, pagination }, importedSkills] = await Promise.all([
+      getOfficeQuestPage({
+        page,
+        limit,
+        ...(search ? { search } : {}),
+        ...(type ? { type } : {}),
+        ...(tagIds ? { tagIds } : {}),
+        ...(includeNoTags ? { includeNoTags: true } : {})
+      }),
+      Skill.find({ externalQuestId: { $exists: true } }).select('externalQuestId constellationMapId').lean()
+    ]);
+    const importedById = new Map(importedSkills.map(skill => [skill.externalQuestId, skill.constellationMapId?.toString()]));
+    res.json({
+      success: true,
+      quests: quests.map(quest => ({
+        externalId: quest._id,
+        title: quest.title || 'Untitled quest',
+        type: quest.type,
+        description: getOfficeQuestDescription(quest.description),
+        imageUrl: getOfficeQuestImageUrl(quest),
+        tags: (quest.tags || []).map(tag => ({ id: tag._id || tag.id, name: tag.name, color: tag.color })).filter(tag => tag.id && tag.name),
+        subQuestCount: quest.subQuests?.length || 0,
+        imported: importedById.has(quest._id),
+        importedMapId: importedById.get(quest._id)
+      })),
+      pagination
+    });
+  } catch (error: any) {
+    console.error('Error loading StarMaster quests:', error.response?.data || error.message || error);
+    res.status(error.response?.status === 401 || error.response?.status === 403 ? 502 : 500).json({
+      error: error.response?.data?.error?.message || error.message || 'Unable to load StarMaster quests'
+    });
+  }
+});
+
+const starMasterSkillPayload = (
+  quest: any,
+  map: any,
+  constellationMapId: string,
+  mapSkillIndex: number,
+  totalSkillIndex: number
+) => {
+  const columns = 3;
+  const column = mapSkillIndex % columns;
+  const row = Math.floor(mapSkillIndex / columns);
+  const description = getOfficeQuestDescription(quest.description) || 'Imported from StarMaster.';
+  const imageUrl = getOfficeQuestImageUrl(quest);
+  const outcomes = (quest.subQuests || []).map((subQuest: any) => subQuest.title?.trim()).filter(Boolean).slice(0, 4) as string[];
+  return {
+    title: quest.title || 'Untitled quest',
+    description,
+    cost: 0,
+    layer: 0,
+    position: totalSkillIndex * 100,
+    treePosition: { x: ((totalSkillIndex % 3) - 1) * 180, y: 620 - Math.floor(totalSkillIndex / 3) * 180 },
+    constellationPosition: {
+      x: Math.round(map.viewport.width / 2 + (column - 1) * 280),
+      y: Math.min(map.viewport.height - 80, 180 + row * 180)
+    },
+    constellationMapId,
+    mapNodeRole: 'lesson',
+    nodePreview: {
+      imageUrl,
+      summary: description.slice(0, 280),
+      outcomes,
+      actionLabel: 'Open Quest'
+    },
+    nodeColor: 'green',
+    nodeType: 'quest',
+    externalSource: 'star-master',
+    externalQuestId: quest._id,
+    subQuests: normalizeSubQuests((quest.subQuests || []).map((subQuest: any) => ({
+      externalId: subQuest?._id,
+      title: subQuest?.title,
+      description: getOfficeQuestDescription(subQuest?.description),
+      descriptionParts: getOfficeQuestDescriptionParts(subQuest?.description),
+      type: subQuest?.subQuestType
+    }))),
+    isActive: true
+  };
+};
+
+const getStarMasterImportMap = async (constellationMapId: string) => {
+  if (!mongoose.Types.ObjectId.isValid(constellationMapId)) {
+    throw Object.assign(new Error('Select a Topic Constellation before importing'), { status: 400 });
+  }
+  const map = await ConstellationMap.findById(constellationMapId).lean();
+  if (!map) throw Object.assign(new Error('Topic Constellation not found'), { status: 404 });
+  if (map.scope !== 'topic') {
+    throw Object.assign(new Error('StarMaster quests can only be imported into a Topic Constellation'), { status: 400 });
+  }
+  return map;
+};
+
+app.post('/api/admin/star-master/quests/import', requireAdmin, async (req: Request, res: Response) => {
+  const externalQuestIds: string[] = Array.isArray(req.body.externalQuestIds)
+    ? [...new Set<string>((req.body.externalQuestIds as unknown[])
+      .filter((value): value is string => typeof value === 'string')
+      .map(value => value.trim())
+      .filter(Boolean))]
+    : [];
+  if (externalQuestIds.length === 0) return res.status(400).json({ error: 'Select at least one quest to import' });
+  if (externalQuestIds.length > 50) return res.status(400).json({ error: 'Import up to 50 quests at a time' });
+
+  try {
+    const constellationMapId = String(req.body.constellationMapId || '');
+    const map = await getStarMasterImportMap(constellationMapId);
+    const [mapSkillCount, totalSkillCount] = await Promise.all([
+      Skill.countDocuments({ constellationMapId }),
+      Skill.countDocuments()
+    ]);
+    const imported: ISkill[] = [];
+    const failed: Array<{ externalQuestId: string; error: string }> = [];
+    let cursor = 0;
+
+    const importNext = async () => {
+      while (cursor < externalQuestIds.length) {
+        const itemIndex = cursor++;
+        const externalQuestId = externalQuestIds[itemIndex];
+        try {
+          const quest = await getOfficeQuestById(externalQuestId);
+          const skill = await Skill.create(starMasterSkillPayload(
+            quest,
+            map,
+            constellationMapId,
+            mapSkillCount + itemIndex,
+            totalSkillCount + itemIndex
+          ));
+          imported.push(skill);
+        } catch (error: any) {
+          failed.push({
+            externalQuestId,
+            error: error.response?.data?.error?.message || error.message || 'Import failed'
+          });
+        }
+      }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(4, externalQuestIds.length) }, () => importNext()));
+    if (imported.length > 0) invalidateSkillCaches();
+    res.json({
+      success: failed.length === 0,
+      imported,
+      skipped: [],
+      failed
+    });
+  } catch (error: any) {
+    console.error('Error batch importing StarMaster quests:', error.response?.data || error.message || error);
+    res.status(error.status || 500).json({ error: error.response?.data?.error?.message || error.message || 'Failed to import StarMaster quests' });
+  }
+});
+
+app.post(['/api/admin/star-master/quests/:externalQuestId/import', '/api/admin/hamquest/quests/:externalQuestId/import'], requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const constellationMapId = String(req.body.constellationMapId || '');
+    const map = await getStarMasterImportMap(constellationMapId);
+
+    const [quest, mapSkillCount, totalSkillCount] = await Promise.all([
+      getOfficeQuestById(req.params.externalQuestId),
+      Skill.countDocuments({ constellationMapId }),
+      Skill.countDocuments()
+    ]);
+    const skill = await Skill.create(starMasterSkillPayload(quest, map, constellationMapId, mapSkillCount, totalSkillCount));
+    invalidateSkillCaches();
+    res.status(201).json({ success: true, skill });
+  } catch (error: any) {
+    console.error('Error importing StarMaster quest:', error.response?.data || error.message || error);
+    res.status(error.status || 500).json({ error: error.response?.data?.error?.message || error.message || 'Failed to import StarMaster quest' });
+  }
+});
+
 // Cached Office quest catalog. Reading this endpoint never calls Office.
 app.get('/api/admin/office-quest-catalog', requireAdmin, async (_req: Request, res: Response) => {
   try {
@@ -1717,11 +2112,193 @@ app.post('/api/admin/quest-tree/import', requireSuperAdmin, async (req: Request,
   }
 });
 
+// List constellation maps. Regular players only receive active maps.
+app.get('/api/constellation-maps', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const scope = typeof req.query.scope === 'string' ? req.query.scope : undefined;
+    const parentMapId = typeof req.query.parentMapId === 'string' ? req.query.parentMapId : undefined;
+    const gatewaySkillId = typeof req.query.gatewaySkillId === 'string' ? req.query.gatewaySkillId : undefined;
+    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+    const requestedLimit = req.query.limit === undefined ? 50 : Number(req.query.limit);
+    if (scope && scope !== 'discipline' && scope !== 'topic') {
+      return res.status(400).json({ error: 'scope must be discipline or topic' });
+    }
+    if (parentMapId && !mongoose.Types.ObjectId.isValid(parentMapId)) {
+      return res.status(400).json({ error: 'parentMapId must be a valid ID' });
+    }
+    if (gatewaySkillId && !mongoose.Types.ObjectId.isValid(gatewaySkillId)) {
+      return res.status(400).json({ error: 'gatewaySkillId must be a valid ID' });
+    }
+    if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 100) {
+      return res.status(400).json({ error: 'limit must be an integer between 1 and 100' });
+    }
+
+    const isAdmin = req.user!.role === 'admin' || req.user!.role === 'super-admin';
+    const includeInactive = isAdmin && req.query.includeInactive === 'true';
+    const page = await getConstellationMapPage({
+      scope: scope as 'discipline' | 'topic' | undefined,
+      parentMapId,
+      gatewaySkillId,
+      includeInactive,
+      limit: requestedLimit,
+      cursor
+    });
+
+    res.json({
+      success: true,
+      maps: page.maps,
+      pagination: { limit: requestedLimit, nextCursor: page.nextCursor }
+    });
+  } catch (error) {
+    sendConstellationError(res, error, 'Failed to fetch constellation maps');
+  }
+});
+
+// Fetch a map and the skill nodes placed on it.
+app.get('/api/constellation-maps/:id', requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid constellation map ID' });
+    }
+    const isAdmin = req.user!.role === 'admin' || req.user!.role === 'super-admin';
+    const map = await ConstellationMap.findOne({
+      _id: req.params.id,
+      ...(isAdmin ? {} : { isActive: true })
+    }).lean();
+    if (!map) return res.status(404).json({ error: 'Constellation map not found' });
+
+    const skills = await Skill.find({
+      constellationMapId: map._id,
+      ...(isAdmin ? {} : { isActive: true })
+    }).sort({ layer: 1, position: 1 }).lean();
+    res.json({
+      success: true,
+      map,
+      skills: presentSkillsForUser(skills, {
+        role: req.user!.role,
+        unlockedSkills: req.user!.state?.unlockedSkills
+      })
+    });
+  } catch (error) {
+    sendConstellationError(res, error, 'Failed to fetch constellation map');
+  }
+});
+
+// Constellation editors are available to admins and super-admins.
+app.post('/api/constellation-maps', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const map = new ConstellationMap();
+    applyConstellationMapFields(map, req.body);
+    if (!Object.prototype.hasOwnProperty.call(req.body, 'isActive')) map.isActive = false;
+    await validateConstellationMapLinkage({
+      scope: map.scope,
+      parentMapId: map.parentMapId,
+      gatewaySkillId: map.gatewaySkillId
+    });
+    await map.save();
+    invalidateConstellationMapCache();
+    res.status(201).json({ success: true, map });
+  } catch (error) {
+    sendConstellationError(res, error, 'Failed to create constellation map');
+  }
+});
+
+app.patch('/api/constellation-maps/:id', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid constellation map ID' });
+    }
+    const map = await ConstellationMap.findById(req.params.id);
+    if (!map) return res.status(404).json({ error: 'Constellation map not found' });
+
+    applyConstellationMapFields(map, req.body);
+    await validateConstellationMapContents(map._id.toString(), map.scope);
+    await validateConstellationMapLinkage({
+      scope: map.scope,
+      parentMapId: map.parentMapId,
+      gatewaySkillId: map.gatewaySkillId
+    }, map._id.toString());
+    await map.save();
+    invalidateConstellationMapCache();
+    res.json({ success: true, map });
+  } catch (error) {
+    sendConstellationError(res, error, 'Failed to update constellation map');
+  }
+});
+
+// Persist visual editor coordinates in one bounded write instead of one request per node.
+app.patch('/api/constellation-maps/:id/layout', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid constellation map ID' });
+    }
+    const map = await ConstellationMap.findById(req.params.id).select('_id viewport').lean();
+    if (!map) return res.status(404).json({ error: 'Constellation map not found' });
+
+    const nodes = normalizeConstellationLayout(req.body?.nodes, map.viewport);
+    const matchingSkillCount = await Skill.countDocuments({
+      _id: { $in: nodes.map(node => node.skillId) },
+      constellationMapId: map._id
+    });
+    if (matchingSkillCount !== nodes.length) {
+      throw new ConstellationOperationError('Every layout node must belong to this constellation map', 409);
+    }
+
+    const result = await Skill.bulkWrite(nodes.map(node => ({
+      updateOne: {
+        filter: { _id: new mongoose.Types.ObjectId(node.skillId), constellationMapId: map._id },
+        update: { $set: { constellationPosition: { x: node.x, y: node.y } } }
+      }
+    })), { ordered: true });
+    invalidateSkillCaches();
+    res.json({ success: true, updatedCount: result.modifiedCount });
+  } catch (error) {
+    sendConstellationError(res, error, 'Failed to update constellation layout');
+  }
+});
+
+// Deletion is conservative by default; the editor can explicitly request a cascade.
+app.delete('/api/constellation-maps/:id', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid constellation map ID' });
+    }
+    const map = await ConstellationMap.findById(req.params.id).select('_id');
+    if (!map) return res.status(404).json({ error: 'Constellation map not found' });
+
+    const cascade = req.query.cascade === 'true';
+    if (!cascade) {
+      await assertConstellationMapCanBeDeleted(req.params.id);
+      await map.deleteOne();
+      invalidateConstellationMapCache();
+      return res.json({ success: true, message: 'Constellation map deleted successfully', deletedMaps: 1, deletedSkills: 0 });
+    }
+
+    const mapIds = await collectConstellationMapIds(map._id);
+    const ownedSkills = await Skill.find({ constellationMapId: { $in: mapIds } }).select('_id').lean();
+    const deletedSkills = await deleteSkillsWithReferences(ownedSkills.map(skill => skill._id));
+    const deletedMaps = await ConstellationMap.deleteMany({ _id: { $in: mapIds } });
+    invalidateConstellationMapCache();
+    res.json({
+      success: true,
+      message: 'Constellation and its contents deleted successfully',
+      deletedMaps: deletedMaps.deletedCount,
+      deletedSkills
+    });
+  } catch (error) {
+    sendConstellationError(res, error, 'Failed to delete constellation map');
+  }
+});
+
 // Get all skills (authenticated users can view)
 app.get('/api/skills', requireAuth, async (req: Request, res: Response) => {
   try {
     if (!req.user!.state) return res.status(404).json({ error: 'User not found' });
-    const skills = await getActiveSkills();
+    const isAdmin = req.user!.role === 'admin' || req.user!.role === 'super-admin';
+    const includeInactive = isAdmin && req.query.includeInactive === 'true';
+    const skills = includeInactive
+      ? await Skill.find({}).sort({ layer: 1, position: 1 }).lean()
+      : await getActiveSkills();
     
     res.json({
       success: true,
@@ -1769,10 +2346,10 @@ app.get('/api/skills/:id', requireAuth, async (req: Request, res: Response) => {
   }
 });
 
-// Create new skill (super-admin only)
-app.post('/api/skills', requireSuperAdmin, async (req: Request, res: Response) => {
+// Constellation star editing is available to admins and super-admins.
+app.post('/api/skills', requireConstellationSkillEditor, async (req: Request, res: Response) => {
   try {
-    const { title, description, cost, nextQuestCost, previewClip, contentYouTube, contentGoogleDrive, layer, position, treePosition, prerequisites, nodeColor, subQuests, minAP, maxAP, isAdvancedLocked } = req.body;
+    const { title, description, cost, nextQuestCost, previewClip, contentYouTube, contentGoogleDrive, layer, position, treePosition, constellationPosition, prerequisites, nodeColor, subQuests, minAP, maxAP, isAdvancedLocked, constellationMapId, constellationLabel, mapNodeRole, nodePreview } = req.body;
 
     if (!title || !description || cost === undefined) {
       return res.status(400).json({ error: 'Missing required fields: title, description, cost' });
@@ -1788,6 +2365,10 @@ app.post('/api/skills', requireSuperAdmin, async (req: Request, res: Response) =
     if (treePosition !== undefined &&
       (!Number.isFinite(treePosition?.x) || !Number.isFinite(treePosition?.y))) {
       return res.status(400).json({ error: 'Tree position must contain numeric x and y values' });
+    }
+    if (constellationPosition !== undefined &&
+      (!Number.isFinite(constellationPosition?.x) || !Number.isFinite(constellationPosition?.y))) {
+      return res.status(400).json({ error: 'Constellation position must contain numeric x and y values' });
     }
 
     const questCount = await Skill.countDocuments();
@@ -1807,7 +2388,12 @@ app.post('/api/skills', requireSuperAdmin, async (req: Request, res: Response) =
       layer: layer ?? 0,
       position: position ?? questCount * 100,
       treePosition: treePosition ?? defaultTreePosition,
+      constellationPosition,
       nodeColor: nodeColor || 'blue',
+      constellationMapId: constellationMapId || undefined,
+      constellationLabel: constellationLabel?.trim() || undefined,
+      mapNodeRole: mapNodeRole || 'lesson',
+      nodePreview,
       isAdvancedLocked: isAdvancedLocked === true,
       prerequisites: prerequisites || [],
       connections: [],
@@ -1818,19 +2404,21 @@ app.post('/api/skills', requireSuperAdmin, async (req: Request, res: Response) =
 
     console.log(`✨ Creating skill: ${title}`, { treePosition: skill.treePosition, nodeColor, minAP, maxAP });
 
+    await validateSkillMapAssignment({
+      constellationMapId: skill.constellationMapId,
+      mapNodeRole: skill.mapNodeRole
+    });
     await skill.save();
     invalidateSkillCaches();
     res.json({ success: true, skill });
   } catch (error) {
-    console.error('Error creating skill:', error);
-    res.status(500).json({ error: 'Failed to create skill' });
+    sendConstellationError(res, error, 'Failed to create skill');
   }
 });
 
-// Update skill (super-admin only)
-app.put('/api/skills/:id', requireSuperAdmin, async (req: Request, res: Response) => {
+app.put('/api/skills/:id', requireConstellationSkillEditor, async (req: Request, res: Response) => {
   try {
-    const { title, description, cost, nextQuestCost, previewClip, contentYouTube, contentGoogleDrive, layer, position, treePosition, prerequisites, isActive, isAdvancedLocked, nodeColor, connections, subQuests, minAP, maxAP } = req.body;
+    const { title, description, cost, nextQuestCost, previewClip, contentYouTube, contentGoogleDrive, layer, position, treePosition, constellationPosition, prerequisites, isActive, isAdvancedLocked, nodeColor, connections, subQuests, minAP, maxAP, constellationMapId, constellationLabel, mapNodeRole, nodePreview } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: 'Invalid quest ID' });
@@ -1847,6 +2435,10 @@ app.put('/api/skills/:id', requireSuperAdmin, async (req: Request, res: Response
     if (treePosition !== undefined &&
       (!Number.isFinite(treePosition?.x) || !Number.isFinite(treePosition?.y))) {
       return res.status(400).json({ error: 'Tree position must contain numeric x and y values' });
+    }
+    if (constellationPosition !== undefined && constellationPosition !== null &&
+      (!Number.isFinite(constellationPosition?.x) || !Number.isFinite(constellationPosition?.y))) {
+      return res.status(400).json({ error: 'Constellation position must contain numeric x and y values' });
     }
     if (cost !== undefined && (typeof cost !== 'number' || !Number.isFinite(cost) || cost < 0)) {
       return res.status(400).json({ error: 'Cost must be a non-negative number' });
@@ -1876,6 +2468,19 @@ app.put('/api/skills/:id', requireSuperAdmin, async (req: Request, res: Response
     if (layer !== undefined) skill.layer = layer;
     if (position !== undefined) skill.position = position;
     if (treePosition !== undefined) skill.treePosition = treePosition;
+    if (constellationPosition !== undefined) {
+      skill.set('constellationPosition', constellationPosition === null ? undefined : constellationPosition);
+    }
+    if (constellationMapId !== undefined) {
+      skill.set('constellationMapId', constellationMapId || undefined);
+    }
+    if (constellationLabel !== undefined) {
+      skill.set('constellationLabel', constellationLabel?.trim() || undefined);
+    }
+    if (mapNodeRole !== undefined) skill.mapNodeRole = mapNodeRole;
+    if (nodePreview !== undefined) {
+      skill.set('nodePreview', nodePreview === null ? undefined : nodePreview);
+    }
     if (prerequisites !== undefined) skill.prerequisites = prerequisites;
     if (isActive !== undefined) skill.isActive = isActive;
     if (isAdvancedLocked !== undefined) skill.isAdvancedLocked = isAdvancedLocked === true;
@@ -1894,6 +2499,11 @@ app.put('/api/skills/:id', requireSuperAdmin, async (req: Request, res: Response
       previewClip: skill.previewClip
     });
 
+    await validateSkillMapAssignment({
+      skillId: skill._id.toString(),
+      constellationMapId: skill.constellationMapId,
+      mapNodeRole: skill.mapNodeRole
+    });
     await skill.save();
     invalidateSkillCaches();
     
@@ -1907,31 +2517,51 @@ app.put('/api/skills/:id', requireSuperAdmin, async (req: Request, res: Response
     
     res.json({ success: true, skill: updatedSkill });
   } catch (error) {
-    console.error('Error updating skill:', error);
-    res.status(500).json({ error: 'Failed to update skill' });
+    sendConstellationError(res, error, 'Failed to update skill');
   }
 });
 
-// Delete skill (super-admin only)
-app.delete('/api/skills/:id', requireSuperAdmin, async (req: Request, res: Response) => {
+app.delete('/api/skills/:id', requireConstellationSkillEditor, async (req: Request, res: Response) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: 'Invalid quest ID' });
     }
-    const skill = await Skill.findByIdAndDelete(req.params.id);
+    const skill = await Skill.findById(req.params.id);
     if (!skill) {
       return res.status(404).json({ error: 'Skill not found' });
     }
-    invalidateSkillCaches();
-    res.json({ success: true, message: 'Skill deleted successfully' });
+    const cascade = req.query.cascade === 'true';
+    const dependentTopic = await ConstellationMap.findOne({ gatewaySkillId: skill._id }).select('_id').lean();
+    if (dependentTopic && !cascade) await assertSkillCanBeDeleted(req.params.id);
+
+    let deletedMaps = 0;
+    const skillIds = [skill._id];
+    let dependentMapIds: mongoose.Types.ObjectId[] = [];
+    if (dependentTopic) {
+      dependentMapIds = await collectConstellationMapIds(dependentTopic._id);
+      const ownedSkills = await Skill.find({ constellationMapId: { $in: dependentMapIds } }).select('_id').lean();
+      skillIds.push(...ownedSkills.map(candidate => candidate._id));
+    }
+
+    const uniqueSkillIds = [...new Map(skillIds.map(id => [id.toString(), id])).values()];
+    const deletedSkills = await deleteSkillsWithReferences(uniqueSkillIds);
+    if (dependentMapIds.length > 0) {
+      const mapResult = await ConstellationMap.deleteMany({ _id: { $in: dependentMapIds } });
+      deletedMaps = mapResult.deletedCount;
+      invalidateConstellationMapCache();
+    }
+    res.json({
+      success: true,
+      message: 'Star and related data deleted successfully',
+      deletedSkills,
+      deletedMaps
+    });
   } catch (error) {
-    console.error('Error deleting skill:', error);
-    res.status(500).json({ error: 'Failed to delete skill' });
+    sendConstellationError(res, error, 'Failed to delete skill');
   }
 });
 
-// Add connection to a skill (super-admin only)
-app.post('/api/skills/:id/connections', requireSuperAdmin, async (req: Request, res: Response) => {
+app.post('/api/skills/:id/connections', requireConstellationSkillEditor, async (req: Request, res: Response) => {
   try {
     const { targetSkillId, connectionType, hasArrowhead, breakPoints, curveMode, controlPoints } = req.body;
 
@@ -1988,8 +2618,7 @@ app.post('/api/skills/:id/connections', requireSuperAdmin, async (req: Request, 
   }
 });
 
-// Update connection properties (super-admin only)
-app.put('/api/skills/:id/connections/:targetSkillId', requireSuperAdmin, async (req: Request, res: Response) => {
+app.put('/api/skills/:id/connections/:targetSkillId', requireConstellationSkillEditor, async (req: Request, res: Response) => {
   try {
     const { id, targetSkillId } = req.params;
     const { hasArrowhead, breakPoints, connectionType, curveMode, controlPoints } = req.body;
@@ -2040,8 +2669,7 @@ app.put('/api/skills/:id/connections/:targetSkillId', requireSuperAdmin, async (
   }
 });
 
-// Remove connection from a skill (super-admin only)
-app.delete('/api/skills/:id/connections/:targetSkillId', requireSuperAdmin, async (req: Request, res: Response) => {
+app.delete('/api/skills/:id/connections/:targetSkillId', requireConstellationSkillEditor, async (req: Request, res: Response) => {
   try {
     const { id, targetSkillId } = req.params;
 
@@ -2444,7 +3072,7 @@ app.post('/api/skills/:id/steps/:stepId/complete', requireAuth, async (req: Requ
 
     const completedSteps = updatedUser.completedQuestSteps || [];
     const completeStepIds = new Set(completedSteps.filter(step => step.skillId === skill.id).map(step => step.stepId));
-    const questCompleted = steps.length > 0 && steps.every((step, index) => completeStepIds.has(step.externalId || `step-${index}`));
+    const questCompleted = areQuestStepsComplete(steps, completeStepIds);
     sessionUserCache.delete(req.user!.id);
     res.json({
       success: true,
@@ -2502,10 +3130,13 @@ app.post('/api/skills/:id/approval-request', requireAuth, async (req: Request, r
         .filter(step => step.skillId === skillId)
         .map(step => step.stepId)
     );
-    const allStepsCompleted =
-      steps.every((step, index) => completedStepIds.has(step.externalId || `step-${index}`));
+    const allStepsCompleted = areQuestStepsComplete(steps, completedStepIds);
     if (!allStepsCompleted) {
-      return res.status(400).json({ error: 'Complete every quest step before requesting approval' });
+      return res.status(400).json({
+        error: steps.length === 0
+          ? 'Add at least one quest step before requesting approval'
+          : 'Complete every quest step before requesting approval'
+      });
     }
     const nextQuestCost = skill.nextQuestCost ?? 25;
     if ((user.assetPoints || 0) < nextQuestCost) {

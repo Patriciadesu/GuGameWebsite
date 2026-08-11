@@ -1,5 +1,37 @@
 /* Shop Page Responsive Styles */
 
+.fiction-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.fiction-modal-close {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  background: #fff;
+  color: #26364f;
+  cursor: pointer;
+}
+
+.fiction-modal-close:hover {
+  background: #f3f6fa;
+}
+
+.fiction-modal-close:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
+}
+
 /* Base responsive text sizes */
 .shop-header h1 {
   font-size: clamp(1.8rem, 5vw, 3.5rem) !important;

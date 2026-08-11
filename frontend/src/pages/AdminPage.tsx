@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ArrowLeft, Building2, CheckCircle2, Images, LayoutDashboard, PackagePlus, Settings, ShieldCheck, ShoppingCart, Sparkles, Trash2, Users } from 'lucide-react';
 import axios from '../config/axios';
+import ConstellationAdmin from '../components/ConstellationAdmin';
 import './AdminPage.css';
 
 interface User {
@@ -59,6 +61,14 @@ interface Skill {
   treePosition?: {
     x: number;
     y: number;
+  };
+  constellationMapId?: string;
+  mapNodeRole?: 'topic-gateway' | 'lesson' | 'boss' | 'capstone';
+  nodePreview?: {
+    imageUrl?: string;
+    summary?: string;
+    outcomes: string[];
+    actionLabel: string;
   };
   subQuests?: Array<{ externalId?: string; title: string; description: string; descriptionParts?: Array<{ type: string; content: string }>; type?: string }>;
   isActive: boolean;
@@ -126,7 +136,7 @@ interface ApprovalRequest {
   };
 }
 
-type AdminSection = 'dashboard' | 'guilds' | 'users' | 'skilltree' | 'approvals' | 'images' | 'shop' | 'selection' | 'questselection' | 'preorders' | 'settings';
+type AdminSection = 'dashboard' | 'guilds' | 'users' | 'skilltree' | 'approvals' | 'images' | 'shop' | 'selection' | 'preorders' | 'settings';
 
 interface OfficeCatalogItem {
   _id: string;
@@ -140,17 +150,6 @@ interface OfficeCatalogItem {
     price: number;
     isActive: boolean;
   } | null;
-}
-
-interface OfficeQuestCatalogItem {
-  _id: string;
-  externalId: string;
-  title: string;
-  description: string;
-  type?: string;
-  tags: Array<{ externalId: string; name: string; color?: string }>;
-  subQuestCount: number;
-  imported: boolean;
 }
 
 function AdminPage() {
@@ -184,9 +183,12 @@ function AdminPage() {
 
   // Skill Tree states
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [skillEditorMode] = useState<'constellation' | 'legacy'>('constellation');
+  const [constellationEditorDirty, setConstellationEditorDirty] = useState(false);
   const [showCreateSkill, setShowCreateSkill] = useState(false);
   const [showSkillDetail, setShowSkillDetail] = useState(false);
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
+  const [skillDeleteError, setSkillDeleteError] = useState('');
   const [editingSkill, setEditingSkill] = useState(false);
   const [skillNodeTypeFilter, setSkillNodeTypeFilter] = useState<string>('all'); // Filter by node type
   const [draggingSkill, setDraggingSkill] = useState<string | null>(null);
@@ -292,14 +294,6 @@ function AdminPage() {
   const [officeCatalogCategory, setOfficeCatalogCategory] = useState('all');
   const [officeItemPrices, setOfficeItemPrices] = useState<Record<string, number>>({});
   const [importingOfficeItemId, setImportingOfficeItemId] = useState<string | null>(null);
-  const [officeQuestItems, setOfficeQuestItems] = useState<OfficeQuestCatalogItem[]>([]);
-  const [officeQuestLoading, setOfficeQuestLoading] = useState(false);
-  const [officeQuestSyncing, setOfficeQuestSyncing] = useState(false);
-  const [officeQuestError, setOfficeQuestError] = useState('');
-  const [officeQuestSearch, setOfficeQuestSearch] = useState('');
-  const [officeQuestTag, setOfficeQuestTag] = useState('all');
-  const [officeQuestSyncedAt, setOfficeQuestSyncedAt] = useState<string | null>(null);
-  const [importingOfficeQuestId, setImportingOfficeQuestId] = useState<string | null>(null);
   const [selectedShopItemAnalytics, setSelectedShopItemAnalytics] = useState<{
     itemId: string;
     itemTitle: string;
@@ -372,9 +366,6 @@ function AdminPage() {
     }
     if (activeSection === 'selection' && user) {
       loadOfficeCatalog();
-    }
-    if (activeSection === 'questselection' && user) {
-      loadOfficeQuestCatalog();
     }
     if (activeSection === 'preorders' && user) {
       loadPreorders();
@@ -462,26 +453,10 @@ function AdminPage() {
 
   const loadSkills = async () => {
     try {
-      const response = await axios.get('/api/skills');
+      const response = await axios.get('/api/skills', { params: { includeInactive: true } });
       setSkills(response.data.skills);
     } catch (error) {
       console.error('Error loading skills:', error);
-    }
-  };
-
-  const handleExportQuestJson = async () => {
-    try {
-      const response = await axios.get('/api/admin/quest-tree/json');
-      const blob = new Blob([JSON.stringify(response.data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = 'quest-tree.json';
-      link.click();
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error('Error exporting quest tree:', error);
-      alert('Failed to export quest tree');
     }
   };
 
@@ -652,18 +627,20 @@ function AdminPage() {
   };
 
   const handleDeleteSkill = async (skillId: string) => {
-    if (!confirm('Are you sure you want to delete this quest?')) {
+    const name = selectedSkill?._id === skillId ? selectedSkill.title : 'this quest';
+    if (!confirm(`Delete "${name}"? Its connections, dependent constellation content, and user progress will also be removed. This cannot be undone.`)) {
       return;
     }
 
     try {
-      await axios.delete(`/api/skills/${skillId}`);
-      alert('Quest deleted successfully!');
+      setSkillDeleteError('');
+      await axios.delete(`/api/skills/${skillId}`, { params: { cascade: true } });
       setShowSkillDetail(false);
-      loadSkills();
-    } catch (error) {
+      setSelectedSkill(null);
+      await loadSkills();
+    } catch (error: any) {
       console.error('Error deleting skill:', error);
-      alert('Failed to delete quest');
+      setSkillDeleteError(error.response?.data?.error || error.response?.data?.message || 'Unable to delete this quest. Remove its connections or constellation assignment first.');
     }
   };
 
@@ -703,6 +680,7 @@ function AdminPage() {
   };
 
   const openSkillDetail = (skill: Skill) => {
+    setSkillDeleteError('');
     setSelectedSkill(skill);
     setShowSkillDetail(true);
     setEditingSkill(false);
@@ -1503,65 +1481,6 @@ function AdminPage() {
     }
   };
 
-  const loadOfficeQuestCatalog = async () => {
-    setOfficeQuestLoading(true);
-    setOfficeQuestError('');
-    try {
-      const response = await axios.get('/api/admin/office-quest-catalog');
-      if (response.data.success) {
-        setOfficeQuestItems(response.data.items);
-        setOfficeQuestSyncedAt(response.data.syncedAt);
-        setOfficeQuestTag(current => current !== 'all' && !response.data.items.some((item: OfficeQuestCatalogItem) => item.tags.some(tag => tag.name === current)) ? 'all' : current);
-      }
-    } catch (error: any) {
-      setOfficeQuestError(error.response?.data?.error || 'Unable to load the cached Office quest catalog');
-    } finally {
-      setOfficeQuestLoading(false);
-    }
-  };
-
-  const handleSyncOfficeQuests = async () => {
-    setOfficeQuestSyncing(true);
-    setOfficeQuestError('');
-    try {
-      const response = await axios.post('/api/admin/office-quest-catalog/sync');
-      alert(`${response.data.uniqueCount} unique Office quests synced.`);
-      await loadOfficeQuestCatalog();
-    } catch (error: any) {
-      setOfficeQuestError(error.response?.data?.error || 'Unable to sync the Office quest catalog');
-    } finally {
-      setOfficeQuestSyncing(false);
-    }
-  };
-
-  const handleImportOfficeQuest = async (quest: OfficeQuestCatalogItem) => {
-    setImportingOfficeQuestId(quest.externalId);
-    try {
-      await axios.post(`/api/admin/office-quest-catalog/${quest.externalId}/import`);
-      await Promise.all([loadOfficeQuestCatalog(), loadSkills()]);
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to import Office quest');
-    } finally {
-      setImportingOfficeQuestId(null);
-    }
-  };
-
-  const handleReimportOfficeQuest = async (quest: OfficeQuestCatalogItem) => {
-    if (!confirm(`Re-import ${quest.title}? This replaces its title, description, and steps with the currently synced Office data.`)) {
-      return;
-    }
-
-    setImportingOfficeQuestId(quest.externalId);
-    try {
-      await axios.post(`/api/admin/office-quest-catalog/${quest.externalId}/reimport`);
-      await Promise.all([loadOfficeQuestCatalog(), loadSkills()]);
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to re-import Office quest');
-    } finally {
-      setImportingOfficeQuestId(null);
-    }
-  };
-
   const loadPreorders = async () => {
     try {
       const response = await axios.get('/api/admin/shop/purchases');
@@ -1910,7 +1829,16 @@ function AdminPage() {
   };
 
   const handleBackToMenu = () => {
+    if (constellationEditorDirty && !confirm('Discard unsaved constellation layout changes?')) return;
     navigate('/mainmenu');
+  };
+
+  const requestActiveSection = (section: AdminSection) => {
+    if (section === activeSection) return;
+    if (activeSection === 'skilltree' && constellationEditorDirty &&
+      !confirm('Discard unsaved constellation layout changes?')) return;
+    if (activeSection === 'skilltree') setConstellationEditorDirty(false);
+    setActiveSection(section);
   };
 
   // Filter users based on selected filters
@@ -1954,13 +1882,6 @@ function AdminPage() {
     const matchesCategory = officeCatalogCategory === 'all' || (item.type || 'Other') === officeCatalogCategory;
     return matchesSearch && matchesCategory;
   });
-  const officeQuestTags = Array.from(new Set(officeQuestItems.flatMap(item => item.tags.map(tag => tag.name)))).sort();
-  const filteredOfficeQuestItems = officeQuestItems.filter(item => {
-    const search = officeQuestSearch.trim().toLowerCase();
-    const matchesSearch = !search || item.title.toLowerCase().includes(search) || item.description.toLowerCase().includes(search) || item.type?.toLowerCase().includes(search);
-    return matchesSearch && (officeQuestTag === 'all' || item.tags.some(tag => tag.name === officeQuestTag));
-  });
-
   const updateSubQuest = (index: number, update: Partial<(typeof skillSubQuests)[number]>) => {
     setSkillSubQuests(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...update } : item));
   };
@@ -2132,82 +2053,88 @@ function AdminPage() {
     <div className="admin-container">
       <div className="admin-topbar">
         <h1 className="admin-title">
-          {user?.role === 'super-admin' ? '🔐 Super Admin Panel' : '⚡ Admin Panel'}
+          {user?.role === 'super-admin' ? <ShieldCheck aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
+          {user?.role === 'super-admin' ? 'Super Admin Panel' : 'Admin Panel'}
         </h1>
         <button className="back-to-menu-btn" onClick={handleBackToMenu}>
-          ← Back to Menu
+          <ArrowLeft size={18} aria-hidden="true" /> Back to Menu
         </button>
       </div>
 
       {/* Navigation Bar */}
-      <div className="admin-navbar">
-        <button 
+      <label className="admin-mobile-navigation">
+        <span>Section</span>
+        <select aria-label="Admin section" value={activeSection} onChange={event => requestActiveSection(event.target.value as AdminSection)}>
+          <option value="dashboard">Dashboard</option>
+          <option value="guilds">Guilds</option>
+          <option value="users">Users</option>
+          <option value="skilltree">Constellation Editor</option>
+          <option value="approvals">Approvals</option>
+          {user?.role === 'super-admin' && <option value="images">Images</option>}
+          <option value="shop">Shop</option>
+          <option value="selection">Item Import</option>
+          <option value="settings">Settings</option>
+        </select>
+      </label>
+      <nav className="admin-navbar" aria-label="Admin sections">
+        <button
           className={`nav-tab ${activeSection === 'dashboard' ? 'active' : ''}`}
-          onClick={() => setActiveSection('dashboard')}
+          onClick={() => requestActiveSection('dashboard')}
         >
-          📊 Dashboard
+          <LayoutDashboard aria-hidden="true" /> Dashboard
         </button>
         <button 
           className={`nav-tab ${activeSection === 'guilds' ? 'active' : ''}`}
-          onClick={() => setActiveSection('guilds')}
+          onClick={() => requestActiveSection('guilds')}
         >
-          🏰 Guilds
+          <Building2 aria-hidden="true" /> Guilds
         </button>
         <button 
           className={`nav-tab ${activeSection === 'users' ? 'active' : ''}`}
-          onClick={() => setActiveSection('users')}
+          onClick={() => requestActiveSection('users')}
         >
-          👥 Users
+          <Users aria-hidden="true" /> Users
         </button>
-        {/* Skill Tree - Only visible to super-admin */}
-        {user?.role === 'super-admin' && (
-          <button 
-            className={`nav-tab ${activeSection === 'skilltree' ? 'active' : ''}`}
-            onClick={() => setActiveSection('skilltree')}
-          >
-            🌳 Quest Tree
-          </button>
-        )}
+        <button
+          className={`nav-tab ${activeSection === 'skilltree' ? 'active' : ''}`}
+          onClick={() => requestActiveSection('skilltree')}
+        >
+          <Sparkles aria-hidden="true" /> Constellation Editor
+        </button>
         <button 
           className={`nav-tab ${activeSection === 'approvals' ? 'active' : ''}`}
-          onClick={() => setActiveSection('approvals')}
+          onClick={() => requestActiveSection('approvals')}
         >
-          ✅ Approvals
+          <CheckCircle2 aria-hidden="true" /> Approvals
         </button>
         {/* Image Management - Only visible to super-admin */}
         {user?.role === 'super-admin' && (
           <button 
             className={`nav-tab ${activeSection === 'images' ? 'active' : ''}`}
-            onClick={() => setActiveSection('images')}
+            onClick={() => requestActiveSection('images')}
           >
-            🖼️ Images
+            <Images aria-hidden="true" /> Images
           </button>
         )}
         <button 
           className={`nav-tab ${activeSection === 'shop' ? 'active' : ''}`}
-          onClick={() => setActiveSection('shop')}
+          onClick={() => requestActiveSection('shop')}
         >
-          🛒 Shop
+          <ShoppingCart aria-hidden="true" /> Shop
         </button>
         <button 
           className={`nav-tab ${activeSection === 'selection' ? 'active' : ''}`}
-          onClick={() => setActiveSection('selection')}
+          onClick={() => requestActiveSection('selection')}
         >
-          📦 Item Import
-        </button>
-        <button 
-          className={`nav-tab ${activeSection === 'questselection' ? 'active' : ''}`}
-          onClick={() => setActiveSection('questselection')}
-        >
-          🗺️ Quest Import
+          <PackagePlus aria-hidden="true" /> Item Import
         </button>
         <button 
           className={`nav-tab ${activeSection === 'settings' ? 'active' : ''}`}
-          onClick={() => setActiveSection('settings')}
+          onClick={() => requestActiveSection('settings')}
         >
-          ⚙️ Settings
+          <Settings aria-hidden="true" /> Settings
         </button>
-      </div>
+      </nav>
 
       <div className="admin-content">
         {/* Dashboard Section */}
@@ -2261,7 +2188,7 @@ function AdminPage() {
                 <button 
                   className="view-guild-btn"
                   onClick={() => {
-                    setActiveSection('guilds');
+                    requestActiveSection('guilds');
                     const guild = guilds.find(g => g._id === userGuildInfo._id);
                     if (guild) setSelectedGuild(guild);
                   }}
@@ -2773,28 +2700,15 @@ function AdminPage() {
           </div>
         )}
 
-        {/* Skill Tree Section - Super Admin Only */}
-        {activeSection === 'skilltree' && user?.role === 'super-admin' && (
+        {activeSection === 'skilltree' && (user?.role === 'admin' || user?.role === 'super-admin') && (
           <div className="skilltree-section">
-            <div className="skilltree-header">
-              <h2 className="section-title">Quest Tree Management</h2>
-              <div className="quest-tree-actions">
-                <button className="create-skill-btn secondary" onClick={handleExportQuestJson}>
-                  Export JSON
-                </button>
-                <button className="create-skill-btn secondary" onClick={() => setShowQuestJsonModal(true)}>
-                  Import JSON
-                </button>
-                <button className="create-skill-btn" onClick={() => {
-                  resetSkillForm();
-                  setShowCreateSkill(true);
-                }}>
-                  ➕ Create New Quest
-                </button>
-              </div>
-            </div>
+            <ConstellationAdmin
+              skills={skills}
+              onSkillsChanged={loadSkills}
+              onDirtyChange={setConstellationEditorDirty}
+            />
 
-            <div
+            {skillEditorMode === 'legacy' && <div
               className="skill-tree-container quest-tree-editor"
               onWheel={(event) => event.preventDefault()}
             >
@@ -3119,10 +3033,11 @@ function AdminPage() {
                   )}
                 </g>
               </svg>
-            </div>
+            </div>}
 
-            {/* Skill List */}
-            <div className="skill-list-section">
+            {/* The card list belongs to the legacy editor. Constellation mode owns its
+                canvas, node assignment list, and inspector as one focused workspace. */}
+            {skillEditorMode === 'legacy' && <div className="skill-list-section">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
                 <h3 className="subsection-title">
                   All Quests ({skillNodeTypeFilter === 'all' ? skills.length : skills.filter(skill => {
@@ -3197,7 +3112,7 @@ function AdminPage() {
                   ));
                 })()}
               </div>
-            </div>
+            </div>}
           </div>
         )}
 
@@ -3713,78 +3628,6 @@ function AdminPage() {
               ))}
             </div>
 
-          </div>
-        )}
-
-        {activeSection === 'questselection' && (
-          <div className="shop-section">
-            <div style={{ marginBottom: '24px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap', marginBottom: '16px' }}>
-                <div>
-                  <h2 className="section-title">Office Quest Selection</h2>
-                  <p style={{ color: '#6b7280', fontSize: '14px', marginTop: '4px' }}>
-                    {officeQuestSyncedAt ? `Cached ${new Date(officeQuestSyncedAt).toLocaleString()}` : 'No cached quests yet. Sync to load them.'}
-                  </p>
-                </div>
-                <button
-                  onClick={handleSyncOfficeQuests}
-                  disabled={officeQuestSyncing}
-                  style={{ padding: '9px 14px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '6px', cursor: officeQuestSyncing ? 'wait' : 'pointer', opacity: officeQuestSyncing ? 0.7 : 1 }}
-                >
-                  {officeQuestSyncing ? 'Syncing...' : 'Sync quests'}
-                </button>
-              </div>
-
-              <input
-                value={officeQuestSearch}
-                onChange={(event) => setOfficeQuestSearch(event.target.value)}
-                placeholder="Search cached Office quests"
-                style={{ width: '100%', maxWidth: '420px', padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: '6px', marginBottom: '16px', fontSize: '14px' }}
-              />
-
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '20px' }}>
-                <button
-                  onClick={() => setOfficeQuestTag('all')}
-                  aria-pressed={officeQuestTag === 'all'}
-                  style={{ padding: '7px 12px', border: '1px solid #2563eb', borderRadius: '6px', background: officeQuestTag === 'all' ? '#2563eb' : 'white', color: officeQuestTag === 'all' ? 'white' : '#1d4ed8', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}
-                >
-                  All ({officeQuestItems.length})
-                </button>
-                {officeQuestTags.map(tag => {
-                  const active = officeQuestTag === tag;
-                  const count = officeQuestItems.filter(item => item.tags.some(itemTag => itemTag.name === tag)).length;
-                  return <button key={tag} onClick={() => setOfficeQuestTag(tag)} aria-pressed={active} style={{ padding: '7px 12px', border: '1px solid #d1d5db', borderRadius: '6px', background: active ? '#e0e7ff' : 'white', color: active ? '#3730a3' : '#374151', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>{tag} ({count})</button>;
-                })}
-              </div>
-
-              {officeQuestError && <div style={{ padding: '12px', border: '1px solid #fecaca', background: '#fef2f2', color: '#991b1b', borderRadius: '6px', marginBottom: '16px' }}>{officeQuestError}</div>}
-              {!officeQuestLoading && !officeQuestError && filteredOfficeQuestItems.length === 0 && <p className="placeholder-text">No cached Office quests match this filter.</p>}
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '14px' }}>
-                {filteredOfficeQuestItems.map(quest => (
-                  <div key={quest.externalId} style={{ border: '1px solid #d1d5db', borderRadius: '8px', background: 'white', padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <div>
-                      <div style={{ fontWeight: 700, color: '#1f2937' }}>{quest.title}</div>
-                      <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '3px' }}>{[quest.type, quest.subQuestCount ? `${quest.subQuestCount} subquests` : ''].filter(Boolean).join(' · ')}</div>
-                    </div>
-                    {quest.description && <p style={{ fontSize: '13px', color: '#4b5563', lineHeight: 1.45, margin: 0, whiteSpace: 'pre-line' }}>{quest.description}</p>}
-                    {quest.tags.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>{quest.tags.map(tag => <span key={tag.externalId} style={{ padding: '3px 7px', borderRadius: '999px', background: tag.color || '#e0e7ff', color: '#1f2937', fontSize: '11px', fontWeight: 600 }}>{tag.name}</span>)}</div>}
-                    {quest.imported ? (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', marginTop: 'auto' }}>
-                        <span style={{ color: '#047857', fontWeight: 600, fontSize: '13px' }}>Imported to Quest Tree</span>
-                        <button onClick={() => handleReimportOfficeQuest(quest)} disabled={importingOfficeQuestId === quest.externalId} style={{ padding: '8px 12px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '6px', cursor: importingOfficeQuestId === quest.externalId ? 'wait' : 'pointer', opacity: importingOfficeQuestId === quest.externalId ? 0.7 : 1 }}>
-                          {importingOfficeQuestId === quest.externalId ? 'Re-importing...' : 'Re-import'}
-                        </button>
-                      </div>
-                    ) : (
-                      <button onClick={() => handleImportOfficeQuest(quest)} disabled={importingOfficeQuestId === quest.externalId} style={{ marginTop: 'auto', padding: '8px 12px', background: '#059669', color: 'white', border: 'none', borderRadius: '6px', cursor: importingOfficeQuestId === quest.externalId ? 'wait' : 'pointer', opacity: importingOfficeQuestId === quest.externalId ? 0.7 : 1 }}>
-                        {importingOfficeQuestId === quest.externalId ? 'Importing...' : 'Import to Quest Tree'}
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         )}
 
@@ -5123,6 +4966,7 @@ function AdminPage() {
                     </div>
                   )}
 
+                  {skillDeleteError && <div className="admin-inline-error" role="alert">{skillDeleteError}</div>}
                   <div className="modal-actions">
                     <button className="edit-btn" onClick={() => startEditingSkill(selectedSkill)}>
                       ✏️ Edit
@@ -5131,7 +4975,7 @@ function AdminPage() {
                       ⧉ Duplicate
                     </button>
                     <button className="delete-btn" onClick={() => handleDeleteSkill(selectedSkill._id)}>
-                      🗑️ Delete
+                      <Trash2 size={17} aria-hidden="true" /> Delete
                     </button>
                     <button className="cancel-btn" onClick={() => {
                       setShowSkillDetail(false);

@@ -32,6 +32,8 @@ frontend/.next/
 frontend/out/
 frontend/.svelte-kit/
 frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
 
 # --- Logs & Debug ---
 npm-debug.log*

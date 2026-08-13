@@ -29,7 +29,12 @@ interface RequestResult {
   durationMs: number;
 }
 
-const request = (path: string, headers: Record<string, string> = {}) =>
+const request = (
+  path: string,
+  headers: Record<string, string> = {},
+  method: 'GET' | 'POST' = 'GET',
+  body?: string
+) =>
   new Promise<RequestResult>((resolve, reject) => {
     const startedAt = performance.now();
     const req = transport.request({
@@ -37,9 +42,13 @@ const request = (path: string, headers: Record<string, string> = {}) =>
       hostname: baseUrl.hostname,
       port: baseUrl.port,
       path: `${baseUrl.pathname.replace(/\/$/, '')}${path}`,
-      method: 'GET',
+      method,
       agent,
-      headers: { 'x-forwarded-proto': 'https', ...headers }
+      headers: {
+        'x-forwarded-proto': 'https',
+        ...(body ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } : {}),
+        ...headers
+      }
     }, response => {
       let bytes = 0;
       response.on('data', chunk => {
@@ -55,7 +64,7 @@ const request = (path: string, headers: Record<string, string> = {}) =>
     req.on('error', error => {
       reject(new Error(`${path}: ${error.message}`));
     });
-    req.end();
+    req.end(body);
   });
 
 const percentile = (values: number[], fraction: number) =>
@@ -95,9 +104,9 @@ const run = async () => {
   for (let offset = 0; offset < userCount; offset += 25) {
     const batch = await Promise.all(Array.from(
       { length: Math.min(25, userCount - offset) },
-      (_, index) => request(
-        `/api/auth/test-login?key=${encodeURIComponent(key)}&userId=${encodeURIComponent(`load-user-${offset + index}`)}`
-      )
+      (_, index) => request('/api/auth/test-login', {
+        'x-test-bypass-key': key
+      }, 'POST', JSON.stringify({ userId: `load-user-${offset + index}` }))
     ));
     for (const response of batch) {
       const setCookie = response.headers['set-cookie'];

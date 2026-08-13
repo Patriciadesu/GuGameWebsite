@@ -1,5 +1,5 @@
 import { Types } from 'mongoose';
-import ConstellationMap, { ConstellationScope } from '../models/ConstellationMap';
+import ConstellationMap, { ConstellationScope, ConstellationType } from '../models/ConstellationMap';
 import Skill, { MapNodeRole } from '../models/Skill';
 
 export class ConstellationOperationError extends Error {
@@ -13,9 +13,15 @@ export class ConstellationOperationError extends Error {
 }
 
 export interface ConstellationMapLinkage {
+  constellationType: ConstellationType;
   scope: ConstellationScope;
   parentMapId?: unknown;
   gatewaySkillId?: unknown;
+}
+
+export interface ConstellationHierarchyNode {
+  constellationType: ConstellationType;
+  scope: ConstellationScope;
 }
 
 export interface SkillMapAssignment {
@@ -95,6 +101,24 @@ export const assertRoleAllowedForScope = (
   }
 };
 
+export const assertConstellationHierarchyIntegrity = (
+  parent: ConstellationHierarchyNode,
+  child: ConstellationHierarchyNode
+): void => {
+  if (parent.scope !== 'discipline') {
+    throw new ConstellationOperationError('Topic maps must belong to a discipline map');
+  }
+  if (child.scope !== 'topic') {
+    throw new ConstellationOperationError('Only topic maps can belong to a parent map');
+  }
+  if (parent.constellationType !== child.constellationType) {
+    throw new ConstellationOperationError(
+      'Topic and parent map must use the same constellation type',
+      409
+    );
+  }
+};
+
 export const validateConstellationMapLinkage = async (
   linkage: ConstellationMapLinkage,
   mapId?: string
@@ -117,15 +141,19 @@ export const validateConstellationMapLinkage = async (
   }
 
   const [parentMap, gatewaySkill] = await Promise.all([
-    ConstellationMap.findById(parentMapId).select('_id scope').lean(),
+    ConstellationMap.findById(parentMapId).select('_id scope constellationType').lean(),
     Skill.findById(gatewaySkillId).select('_id constellationMapId mapNodeRole').lean()
   ]);
   if (!parentMap) {
     throw new ConstellationOperationError('Parent constellation map not found', 404);
   }
-  if (parentMap.scope !== 'discipline') {
-    throw new ConstellationOperationError('Topic maps must belong to a discipline map');
-  }
+  assertConstellationHierarchyIntegrity(
+    {
+      scope: parentMap.scope,
+      constellationType: parentMap.constellationType || 'skill'
+    },
+    { scope: linkage.scope, constellationType: linkage.constellationType }
+  );
   if (!gatewaySkill) {
     throw new ConstellationOperationError('Gateway skill not found', 404);
   }

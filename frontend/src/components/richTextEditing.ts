@@ -99,6 +99,10 @@ const applyTextareaEdit = (textarea: HTMLTextAreaElement, edit: MarkdownTextEdit
     textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: edit.replacement }));
   }
 
+  // Keep consecutive shortcuts deterministic. Waiting only for the next frame
+  // lets a fast Shift+Tab read the browser's intermediate selection instead.
+  textarea.focus();
+  textarea.setSelectionRange(edit.selectionStart, edit.selectionEnd);
   window.requestAnimationFrame(() => {
     textarea.focus();
     textarea.setSelectionRange(edit.selectionStart, edit.selectionEnd);

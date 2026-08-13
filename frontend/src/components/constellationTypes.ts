@@ -1,4 +1,5 @@
 export type ConstellationScope = 'discipline' | 'topic';
+export type ConstellationType = 'main' | 'skill';
 export type MapNodeRole = 'topic-gateway' | 'lesson' | 'boss' | 'capstone';
 
 export interface ConstellationTheme {
@@ -23,11 +24,13 @@ export interface ConstellationMap {
   name: string;
   slug: string;
   description: string;
+  constellationType?: ConstellationType;
   scope: ConstellationScope;
   parentMapId?: string;
   gatewaySkillId?: string;
   displayOrder: number;
   isActive: boolean;
+  level: number;
   visualTheme: ConstellationTheme;
   viewport: {
     width: number;
@@ -49,6 +52,7 @@ export interface ConstellationSkill {
   constellationMapId?: string;
   constellationLabel?: string;
   mapNodeRole?: MapNodeRole;
+  topicLevel?: number;
   nodePreview?: {
     imageUrl?: string;
     summary?: string;

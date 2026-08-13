@@ -11,6 +11,7 @@ export interface IUser extends Document {
   refreshToken?: string;
   isAdmin: boolean;
   role: 'user' | 'admin' | 'super-admin';
+  level: number;
   guildId?: string; // Guild membership (MongoDB ObjectId)
   assetPoints: number;
   techTokens: number;
@@ -72,6 +73,12 @@ const UserSchema = new Schema<IUser>(
       enum: ['user', 'admin', 'super-admin'],
       default: 'user'
     },
+    level: {
+      type: Number,
+      default: 1,
+      min: 1,
+      validate: Number.isInteger
+    },
     guildId: {
       type: String,
       default: undefined
@@ -130,6 +137,7 @@ const UserSchema = new Schema<IUser>(
 
 UserSchema.index({ guildId: 1 });
 UserSchema.index({ role: 1 });
+UserSchema.index({ level: 1 });
 UserSchema.index({ nickname: 1 });
 
 export default mongoose.model<IUser>('User', UserSchema);

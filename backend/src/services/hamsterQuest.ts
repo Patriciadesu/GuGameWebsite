@@ -58,11 +58,20 @@ export const getHamsterQuestInventory = async (discordId: string): Promise<Hamst
   }
 };
 
-export const grantHamsterQuestItem = async (discordId: string, itemId: string, quantity = 1) => {
+export const grantHamsterQuestItem = async (
+  discordId: string,
+  itemId: string,
+  quantity = 1,
+  operationId?: string
+) => {
+  const headers = {
+    ...getBotHeaders(),
+    ...(operationId ? { 'Idempotency-Key': operationId } : {})
+  };
   const grant = () => axios.post(
     `${getBaseUrl()}/api/v1/bot/inventory/grant`,
     { discordId, itemId, quantity },
-    { timeout: 15000, headers: getBotHeaders() }
+    { timeout: 15000, headers }
   );
 
   try {

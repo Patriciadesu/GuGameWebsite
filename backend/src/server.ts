@@ -10,6 +10,7 @@ import mongoose from 'mongoose';
 import MongoStore from 'connect-mongo';
 import axios from 'axios';
 import multer from 'multer';
+import crypto from 'crypto';
 import User, { IUser } from './models/User';
 import Guild, { IGuild } from './models/Guild';
 import Skill, { ISkill } from './models/Skill';
@@ -18,6 +19,7 @@ import SkillTreeSettings from './models/SkillTreeSettings';
 import ApprovalRequest from './models/ApprovalRequest';
 import ShopItem from './models/ShopItem';
 import Purchase from './models/Purchase';
+import ExternalPurchaseOperation from './models/ExternalPurchaseOperation';
 import FictionContribution from './models/FictionContribution';
 import FictionWritingLock from './models/FictionWritingLock';
 import OfficeQuestCache from './models/OfficeQuestCache';
@@ -28,14 +30,20 @@ import { AsyncTtlCache, KeyedAsyncTtlCache } from './services/asyncCache';
 import { CachedSessionStore } from './services/cachedSessionStore';
 import { KeyedBatchLoader } from './services/keyedBatchLoader';
 import {
+  completeExternalPurchase,
   PurchaseOperationError,
+  reserveExternalPurchase,
   reserveLocalPurchase,
+  rollbackExternalPurchase,
   rollbackLocalPurchase
 } from './services/purchaseService';
+import { normalizeQuestStepExternalIds } from './services/questStepNormalization';
+import { retireShopItem, ShopItemOperationError } from './services/shopItemService';
 import { areQuestStepsComplete, completeQuestStepOnce, unlockSkillOnce } from './services/progressionService';
 import {
   assertConstellationMapCanBeDeleted,
   assertSkillCanBeDeleted,
+  assertRoleAllowedForScope,
   ConstellationOperationError,
   normalizeConstellationLayout,
   validateConstellationMapContents,
@@ -74,9 +82,11 @@ declare global {
       email?: string;
       isAdmin: boolean;
       role: 'user' | 'admin' | 'super-admin';
+      level: number;
       guildId?: string;
       state?: {
         nickname?: string;
+        level: number;
         assetPoints: number;
         techTokens: number;
         voiceMinutesToday: number;
@@ -107,6 +117,17 @@ const FRONTEND_ORIGIN = (() => {
     return FRONTEND_URL;
   }
 })();
+const isAllowedClientOrigin = (origin: string, requestOrigin?: string) => {
+  let normalizedOrigin: string;
+  try {
+    normalizedOrigin = new URL(origin).origin;
+  } catch {
+    return false;
+  }
+
+  if (normalizedOrigin === FRONTEND_ORIGIN || normalizedOrigin === requestOrigin) return true;
+  return process.env.NODE_ENV !== 'production' && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(normalizedOrigin);
+};
 const ADMIN_GUILD_ID = process.env.ADMIN_GUILD_ID || '';
 const ADMIN_ROLE_IDS = process.env.ADMIN_ROLE_IDS?.split(',') || [];
 const SUPER_ADMIN_ROLE_IDS = process.env.SUPER_ADMIN_ROLE_IDS?.split(',') || [];
@@ -393,12 +414,14 @@ const constellationMapPageCache = new KeyedAsyncTtlCache<{
 }>(30_000, 500);
 const progressionCache = new AsyncTtlCache<ProgressionSnapshot>(10_000);
 const sessionUserCache = new KeyedAsyncTtlCache<Express.User | null>(15_000, 2_000);
+const discordRoleCache = new KeyedAsyncTtlCache<'user' | 'admin' | 'super-admin'>(5 * 60_000, 2_000);
 
 const getActiveSkills = () => activeSkillsCache.get(() =>
   Skill.find({ isActive: true }).sort({ layer: 1, position: 1 }).lean()
 );
 
 interface ConstellationMapPageOptions {
+  constellationType?: 'main' | 'skill';
   scope?: 'discipline' | 'topic';
   parentMapId?: string;
   gatewaySkillId?: string;
@@ -427,6 +450,10 @@ const getConstellationMapPage = (options: ConstellationMapPageOptions) => {
   return constellationMapPageCache.get(cacheKey, async () => {
     const query: any = {
       ...(options.includeInactive ? {} : { isActive: true }),
+      ...(options.constellationType === 'main' ? { constellationType: 'main' } : {}),
+      ...(options.constellationType === 'skill' ? {
+        $and: [{ $or: [{ constellationType: 'skill' }, { constellationType: { $exists: false } }] }]
+      } : {}),
       ...(options.scope ? { scope: options.scope } : {}),
       ...(options.parentMapId ? { parentMapId: options.parentMapId } : {}),
       ...(options.gatewaySkillId ? { gatewaySkillId: options.gatewaySkillId } : {})
@@ -464,6 +491,33 @@ const presentSkillsForUser = (skills: any[], user: { role: string; unlockedSkill
       return { ...skill, contentYouTube: [], contentGoogleDrive: [] };
     }
     return skill;
+  });
+};
+
+const filterSkillsForUserLevel = async (skills: any[], userLevel: number) => {
+  const mapIds = [...new Set(skills.map(skill => skill.constellationMapId?.toString()).filter(Boolean))];
+  if (mapIds.length === 0) return skills;
+  const maps = await ConstellationMap.find({ _id: { $in: mapIds } })
+    .select('_id scope level')
+    .lean();
+  const mapsById = new Map(maps.map(map => [map._id.toString(), map]));
+  const allowedTopicMaps = await ConstellationMap.find({
+    scope: 'topic',
+    isActive: true,
+    level: { $gte: userLevel, $lte: userLevel + 2 }
+  }).select('_id gatewaySkillId level').lean();
+  const topicByGatewayId = new Map(allowedTopicMaps
+    .filter(map => map.gatewaySkillId)
+    .map(map => [map.gatewaySkillId!.toString(), map]));
+  return skills.flatMap(skill => {
+    if (!skill.constellationMapId) return [skill];
+    const map = mapsById.get(skill.constellationMapId.toString());
+    if (!map) return [];
+    if (map.scope === 'discipline') {
+      const topic = topicByGatewayId.get(skill._id.toString());
+      return topic ? [{ ...skill, topicLevel: topic.level || 1 }] : [];
+    }
+    return (map.level || 1) === userLevel ? [skill] : [];
   });
 };
 
@@ -624,15 +678,64 @@ const sendConstellationError = (res: Response, error: unknown, fallbackMessage: 
   return res.status(500).json({ error: fallbackMessage });
 };
 
+const getPlayerEligibleSkill = async (skillId: string, userLevel: number) => {
+  const skill = await Skill.findOne({ _id: skillId, isActive: true });
+  if (!skill?.constellationMapId) return null;
+
+  const map = await ConstellationMap.exists({
+    _id: skill.constellationMapId,
+    constellationType: 'skill',
+    scope: 'topic',
+    isActive: true,
+    level: userLevel
+  });
+  return map ? skill : null;
+};
+
+const assertValidConnectionTargets = async (
+  sourceSkillId: string,
+  sourceMapId: mongoose.Types.ObjectId | undefined,
+  connections: unknown
+) => {
+  if (!Array.isArray(connections)) {
+    throw new ConstellationOperationError('Connections must be an array');
+  }
+  if (!sourceMapId) {
+    throw new ConstellationOperationError('Connected stars must belong to a constellation map', 409);
+  }
+
+  const targetIds = connections.map(connection => String(connection?.targetSkillId || ''));
+  if (targetIds.some(targetId => !mongoose.Types.ObjectId.isValid(targetId))) {
+    throw new ConstellationOperationError('Every connection target must be a valid star ID');
+  }
+  if (targetIds.includes(sourceSkillId)) {
+    throw new ConstellationOperationError('A star cannot connect to itself');
+  }
+  if (new Set(targetIds).size !== targetIds.length) {
+    throw new ConstellationOperationError('A star cannot contain duplicate connections');
+  }
+  if (targetIds.length === 0) return;
+
+  const matchingTargets = await Skill.countDocuments({
+    _id: { $in: targetIds },
+    constellationMapId: sourceMapId
+  });
+  if (matchingTargets !== targetIds.length) {
+    throw new ConstellationOperationError('Connection targets must exist in the same constellation map', 409);
+  }
+};
+
 const mutableConstellationMapFields = [
   'name',
   'slug',
   'description',
+  'constellationType',
   'scope',
   'parentMapId',
   'gatewaySkillId',
   'displayOrder',
   'isActive',
+  'level',
   'visualTheme',
   'viewport',
   'schemaVersion'
@@ -642,6 +745,12 @@ const applyConstellationMapFields = (map: InstanceType<typeof ConstellationMap>,
   for (const field of mutableConstellationMapFields) {
     if (!Object.prototype.hasOwnProperty.call(body, field)) continue;
     map.set(field, body[field] === null ? undefined : body[field]);
+  }
+};
+
+const assertValidLevel = (value: unknown, fieldName = 'level') => {
+  if (!Number.isInteger(value) || Number(value) < 1) {
+    throw new ConstellationOperationError(`${fieldName} must be a positive integer`);
   }
 };
 
@@ -657,9 +766,11 @@ const toSessionUser = (user: any): Express.User => ({
   email: user.email,
   isAdmin: user.isAdmin,
   role: user.role,
+  level: user.level || 1,
   guildId: user.guildId,
   state: {
     nickname: user.nickname,
+    level: user.level || 1,
     assetPoints: user.assetPoints || 0,
     techTokens: user.techTokens || 0,
     voiceMinutesToday: user.voiceMinutesToday || 0,
@@ -698,8 +809,7 @@ console.log(`✅ Admin Guild ID: ${ADMIN_GUILD_ID}`);
 let voiceTracker: VoiceTracker | null = null;
 
 // Helper function to check user's role and get nickname in the admin guild
-async function checkUserRoleAndNickname(accessToken: string, userId: string): Promise<{ role: 'user' | 'admin' | 'super-admin', nickname?: string }> {
-  try {
+async function fetchUserRoleAndNickname(accessToken: string, userId: string): Promise<{ role: 'user' | 'admin' | 'super-admin', nickname?: string }> {
     // Fetch the user's guild member information
     const response = await axios.get(
       `https://discord.com/api/v10/users/@me/guilds/${ADMIN_GUILD_ID}/member`,
@@ -754,6 +864,11 @@ async function checkUserRoleAndNickname(accessToken: string, userId: string): Pr
     // Default to regular user
     console.log(`  👤 Result: USER (no special roles found)`);
     return { role: 'user', nickname };
+}
+
+async function checkUserRoleAndNickname(accessToken: string, userId: string): Promise<{ role: 'user' | 'admin' | 'super-admin', nickname?: string }> {
+  try {
+    return await fetchUserRoleAndNickname(accessToken, userId);
   } catch (error) {
     if (axios.isAxiosError(error)) {
       console.error(`❌ Error checking user roles: ${error.response?.status} - ${error.response?.statusText}`);
@@ -780,10 +895,11 @@ if (!fs.existsSync(uploadsDir)) {
 app.use('/uploads', express.static(uploadsDir));
 
 // CORS configuration
-app.use(cors({
+app.use((req: Request, res: Response, next) => cors({
   origin: (origin, callback) => {
-    const isLocalDevelopmentOrigin = Boolean(origin && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin));
-    if (!origin || origin === FRONTEND_ORIGIN || isLocalDevelopmentOrigin) {
+    const host = req.get('host');
+    const requestOrigin = host ? `${req.protocol}://${host}` : undefined;
+    if (!origin || isAllowedClientOrigin(origin, requestOrigin)) {
       callback(null, true);
       return;
     }
@@ -791,8 +907,8 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Test-Bypass-Key', 'Idempotency-Key']
+})(req, res, next));
 
 // MongoDB connection
 mongoose.connect(MONGODB_URI, MONGODB_DB_NAME ? { dbName: MONGODB_DB_NAME } : undefined)
@@ -838,6 +954,29 @@ app.use(session({
 // Passport initialization
 app.use(passport.initialize());
 app.use(passport.session());
+
+const unsafeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+app.use((req: Request, res: Response, next) => {
+  if (!unsafeMethods.has(req.method) || !req.isAuthenticated()) return next();
+
+  const source = req.get('origin') || req.get('referer');
+  const host = req.get('host');
+  if (!source || !host) {
+    return res.status(403).json({ error: 'Forbidden', message: 'A trusted Origin or Referer is required' });
+  }
+
+  let sourceOrigin: string;
+  try {
+    sourceOrigin = new URL(source).origin;
+  } catch {
+    return res.status(403).json({ error: 'Forbidden', message: 'Invalid Origin or Referer' });
+  }
+  const requestOrigin = `${req.protocol}://${host}`;
+  if (!isAllowedClientOrigin(sourceOrigin, requestOrigin)) {
+    return res.status(403).json({ error: 'Forbidden', message: 'Origin is not allowed' });
+  }
+  next();
+});
 
 // Passport Discord Strategy
 passport.use(new DiscordStrategy({
@@ -902,6 +1041,7 @@ async (accessToken: string, refreshToken: string, profile: any, done: any) => {
 
     const sessionUser = toSessionUser(user);
     sessionUserCache.set(user.discordId, sessionUser);
+    discordRoleCache.set(user.discordId, userRole);
     return done(null, sessionUser);
   } catch (error) {
     return done(error, null);
@@ -918,7 +1058,7 @@ passport.deserializeUser(async (id: string, done) => {
   try {
     const user = await sessionUserCache.get(id, async () => {
       const storedUser = await User.findOne({ discordId: id })
-        .select('discordId username nickname discriminator avatar email isAdmin role guildId assetPoints techTokens voiceMinutesToday totalVoiceMinutes unlockedSkills completedQuestSteps completedQuestRewards hamsterQuestLinkedAt createdAt updatedAt')
+        .select('discordId username nickname discriminator avatar email isAdmin role level guildId assetPoints techTokens voiceMinutesToday totalVoiceMinutes unlockedSkills completedQuestSteps completedQuestRewards hamsterQuestLinkedAt createdAt updatedAt')
         .lean();
       return storedUser ? toSessionUser(storedUser) : null;
     });
@@ -936,27 +1076,69 @@ const requireAuth = (req: Request, res: Response, next: any) => {
   res.status(401).json({ error: 'Unauthorized', message: 'You must be logged in to access this resource' });
 };
 
-const requireAdmin = (req: Request, res: Response, next: any) => {
-  if (req.isAuthenticated() && req.user && (req.user.role === 'admin' || req.user.role === 'super-admin')) {
-    return next();
+const refreshPrivilegedRole = async (req: Request) => {
+  if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'super-admin')) return req.user?.role || 'user';
+  const storedUser = await User.findOne({ discordId: req.user.id }).select('accessToken role').lean();
+  if (!storedUser?.accessToken) {
+    if (process.env.NODE_ENV !== 'production') return req.user.role;
+    throw new Error('Discord access token is unavailable for role verification');
   }
-  res.status(403).json({ error: 'Forbidden', message: 'Admin access required' });
+
+  const role = await discordRoleCache.get(req.user.id, async () =>
+    (await fetchUserRoleAndNickname(storedUser.accessToken!, req.user!.id)).role
+  );
+  if (storedUser.role !== role) {
+    await User.updateOne(
+      { discordId: req.user.id },
+      { $set: { role, isAdmin: role === 'admin' || role === 'super-admin' } }
+    );
+    sessionUserCache.delete(req.user.id);
+  }
+  req.user.role = role;
+  req.user.isAdmin = role === 'admin' || role === 'super-admin';
+  return role;
 };
 
-const requireSuperAdmin = (req: Request, res: Response, next: any) => {
-  if (req.isAuthenticated() && req.user && req.user.role === 'super-admin') {
-    return next();
+const requireAdmin = async (req: Request, res: Response, next: any) => {
+  if (!req.isAuthenticated() || !req.user) {
+    return res.status(403).json({ error: 'Forbidden', message: 'Admin access required' });
   }
-  res.status(403).json({ error: 'Forbidden', message: 'Super-admin access required' });
+  try {
+    const role = await refreshPrivilegedRole(req);
+    if (role === 'admin' || role === 'super-admin') return next();
+    return res.status(403).json({ error: 'Forbidden', message: 'Admin access required' });
+  } catch (error) {
+    console.error('Unable to refresh Discord admin role:', error);
+    return res.status(503).json({ error: 'Role verification unavailable', message: 'Try again shortly' });
+  }
+};
+
+const requireSuperAdmin = async (req: Request, res: Response, next: any) => {
+  if (!req.isAuthenticated() || !req.user) {
+    return res.status(403).json({ error: 'Forbidden', message: 'Super-admin access required' });
+  }
+  try {
+    const role = await refreshPrivilegedRole(req);
+    return role === 'super-admin'
+      ? next()
+      : res.status(403).json({ error: 'Forbidden', message: 'Super-admin access required' });
+  } catch (error) {
+    console.error('Unable to refresh Discord super-admin role:', error);
+    return res.status(503).json({ error: 'Role verification unavailable', message: 'Try again shortly' });
+  }
 };
 
 const requireConstellationSkillEditor = async (req: Request, res: Response, next: any) => {
   if (!req.isAuthenticated() || !req.user || (req.user.role !== 'admin' && req.user.role !== 'super-admin')) {
     return res.status(403).json({ error: 'Forbidden', message: 'Admin access required' });
   }
-  if (req.user.role === 'super-admin') return next();
 
   try {
+    const refreshedRole = await refreshPrivilegedRole(req);
+    if (refreshedRole !== 'admin' && refreshedRole !== 'super-admin') {
+      return res.status(403).json({ error: 'Forbidden', message: 'Admin access required' });
+    }
+    if (refreshedRole === 'super-admin') return next();
     const skillId = req.params.id;
     if (!skillId) {
       const constellationMapId = String(req.body.constellationMapId || '');
@@ -1015,6 +1197,7 @@ const presentMainMenuUser = (user: Express.User, assetPointName: string) => ({
   avatar: user.avatar,
   email: user.email,
   role: user.role,
+  level: user.state?.level || 1,
   guildId: user.guildId,
   assetPoints: user.state?.assetPoints || 0,
   assetPointName,
@@ -1054,10 +1237,13 @@ const loadMainMenuState = async (user: Express.User, includeInitialData: boolean
   };
 
   if (!includeInitialData) return commonState;
-  const [skills, inventoryItems] = await Promise.all([
+  const [allSkills, inventoryItems] = await Promise.all([
     getActiveSkills(),
     presentUserInventory(user.id, false)
   ]);
+  const skills = user.role === 'admin' || user.role === 'super-admin'
+    ? allSkills
+    : await filterSkillsForUserLevel(allSkills, user.state.level || 1);
   return {
     ...commonState,
     skills: presentSkillsForUser(skills, {
@@ -1095,39 +1281,47 @@ app.get('/api/mainmenu/status', requireAuth, async (req: Request, res: Response)
   }
 });
 
-// Test-only entrypoint. The secret is server-side only and establishes a normal Passport session.
-app.get('/api/auth/test-login', async (req: Request, res: Response) => {
-  const remoteAddress = req.socket.remoteAddress || '';
-  const isLoopbackDevelopmentRequest = process.env.NODE_ENV !== 'production' &&
-    /^(::1|127\.0\.0\.1|::ffff:127\.0\.0\.1)$/.test(remoteAddress);
-  const hasValidTestKey = Boolean(TEST_BYPASS_KEY && req.query.key === TEST_BYPASS_KEY);
-  if (!hasValidTestKey && !isLoopbackDevelopmentRequest) {
-    return res.status(404).end();
-  }
-
-  try {
-    const requestedUserId = typeof req.query.userId === 'string' ? req.query.userId.trim() : '';
-    const testUser = requestedUserId
-      ? await User.findOne({ discordId: requestedUserId })
-      : await User.findOne({ role: 'super-admin' }) || await User.findOne({ role: 'admin' });
-    if (!testUser) {
-      return res.status(503).json({ error: 'No admin account is available for test login' });
+if (process.env.NODE_ENV !== 'production') {
+  // Test-only entrypoint. Production never registers this route.
+  app.post('/api/auth/test-login', async (req: Request, res: Response) => {
+    const remoteAddress = req.socket.remoteAddress || '';
+    const isLoopbackRequest = /^(::1|127\.0\.0\.1|::ffff:127\.0\.0\.1)$/.test(remoteAddress);
+    const suppliedKey = req.get('x-test-bypass-key') || '';
+    const suppliedKeyBuffer = Buffer.from(suppliedKey);
+    const expectedKeyBuffer = Buffer.from(TEST_BYPASS_KEY);
+    const hasValidTestKey = Boolean(
+      TEST_BYPASS_KEY &&
+      suppliedKeyBuffer.length === expectedKeyBuffer.length &&
+      crypto.timingSafeEqual(suppliedKeyBuffer, expectedKeyBuffer)
+    );
+    if (!hasValidTestKey && !isLoopbackRequest) {
+      return res.status(404).end();
     }
 
-    const sessionUser = toSessionUser(testUser);
-    sessionUserCache.set(testUser.discordId, sessionUser);
-    req.login(sessionUser, (error) => {
-      if (error) {
-        console.error('Test login failed:', error);
-        return res.status(500).json({ error: 'Failed to create test session' });
+    try {
+      const requestedUserId = typeof req.body?.userId === 'string' ? req.body.userId.trim() : '';
+      const testUser = requestedUserId
+        ? await User.findOne({ discordId: requestedUserId })
+        : await User.findOne({ role: 'super-admin' }) || await User.findOne({ role: 'admin' });
+      if (!testUser) {
+        return res.status(503).json({ error: 'No admin account is available for test login' });
       }
-      res.redirect(`${FRONTEND_URL}/admin`);
-    });
-  } catch (error) {
-    console.error('Error creating test login:', error);
-    res.status(500).json({ error: 'Failed to create test session' });
-  }
-});
+
+      const sessionUser = toSessionUser(testUser);
+      sessionUserCache.set(testUser.discordId, sessionUser);
+      req.login(sessionUser, (error) => {
+        if (error) {
+          console.error('Test login failed:', error);
+          return res.status(500).json({ error: 'Failed to create test session' });
+        }
+        res.redirect(`${FRONTEND_URL}/admin`);
+      });
+    } catch (error) {
+      console.error('Error creating test login:', error);
+      res.status(500).json({ error: 'Failed to create test session' });
+    }
+  });
+}
 
 // Logout route
 app.post('/api/auth/logout', (req: Request, res: Response) => {
@@ -1484,6 +1678,7 @@ app.get('/api/users/:userId', requireAuth, async (req: Request, res: Response) =
         avatar: targetUser.avatar,
         email: targetUser.email,
         role: targetUser.role,
+        level: targetUser.level || 1,
         guildId: targetUser.guildId,
         assetPoints: targetUser.assetPoints || 0,
         assetPointName: assetPointName, // Include custom asset point name
@@ -1515,6 +1710,7 @@ app.get('/api/users', requireAdmin, async (req: Request, res: Response) => {
       avatar: user.avatar,
       email: user.email,
       role: user.role,
+      level: user.level || 1,
       guildId: user.guildId,
       assetPoints: user.assetPoints,
       techTokens: user.techTokens,
@@ -1624,6 +1820,20 @@ app.post('/api/users/:userId/asset-points', requireAdmin, async (req: Request, r
   }
 });
 
+app.patch('/api/users/:userId/level', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    assertValidLevel(req.body?.level, 'User level');
+    const user = await User.findOne({ discordId: req.params.userId });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    user.level = req.body.level;
+    await user.save();
+    sessionUserCache.delete(user.discordId);
+    res.json({ success: true, user: { discordId: user.discordId, level: user.level } });
+  } catch (error) {
+    sendConstellationError(res, error, 'Failed to update user level');
+  }
+});
+
 // ==================== SKILL MANAGEMENT API ====================
 
 const presentOfficeQuestCatalog = async () => {
@@ -1640,9 +1850,12 @@ const normalizeDescriptionParts = (value: unknown): Array<{ type: string; conten
     .map((part: any) => ({ type: typeof part.type === 'string' ? part.type.slice(0, 40) : 'Text', content: part.content.trim().slice(0, 100000) }))
   : [];
 
-const normalizeSubQuests = (value: unknown): Array<{ externalId?: string; title: string; description: string; descriptionParts?: Array<{ type: string; content: string }>; type?: string }> => {
+const normalizeSubQuests = (
+  value: unknown,
+  persistedSteps: Array<{ externalId?: string }> = []
+): Array<{ externalId: string; title: string; description: string; descriptionParts?: Array<{ type: string; content: string }>; type?: string }> => {
   if (!Array.isArray(value)) return [];
-  return value
+  const steps = value
     .filter((subQuest: any) => subQuest && typeof subQuest.title === 'string' && subQuest.title.trim())
     .slice(0, 100)
     .map((subQuest: any) => ({
@@ -1652,6 +1865,7 @@ const normalizeSubQuests = (value: unknown): Array<{ externalId?: string; title:
       descriptionParts: normalizeDescriptionParts(subQuest.descriptionParts),
       type: typeof subQuest.type === 'string' ? subQuest.type.slice(0, 80) : undefined
     }));
+  return normalizeQuestStepExternalIds(steps, persistedSteps);
 };
 
 const validControlPoints = (value: unknown): value is Array<{ x: number; y: number }> =>
@@ -2116,12 +2330,16 @@ app.post('/api/admin/quest-tree/import', requireSuperAdmin, async (req: Request,
 app.get('/api/constellation-maps', requireAuth, async (req: Request, res: Response) => {
   try {
     const scope = typeof req.query.scope === 'string' ? req.query.scope : undefined;
+    const constellationType = typeof req.query.constellationType === 'string' ? req.query.constellationType : undefined;
     const parentMapId = typeof req.query.parentMapId === 'string' ? req.query.parentMapId : undefined;
     const gatewaySkillId = typeof req.query.gatewaySkillId === 'string' ? req.query.gatewaySkillId : undefined;
     const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
     const requestedLimit = req.query.limit === undefined ? 50 : Number(req.query.limit);
     if (scope && scope !== 'discipline' && scope !== 'topic') {
       return res.status(400).json({ error: 'scope must be discipline or topic' });
+    }
+    if (constellationType && constellationType !== 'main' && constellationType !== 'skill') {
+      return res.status(400).json({ error: 'constellationType must be main or skill' });
     }
     if (parentMapId && !mongoose.Types.ObjectId.isValid(parentMapId)) {
       return res.status(400).json({ error: 'parentMapId must be a valid ID' });
@@ -2136,6 +2354,7 @@ app.get('/api/constellation-maps', requireAuth, async (req: Request, res: Respon
     const isAdmin = req.user!.role === 'admin' || req.user!.role === 'super-admin';
     const includeInactive = isAdmin && req.query.includeInactive === 'true';
     const page = await getConstellationMapPage({
+      constellationType: constellationType as 'main' | 'skill' | undefined,
       scope: scope as 'discipline' | 'topic' | undefined,
       parentMapId,
       gatewaySkillId,
@@ -2144,9 +2363,15 @@ app.get('/api/constellation-maps', requireAuth, async (req: Request, res: Respon
       cursor
     });
 
+    const visibleMaps = isAdmin
+      ? page.maps
+      : page.maps.filter(map => map.scope === 'discipline' || (
+        (map.level || 1) >= (req.user!.state?.level || 1) &&
+        (map.level || 1) <= (req.user!.state?.level || 1) + 2
+      ));
     res.json({
       success: true,
-      maps: page.maps,
+      maps: visibleMaps,
       pagination: { limit: requestedLimit, nextCursor: page.nextCursor }
     });
   } catch (error) {
@@ -2163,7 +2388,10 @@ app.get('/api/constellation-maps/:id', requireAuth, async (req: Request, res: Re
     const isAdmin = req.user!.role === 'admin' || req.user!.role === 'super-admin';
     const map = await ConstellationMap.findOne({
       _id: req.params.id,
-      ...(isAdmin ? {} : { isActive: true })
+      ...(isAdmin ? {} : {
+        isActive: true,
+        $or: [{ scope: 'discipline' }, { scope: 'topic', level: req.user!.state?.level || 1 }]
+      })
     }).lean();
     if (!map) return res.status(404).json({ error: 'Constellation map not found' });
 
@@ -2171,10 +2399,29 @@ app.get('/api/constellation-maps/:id', requireAuth, async (req: Request, res: Re
       constellationMapId: map._id,
       ...(isAdmin ? {} : { isActive: true })
     }).sort({ layer: 1, position: 1 }).lean();
+    let visibleSkills = skills;
+    if (!isAdmin && map.scope === 'discipline') {
+      const visibleTopicMaps = await ConstellationMap.find({
+        parentMapId: map._id,
+        scope: 'topic',
+        isActive: true,
+        level: {
+          $gte: req.user!.state?.level || 1,
+          $lte: (req.user!.state?.level || 1) + 2
+        }
+      }).select('gatewaySkillId level').lean();
+      const topicByGatewayId = new Map(visibleTopicMaps
+        .filter(topic => topic.gatewaySkillId)
+        .map(topic => [topic.gatewaySkillId!.toString(), topic]));
+      visibleSkills = skills.flatMap(skill => {
+        const topic = topicByGatewayId.get(skill._id.toString());
+        return topic ? [{ ...skill, topicLevel: topic.level || 1 }] : [];
+      });
+    }
     res.json({
       success: true,
       map,
-      skills: presentSkillsForUser(skills, {
+      skills: presentSkillsForUser(visibleSkills, {
         role: req.user!.role,
         unlockedSkills: req.user!.state?.unlockedSkills
       })
@@ -2189,8 +2436,11 @@ app.post('/api/constellation-maps', requireAdmin, async (req: Request, res: Resp
   try {
     const map = new ConstellationMap();
     applyConstellationMapFields(map, req.body);
+    if (map.scope === 'topic') assertValidLevel(map.level || 1, 'Topic level');
+    else map.level = 1;
     if (!Object.prototype.hasOwnProperty.call(req.body, 'isActive')) map.isActive = false;
     await validateConstellationMapLinkage({
+      constellationType: map.constellationType,
       scope: map.scope,
       parentMapId: map.parentMapId,
       gatewaySkillId: map.gatewaySkillId
@@ -2212,8 +2462,11 @@ app.patch('/api/constellation-maps/:id', requireAdmin, async (req: Request, res:
     if (!map) return res.status(404).json({ error: 'Constellation map not found' });
 
     applyConstellationMapFields(map, req.body);
+    if (map.scope === 'topic') assertValidLevel(map.level || 1, 'Topic level');
+    else map.level = 1;
     await validateConstellationMapContents(map._id.toString(), map.scope);
     await validateConstellationMapLinkage({
+      constellationType: map.constellationType,
       scope: map.scope,
       parentMapId: map.parentMapId,
       gatewaySkillId: map.gatewaySkillId
@@ -2296,9 +2549,12 @@ app.get('/api/skills', requireAuth, async (req: Request, res: Response) => {
     if (!req.user!.state) return res.status(404).json({ error: 'User not found' });
     const isAdmin = req.user!.role === 'admin' || req.user!.role === 'super-admin';
     const includeInactive = isAdmin && req.query.includeInactive === 'true';
-    const skills = includeInactive
+    const allSkills = includeInactive
       ? await Skill.find({}).sort({ layer: 1, position: 1 }).lean()
       : await getActiveSkills();
+    const skills = isAdmin
+      ? allSkills
+      : await filterSkillsForUserLevel(allSkills, req.user!.state.level || 1);
     
     res.json({
       success: true,
@@ -2326,6 +2582,10 @@ app.get('/api/skills/:id', requireAuth, async (req: Request, res: Response) => {
     
     const unlockedSkills = req.user!.state?.unlockedSkills || [];
     const isAdmin = req.user!.role === 'admin' || req.user!.role === 'super-admin';
+    if (!isAdmin) {
+      const visibleSkills = await filterSkillsForUserLevel([skill.toObject()], req.user!.state?.level || 1);
+      if (visibleSkills.length === 0) return res.status(404).json({ error: 'Skill not found' });
+    }
     const isUnlocked = unlockedSkills.includes(skill._id.toString());
     
     // For asset nodes, hide content links until unlocked (unless admin)
@@ -2486,7 +2746,9 @@ app.put('/api/skills/:id', requireConstellationSkillEditor, async (req: Request,
     if (isAdvancedLocked !== undefined) skill.isAdvancedLocked = isAdvancedLocked === true;
     if (nodeColor !== undefined) skill.nodeColor = nodeColor;
     if (connections !== undefined) skill.connections = connections;
-    if (subQuests !== undefined) skill.subQuests = normalizeSubQuests(subQuests);
+    if (subQuests !== undefined) {
+      skill.subQuests = normalizeSubQuests(subQuests, skill.subQuests || []);
+    }
     if (minAP !== undefined) skill.minAP = minAP !== null && minAP !== '' ? minAP : undefined;
     if (maxAP !== undefined) skill.maxAP = maxAP !== null && maxAP !== '' ? maxAP : undefined;
 
@@ -2504,6 +2766,13 @@ app.put('/api/skills/:id', requireConstellationSkillEditor, async (req: Request,
       constellationMapId: skill.constellationMapId,
       mapNodeRole: skill.mapNodeRole
     });
+    if (connections !== undefined || constellationMapId !== undefined) {
+      await assertValidConnectionTargets(
+        skill._id.toString(),
+        skill.constellationMapId,
+        skill.connections || []
+      );
+    }
     await skill.save();
     invalidateSkillCaches();
     
@@ -2518,6 +2787,61 @@ app.put('/api/skills/:id', requireConstellationSkillEditor, async (req: Request,
     res.json({ success: true, skill: updatedSkill });
   } catch (error) {
     sendConstellationError(res, error, 'Failed to update skill');
+  }
+});
+
+app.patch('/api/constellation-maps/:id/skills/batch', requireConstellationSkillEditor, async (req: Request, res: Response) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid constellation map ID' });
+    }
+    const skillIds: string[] = Array.isArray(req.body?.skillIds) ? [...new Set<string>(req.body.skillIds.map(String))] : [];
+    if (skillIds.length < 1 || skillIds.length > 500 || skillIds.some(id => !mongoose.Types.ObjectId.isValid(id))) {
+      return res.status(400).json({ error: 'skillIds must contain between 1 and 500 valid IDs' });
+    }
+    const changes = req.body?.changes;
+    if (!changes || typeof changes !== 'object' || Array.isArray(changes)) {
+      return res.status(400).json({ error: 'changes must be an object' });
+    }
+    const allowedFields = new Set(['constellationLabel', 'mapNodeRole', 'isActive', 'isAdvancedLocked']);
+    const requestedFields = Object.keys(changes);
+    if (requestedFields.length !== 1 || !allowedFields.has(requestedFields[0])) {
+      return res.status(400).json({ error: 'Batch updates must change exactly one supported field' });
+    }
+
+    const map = await ConstellationMap.findById(req.params.id).select('_id scope').lean();
+    if (!map) return res.status(404).json({ error: 'Constellation map not found' });
+    const matchingCount = await Skill.countDocuments({
+      _id: { $in: skillIds },
+      constellationMapId: map._id
+    });
+    if (matchingCount !== skillIds.length) {
+      throw new ConstellationOperationError('Every selected star must belong to this constellation map', 409);
+    }
+
+    const field = requestedFields[0];
+    let value = changes[field];
+    if (field === 'mapNodeRole') {
+      if (!['topic-gateway', 'lesson', 'boss', 'capstone'].includes(value)) {
+        throw new ConstellationOperationError('Invalid star type');
+      }
+      assertRoleAllowedForScope(map.scope, value);
+    } else if (field === 'constellationLabel') {
+      if (typeof value !== 'string' || value.length > 80) {
+        throw new ConstellationOperationError('Star label must be at most 80 characters');
+      }
+      value = value.trim() || undefined;
+    } else if (typeof value !== 'boolean') {
+      throw new ConstellationOperationError(`${field} must be a boolean`);
+    }
+
+    const update = value === undefined ? { $unset: { [field]: 1 } } : { $set: { [field]: value } };
+    await Skill.updateMany({ _id: { $in: skillIds }, constellationMapId: map._id }, update);
+    invalidateSkillCaches();
+    const updatedSkills = await Skill.find({ _id: { $in: skillIds } }).lean();
+    res.json({ success: true, updatedCount: updatedSkills.length, skills: updatedSkills });
+  } catch (error) {
+    sendConstellationError(res, error, 'Failed to update selected stars');
   }
 });
 
@@ -2582,6 +2906,7 @@ app.post('/api/skills/:id/connections', requireConstellationSkillEditor, async (
     if (!skill) {
       return res.status(404).json({ error: 'Skill not found' });
     }
+    await assertValidConnectionTargets(skill.id, skill.constellationMapId, [{ targetSkillId }]);
 
     // Initialize connections array if undefined
     if (!skill.connections) {
@@ -2613,8 +2938,7 @@ app.post('/api/skills/:id/connections', requireConstellationSkillEditor, async (
     invalidateSkillCaches();
     res.json({ success: true, skill });
   } catch (error) {
-    console.error('Error adding connection:', error);
-    res.status(500).json({ error: 'Failed to add connection' });
+    sendConstellationError(res, error, 'Failed to add connection');
   }
 });
 
@@ -2630,6 +2954,7 @@ app.put('/api/skills/:id/connections/:targetSkillId', requireConstellationSkillE
     if (!skill) {
       return res.status(404).json({ error: 'Skill not found' });
     }
+    await assertValidConnectionTargets(skill.id, skill.constellationMapId, [{ targetSkillId }]);
 
     // Initialize connections array if undefined
     if (!skill.connections) {
@@ -2664,8 +2989,7 @@ app.put('/api/skills/:id/connections/:targetSkillId', requireConstellationSkillE
     invalidateSkillCaches();
     res.json({ success: true, skill });
   } catch (error) {
-    console.error('Error updating connection:', error);
-    res.status(500).json({ error: 'Failed to update connection' });
+    sendConstellationError(res, error, 'Failed to update connection');
   }
 });
 
@@ -2900,7 +3224,7 @@ app.post('/api/skills/:id/unlock', requireAuth, async (req: Request, res: Respon
     }
     // Get user and skill
     const user = await User.findOne({ discordId: userId });
-    const skill = await Skill.findById(skillId);
+    const skill = await getPlayerEligibleSkill(skillId, user?.level || 1);
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -3043,12 +3367,10 @@ app.post('/api/skills/:id/steps/:stepId/complete', requireAuth, async (req: Requ
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: 'Invalid quest ID' });
     }
-    const [user, skill] = await Promise.all([
-      User.findOne({ discordId: req.user!.id }),
-      Skill.findById(req.params.id)
-    ]);
+    const user = await User.findOne({ discordId: req.user!.id });
     if (!user) return res.status(404).json({ error: 'User not found' });
-    if (!skill || !skill.isActive) return res.status(404).json({ error: 'Quest not found' });
+    const skill = await getPlayerEligibleSkill(req.params.id, user.level || 1);
+    if (!skill) return res.status(404).json({ error: 'Quest not found' });
 
     const missingPrerequisites = await getMissingQuestPrerequisites(skill, user.unlockedSkills || []);
     if (missingPrerequisites.length > 0) {
@@ -3102,7 +3424,7 @@ app.post('/api/skills/:id/approval-request', requireAuth, async (req: Request, r
     }
     // Get user and skill
     const user = await User.findOne({ discordId: userId });
-    const skill = await Skill.findById(skillId);
+    const skill = await getPlayerEligibleSkill(skillId, user?.level || 1);
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -3277,6 +3599,20 @@ app.post('/api/approval-requests/:id/approve', requireAdmin, async (req: Request
     }
     if (!mongoose.Types.ObjectId.isValid(requestId)) {
       return res.status(400).json({ error: 'Invalid approval request ID' });
+    }
+
+    const approvalRequest = await ApprovalRequest.findById(requestId).select('userId skillId status').lean();
+    if (!approvalRequest) return res.status(404).json({ error: 'Approval request not found' });
+    if (approvalRequest.status !== 'pending') {
+      return res.status(409).json({ error: 'This request has already been processed' });
+    }
+    const targetUser = await User.findOne({ discordId: approvalRequest.userId }).select('level').lean();
+    if (!targetUser) return res.status(404).json({ error: 'User not found' });
+    const eligibleSkill = mongoose.Types.ObjectId.isValid(approvalRequest.skillId)
+      ? await getPlayerEligibleSkill(approvalRequest.skillId, targetUser.level || 1)
+      : null;
+    if (!eligibleSkill) {
+      return res.status(409).json({ error: 'Quest is no longer active or eligible for this user' });
     }
 
     let approvalResult;
@@ -3835,19 +4171,19 @@ app.put('/api/admin/shop/items/:id', requireAdmin, async (req: Request, res: Res
   }
 });
 
-// Delete shop item (admin only)
+// Retire shop item while preserving purchase and fiction history (admin only)
 app.delete('/api/admin/shop/items/:id', requireAdmin, async (req: Request, res: Response) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: 'Invalid item ID' });
     }
-    const shopItem = await ShopItem.findByIdAndDelete(req.params.id);
-    if (!shopItem) {
-      return res.status(404).json({ error: 'Shop item not found' });
-    }
+    const shopItem = await retireShopItem(req.params.id);
     invalidateInventoryItemCache();
-    res.json({ success: true, message: 'Shop item deleted successfully' });
+    res.json({ success: true, item: shopItem, message: 'Shop item retired successfully' });
   } catch (error: any) {
+    if (error instanceof ShopItemOperationError) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
     console.error('Error deleting shop item:', error);
     res.status(500).json({ error: error.message || 'Failed to delete shop item' });
   }
@@ -4114,6 +4450,44 @@ app.get('/api/admin/shop/purchases', requireAdmin, async (req: Request, res: Res
   }
 });
 
+app.get('/api/admin/shop/purchase-operations/pending', requireSuperAdmin, async (_req: Request, res: Response) => {
+  try {
+    const operations = await ExternalPurchaseOperation.find({ status: 'reserved' })
+      .sort({ updatedAt: 1 })
+      .limit(200)
+      .lean();
+    res.json({ success: true, operations });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to load pending purchase operations' });
+  }
+});
+
+app.post('/api/admin/shop/purchase-operations/:operationId/resolve', requireSuperAdmin, async (req: Request, res: Response) => {
+  try {
+    const operationId = req.params.operationId.trim();
+    const action = req.body?.action;
+    if (!operationId || !['complete', 'refund'].includes(action)) {
+      return res.status(400).json({ error: 'Provide an operation ID and action complete or refund' });
+    }
+
+    if (action === 'complete') {
+      const operation = await completeExternalPurchase(operationId);
+      if (!operation) return res.status(404).json({ error: 'Purchase operation not found' });
+      return res.json({ success: true, operation });
+    }
+
+    const operation = await ExternalPurchaseOperation.findOne({ operationId }).lean();
+    if (!operation) return res.status(404).json({ error: 'Purchase operation not found' });
+    if (operation.status === 'completed') {
+      return res.status(409).json({ error: 'A completed purchase cannot be refunded through reconciliation' });
+    }
+    const refunded = await rollbackExternalPurchase(operationId);
+    return res.json({ success: true, refunded });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to resolve purchase operation' });
+  }
+});
+
 // Get purchases for a specific shop item (admin only)
 app.get('/api/admin/shop/items/:id/purchases', requireAdmin, async (req: Request, res: Response) => {
   try {
@@ -4193,8 +4567,47 @@ app.post('/api/shop/items/:id/purchase', requireAuth, async (req: Request, res: 
       isExternalInventoryItem
     };
     let purchaseResult;
+    let externalOperationId: string | null = null;
     try {
-      purchaseResult = await reserveLocalPurchase(purchaseInput);
+      if (isExternalInventoryItem && shopItem.externalItemId) {
+        const suppliedOperationId = req.get('idempotency-key')?.trim();
+        if (!suppliedOperationId || suppliedOperationId.length > 128) {
+          return res.status(400).json({
+            error: 'External inventory purchases require a valid Idempotency-Key header',
+            code: 'IDEMPOTENCY_KEY_REQUIRED'
+          });
+        }
+        externalOperationId = suppliedOperationId;
+        purchaseResult = await reserveExternalPurchase({
+          operationId: suppliedOperationId,
+          userId,
+          itemId,
+          externalItemId: shopItem.externalItemId,
+          price: shopItem.price
+        });
+        if (purchaseResult.replayed) {
+          if (purchaseResult.status === 'completed') {
+            return res.json({
+              success: true,
+              replayed: true,
+              message: `Successfully purchased "${displayTitle}"!`,
+              remainingAP: purchaseResult.remainingAP,
+              itemType: shopItem.itemType,
+              productData: shopItem.itemType === 'normal' ? shopItem.productData || null : null,
+              externalItem,
+              inventoryQuantity: purchaseResult.quantity
+            });
+          }
+          return res.status(202).json({
+            success: false,
+            pending: true,
+            code: 'PURCHASE_RECONCILIATION_PENDING',
+            message: 'This purchase is being reconciled. You have not been charged again.'
+          });
+        }
+      } else {
+        purchaseResult = await reserveLocalPurchase(purchaseInput);
+      }
     } catch (error) {
       if (error instanceof PurchaseOperationError) {
         return res.status(error.status).json({ error: error.message, code: error.code });
@@ -4204,11 +4617,23 @@ app.post('/api/shop/items/:id/purchase', requireAuth, async (req: Request, res: 
 
     if (isExternalInventoryItem && shopItem.externalItemId) {
       try {
-        await grantHamsterQuestItem(userId, shopItem.externalItemId, 1);
+        await grantHamsterQuestItem(userId, shopItem.externalItemId, 1, externalOperationId || undefined);
+        await completeExternalPurchase(externalOperationId!);
       } catch (error) {
-        await rollbackLocalPurchase(purchaseInput);
-        return res.status(502).json({
-          error: `HamsterQuest could not receive this item: ${getHamsterQuestErrorMessage(error)}`
+        const definiteRejection = axios.isAxiosError(error) && Boolean(error.response) &&
+          error.response!.status >= 400 && error.response!.status < 500;
+        if (definiteRejection) {
+          await rollbackExternalPurchase(externalOperationId!);
+          return res.status(502).json({
+            error: `HamsterQuest rejected this item: ${getHamsterQuestErrorMessage(error)}`,
+            code: 'EXTERNAL_GRANT_REJECTED'
+          });
+        }
+        return res.status(202).json({
+          success: false,
+          pending: true,
+          code: 'PURCHASE_RECONCILIATION_PENDING',
+          message: 'HamsterQuest did not confirm the grant. The purchase is pending reconciliation and will not be retried automatically.'
         });
       }
       try {

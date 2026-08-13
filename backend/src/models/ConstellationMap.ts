@@ -1,6 +1,7 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export type ConstellationScope = 'discipline' | 'topic';
+export type ConstellationType = 'main' | 'skill';
 
 export interface IConstellationVisualTheme {
   key: string;
@@ -30,11 +31,13 @@ export interface IConstellationMap extends Document {
   name: string;
   slug: string;
   description: string;
+  constellationType: ConstellationType;
   scope: ConstellationScope;
   parentMapId?: Types.ObjectId;
   gatewaySkillId?: Types.ObjectId;
   displayOrder: number;
   isActive: boolean;
+  level: number;
   visualTheme: IConstellationVisualTheme;
   viewport: IConstellationViewport;
   schemaVersion: number;
@@ -60,8 +63,8 @@ const ConstellationVisualThemeSchema = new Schema<IConstellationVisualTheme>({
 }, { _id: false });
 
 const ConstellationViewportSchema = new Schema<IConstellationViewport>({
-  width: { type: Number, required: true, default: 1600, min: 320, max: 10000 },
-  height: { type: Number, required: true, default: 900, min: 320, max: 10000 },
+  width: { type: Number, required: true, default: 2400, min: 320, max: 10000 },
+  height: { type: Number, required: true, default: 1400, min: 320, max: 10000 },
   minZoom: { type: Number, required: true, default: 0.3, min: 0.1, max: 1 },
   maxZoom: { type: Number, required: true, default: 3, min: 1, max: 10 }
 }, { _id: false });
@@ -77,11 +80,13 @@ const ConstellationMapSchema = new Schema<IConstellationMap>({
     match: /^[a-z0-9]+(?:-[a-z0-9]+)*$/
   },
   description: { type: String, default: '' },
+  constellationType: { type: String, enum: ['main', 'skill'], required: true, default: 'skill' },
   scope: { type: String, enum: ['discipline', 'topic'], required: true },
   parentMapId: { type: Schema.Types.ObjectId, ref: 'ConstellationMap' },
   gatewaySkillId: { type: Schema.Types.ObjectId, ref: 'Skill' },
   displayOrder: { type: Number, default: 0, min: 0 },
   isActive: { type: Boolean, default: false },
+  level: { type: Number, default: 1, min: 1, validate: Number.isInteger },
   visualTheme: { type: ConstellationVisualThemeSchema, default: () => ({}) },
   viewport: { type: ConstellationViewportSchema, default: () => ({}) },
   schemaVersion: { type: Number, default: 1, min: 1 }
@@ -104,8 +109,10 @@ ConstellationMapSchema.pre('validate', function(next) {
 });
 
 ConstellationMapSchema.index({ isActive: 1, displayOrder: 1, _id: 1 });
+ConstellationMapSchema.index({ constellationType: 1, scope: 1, isActive: 1, displayOrder: 1, _id: 1 });
 ConstellationMapSchema.index({ scope: 1, isActive: 1, displayOrder: 1, _id: 1 });
 ConstellationMapSchema.index({ parentMapId: 1, isActive: 1, displayOrder: 1, _id: 1 });
+ConstellationMapSchema.index({ scope: 1, level: 1, isActive: 1, displayOrder: 1, _id: 1 });
 ConstellationMapSchema.index({ gatewaySkillId: 1 }, { unique: true, sparse: true });
 
 export default mongoose.model<IConstellationMap>('ConstellationMap', ConstellationMapSchema);

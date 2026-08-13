@@ -21,8 +21,8 @@ const client = axios.create({
 });
 
 const login = async (userId: string) => {
-  const response = await client.get('/api/auth/test-login', {
-    params: { key, userId }
+  const response = await client.post('/api/auth/test-login', { userId }, {
+    headers: { 'X-Test-Bypass-Key': key }
   });
   assert.equal(response.status, 302, `test login failed for ${userId}`);
   const setCookie = response.headers['set-cookie'] as string[] | undefined;
@@ -33,7 +33,7 @@ const login = async (userId: string) => {
 const request = (cookie: string, config: AxiosRequestConfig) =>
   client.request({
     ...config,
-    headers: { ...config.headers, Cookie: cookie }
+    headers: { Origin: baseUrl.origin, ...config.headers, Cookie: cookie }
   });
 
 const run = async () => {

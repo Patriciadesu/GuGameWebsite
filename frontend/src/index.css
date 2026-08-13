@@ -4,6 +4,24 @@
 @import '@fontsource/noto-sans-thai/700.css';
 @import url('https://fonts.googleapis.com/css2?family=Itim&display=swap');
 
+:root {
+  color-scheme: light;
+  --star-void: #edf3f8;
+  --star-space: #f8fbfe;
+  --star-panel: #ffffff;
+  --star-panel-raised: #e9f2f8;
+  --star-ink: #14263a;
+  --star-muted: #52677b;
+  --star-line: #bdcbd7;
+  --star-cyan: #087f9b;
+  --star-gold: #9a6500;
+  --star-red: #b42335;
+  --star-violet: #6941c6;
+  --star-green: #147a55;
+}
+
+:root[data-theme="light"] { color-scheme: light; }
+
 * {
   margin: 0;
   padding: 0;
@@ -12,18 +30,50 @@
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  color: var(--star-ink);
+  background: var(--star-void);
+  font-family: 'Noto Sans Thai', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-button:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+button,
+input,
+select,
+textarea { font: inherit; }
+
+button { letter-spacing: 0; }
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--star-cyan);
+  outline-offset: 2px;
 }
 
 button:active {
   transform: translateY(0);
+}
+
+::selection {
+  color: var(--star-void);
+  background: var(--star-cyan);
+}
+
+* {
+  scrollbar-color: #8fa4b5 #e5edf4;
+  scrollbar-width: thin;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
+import { normalizeQuestStepExternalIds } from '../services/questStepNormalization';
 
 export type MapNodeRole = 'topic-gateway' | 'lesson' | 'boss' | 'capstone';
 
@@ -94,7 +95,7 @@ const SkillSchema = new Schema<ISkill>(
     externalSource: { type: String, enum: ['office-quest', 'hamquest', 'star-master'] },
     externalQuestId: { type: String },
     subQuests: [{
-      externalId: { type: String },
+      externalId: { type: String, required: true, immutable: true, trim: true },
       title: { type: String, required: true },
       description: { type: String, default: '' },
       descriptionParts: [{ type: { type: String, required: true }, content: { type: String, required: true } }],
@@ -132,6 +133,17 @@ SkillSchema.pre('save', function(next) {
     this.nodeType = colorToTypeMap[this.nodeColor] || 'asset';
   }
   next();
+});
+
+SkillSchema.pre('validate', function(next) {
+  try {
+    if (this.subQuests) {
+      this.subQuests = normalizeQuestStepExternalIds(this.subQuests) as typeof this.subQuests;
+    }
+    next();
+  } catch (error) {
+    next(error as Error);
+  }
 });
 
 // Index for efficient queries

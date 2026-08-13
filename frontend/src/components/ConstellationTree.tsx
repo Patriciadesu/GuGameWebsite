@@ -12,11 +12,16 @@ import './ConstellationTree.css';
 
 interface ConstellationTreeProps {
   disciplineMaps: ConstellationMap[];
+  heading?: string;
+  idPrefix?: string;
   refreshRevision?: number;
   unlockedSkillIds: string[];
   pendingSkillIds: string[];
   canUnlockSkill: (skill: ConstellationSkill) => boolean;
   onOpenSkill: (skill: ConstellationSkill) => void;
+  userLevel?: number;
+  compactOverview?: boolean;
+  selectedSkillId?: string | null;
 }
 
 interface MapDetail {
@@ -31,17 +36,17 @@ interface Camera {
 }
 
 const fallbackTheme = {
-  backgroundColor: '#f7f9fc',
+  backgroundColor: '#edf3f8',
   surfaceColor: '#ffffff',
-  textColor: '#182033',
-  mutedTextColor: '#667085',
-  borderColor: '#d9e0ea',
-  lineColor: '#8b97aa',
-  unlockedColor: '#1677ff',
-  availableColor: '#b77900',
-  lockedColor: '#667085',
-  bossColor: '#d63c45',
-  capstoneColor: '#6d4aff'
+  textColor: '#14263a',
+  mutedTextColor: '#52677b',
+  borderColor: '#bdcbd7',
+  lineColor: '#8298aa',
+  unlockedColor: '#087f9b',
+  availableColor: '#9a6500',
+  lockedColor: '#687b8c',
+  bossColor: '#b42335',
+  capstoneColor: '#6941c6'
 };
 
 type ConstellationHistoryState =
@@ -67,11 +72,16 @@ const readableLockedColor = (backgroundColor: string, lockedColor: string) => {
 
 function ConstellationTree({
   disciplineMaps,
+  heading = 'Skill Constellations',
+  idPrefix = 'skill-constellation',
   refreshRevision = 0,
   unlockedSkillIds,
   pendingSkillIds,
   canUnlockSkill,
-  onOpenSkill
+  onOpenSkill,
+  userLevel = 1,
+  compactOverview = false,
+  selectedSkillId = null
 }: ConstellationTreeProps) {
   const labelForSkill = (skill: ConstellationSkill) => skill.constellationLabel || skill.title;
   const [disciplineDetails, setDisciplineDetails] = useState<Record<string, MapDetail>>({});
@@ -86,6 +96,7 @@ function ConstellationTree({
   const [overviewIndex, setOverviewIndex] = useState(0);
   const [isDirectManipulating, setIsDirectManipulating] = useState(false);
   const dragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
+  const canvasRef = useRef<SVGSVGElement | null>(null);
   const previewTimerRef = useRef<number | null>(null);
   const overviewGridRef = useRef<HTMLDivElement | null>(null);
   const disciplineCameraRef = useRef<Camera>({ zoom: 1, x: 0, y: 0 });
@@ -161,8 +172,11 @@ function ConstellationTree({
         setTopicGateway(null);
         setTopicDetail(null);
         setCamera(disciplineCameraRef.current);
+        const gatewayId = originGatewayIdRef.current;
+        if (gatewayId) {
+          document.querySelector<SVGGElement>(`[data-skill-id="${gatewayId}"]`)?.focus();
+        }
         window.requestAnimationFrame(() => {
-          const gatewayId = originGatewayIdRef.current;
           if (gatewayId) {
             document.querySelector<SVGGElement>(`[data-skill-id="${gatewayId}"]`)?.focus();
           }
@@ -195,10 +209,39 @@ function ConstellationTree({
     ? disciplineDetails[selectedDisciplineId]
     : null;
   const activeMap = selectedDiscipline?.map;
-  const activeTheme = { ...fallbackTheme, ...(activeMap?.visualTheme || {}) };
+  const activeTheme = { ...fallbackTheme };
   activeTheme.lockedColor = readableLockedColor(activeTheme.backgroundColor, activeTheme.lockedColor);
   const unlockedSet = useMemo(() => new Set(unlockedSkillIds), [unlockedSkillIds]);
   const pendingSet = useMemo(() => new Set(pendingSkillIds), [pendingSkillIds]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      if (loadingTopic) return;
+      const matrix = canvas.getScreenCTM();
+      if (!matrix) return;
+      const viewport = topicDetail?.map.viewport || activeMap?.viewport;
+      const factor = event.deltaY > 0 ? 0.9 : 1.1;
+      const pointer = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+      setCamera(current => {
+        const nextZoom = Math.max(
+          viewport?.minZoom || 0.3,
+          Math.min(viewport?.maxZoom || 3, current.zoom * factor)
+        );
+        const worldX = (pointer.x - current.x) / current.zoom;
+        const worldY = (pointer.y - current.y) / current.zoom;
+        return {
+          zoom: nextZoom,
+          x: pointer.x - worldX * nextZoom,
+          y: pointer.y - worldY * nextZoom
+        };
+      });
+    };
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', handleWheel);
+  }, [activeMap?.viewport.maxZoom, activeMap?.viewport.minZoom, loadingTopic, topicDetail?.map.viewport.maxZoom, topicDetail?.map.viewport.minZoom]);
 
   const resetCamera = () => setCamera({ zoom: 1, x: 0, y: 0 });
 
@@ -232,8 +275,9 @@ function ConstellationTree({
     setPreviewSkill(null);
     setTopicGateway(null);
     setCamera(disciplineCameraRef.current);
+    const gateway = originGatewayIdRef.current;
+    if (gateway) document.querySelector<SVGGElement>(`[data-skill-id="${gateway}"]`)?.focus();
     window.requestAnimationFrame(() => {
-      const gateway = originGatewayIdRef.current;
       if (gateway) document.querySelector<SVGGElement>(`[data-skill-id="${gateway}"]`)?.focus();
     });
   };
@@ -261,8 +305,14 @@ function ConstellationTree({
     grid.scrollTo({ left: boundedIndex * grid.clientWidth, behavior: 'smooth' });
   };
 
-  const openTopic = async (gateway: ConstellationSkill) => {
-    if (!activeMap) return;
+  const openTopic = async (gateway: ConstellationSkill, sourceDetail: MapDetail | null = selectedDiscipline) => {
+    if (!sourceDetail) return;
+    if (['locked', 'pending'].includes(statusForSkill(gateway))) {
+      setError((gateway.topicLevel || userLevel) > userLevel
+        ? `Reach Level ${gateway.topicLevel} to enter ${labelForSkill(gateway)}.`
+        : `${labelForSkill(gateway)} is not available yet.`);
+      return;
+    }
     try {
       setLoadingTopic(true);
       setError('');
@@ -277,12 +327,13 @@ function ConstellationTree({
       const response = await axios.get(`/api/constellation-maps/${topicMap._id}`);
       setTopicGateway(gateway);
       setTopicDetail({ map: response.data.map, skills: response.data.skills || [] });
+      setSelectedDisciplineId(sourceDetail.map._id);
       setPreviewSkill(null);
       disciplineCameraRef.current = camera;
       originGatewayIdRef.current = gateway._id;
       writeHistory({
         view: 'topic',
-        disciplineId: activeMap._id,
+        disciplineId: sourceDetail.map._id,
         gatewayId: gateway._id,
         topicMapId: topicMap._id
       });
@@ -294,7 +345,9 @@ function ConstellationTree({
     }
   };
 
-  const statusForSkill = (skill: ConstellationSkill) => unlockedSet.has(skill._id)
+  const statusForSkill = (skill: ConstellationSkill) => (skill.topicLevel || userLevel) > userLevel
+    ? 'locked'
+    : unlockedSet.has(skill._id)
     ? 'unlocked'
     : pendingSet.has(skill._id)
       ? 'pending'
@@ -308,6 +361,70 @@ function ConstellationTree({
     return 'locked';
   };
 
+  const topicWindowFor = (detail: MapDetail, focusedGatewayId?: string) => {
+    const gateways = detail.skills.filter(skill => skill.mapNodeRole === 'topic-gateway');
+    if (gateways.length <= 3) return gateways;
+    const gatewayById = new Map(gateways.map(gateway => [gateway._id, gateway]));
+    const incomingIds = new Set(gateways.flatMap(gateway =>
+      (gateway.connections || []).map(connection => connection.targetSkillId).filter(targetId => gatewayById.has(targetId))
+    ));
+    const roots = gateways.filter(gateway => !incomingIds.has(gateway._id));
+    const visibleById = new Map<string, ConstellationSkill>();
+
+    const reachableFrom = (start: ConstellationSkill) => {
+      const reachableIds = new Set<string>();
+      const queue = [start];
+      while (queue.length > 0) {
+        const gateway = queue.shift()!;
+        if (reachableIds.has(gateway._id)) continue;
+        reachableIds.add(gateway._id);
+        (gateway.connections || []).forEach(connection => {
+          const target = gatewayById.get(connection.targetSkillId);
+          if (target && !reachableIds.has(target._id)) queue.push(target);
+        });
+      }
+      return reachableIds;
+    };
+
+    const addWindow = (current: ConstellationSkill) => {
+      const visitedIds = new Set<string>();
+      const queue: Array<{ gateway: ConstellationSkill; depth: number }> = [{ gateway: current, depth: 0 }];
+      while (queue.length > 0) {
+        const { gateway, depth } = queue.shift()!;
+        if (visitedIds.has(gateway._id) || depth > 2) continue;
+        visitedIds.add(gateway._id);
+        visibleById.set(gateway._id, gateway);
+        if (depth === 2) continue;
+        (gateway.connections || []).forEach(connection => {
+          const target = gatewayById.get(connection.targetSkillId);
+          if (target && !visitedIds.has(target._id)) queue.push({ gateway: target, depth: depth + 1 });
+        });
+      }
+    };
+
+    const focusedGateway = focusedGatewayId ? gatewayById.get(focusedGatewayId) : undefined;
+    if (focusedGateway) {
+      addWindow(focusedGateway);
+      return gateways.filter(gateway => visibleById.has(gateway._id));
+    }
+
+    const coveredIds = new Set<string>();
+    const addComponentWindow = (root: ConstellationSkill) => {
+      const reachableIds = reachableFrom(root);
+      reachableIds.forEach(skillId => coveredIds.add(skillId));
+      const latestUnlockedId = [...unlockedSkillIds].reverse().find(skillId => reachableIds.has(skillId));
+      if (latestUnlockedId) addWindow(gatewayById.get(latestUnlockedId) || root);
+      else addWindow(root);
+    };
+
+    roots.forEach(addComponentWindow);
+    // Cyclic or malformed components may have no root; keep one usable window for each.
+    gateways.forEach(gateway => {
+      if (!coveredIds.has(gateway._id)) addComponentWindow(gateway);
+    });
+    return gateways.filter(gateway => visibleById.has(gateway._id));
+  };
+
   const renderMapLayer = (
     detail: MapDetail,
     options: {
@@ -316,15 +433,22 @@ function ConstellationTree({
       offsetY?: number;
       scale?: number;
       gatewayOnly?: boolean;
+      straightLineFit?: boolean;
+      focusedGatewayId?: string;
       onNodeClick: (skill: ConstellationSkill) => void;
     }
   ) => {
     const skills = options.gatewayOnly
-      ? detail.skills.filter(skill => skill.mapNodeRole === 'topic-gateway')
+      ? topicWindowFor(detail, options.focusedGatewayId)
       : detail.skills;
     const points = new Map(skills.map((skill, index) => [
       skill._id,
-      pointForSkill(skill, index, skills.length, detail.map)
+      options.straightLineFit ? {
+        x: skills.length <= 1
+          ? detail.map.viewport.width / 2
+          : 180 + index * ((detail.map.viewport.width - 360) / (skills.length - 1)),
+        y: detail.map.viewport.height / 2
+      } : pointForSkill(skill, index, skills.length, detail.map)
     ]));
     const skillIds = new Set(skills.map(skill => skill._id));
     const connections = skills.flatMap(source => source.connections?.flatMap(connection => {
@@ -347,7 +471,7 @@ function ConstellationTree({
               key={`${source._id}-${connection.targetSkillId}`}
               className={`is-${connectionStatus} is-${connection.connectionType}`}
               d={pathBetween(sourcePoint, targetPoint)}
-              markerEnd={connection.hasArrowhead ? 'url(#constellation-arrow)' : undefined}
+              markerEnd={connection.hasArrowhead ? `url(#${idPrefix}-arrow)` : undefined}
               vectorEffect="non-scaling-stroke"
             />
             );
@@ -365,6 +489,7 @@ function ConstellationTree({
         {skills.map((skill, index) => {
           const point = points.get(skill._id)!;
           const status = statusForSkill(skill);
+          const isLevelGated = skill.mapNodeRole === 'topic-gateway' && (skill.topicLevel || userLevel) > userLevel;
           const labelOnLeft = point.x > detail.map.viewport.width * 0.74;
           const hasCloseHorizontalNeighbor = skills.some(candidate => {
             if (candidate._id === skill._id) return false;
@@ -382,7 +507,7 @@ function ConstellationTree({
             <g
               key={skill._id}
               data-skill-id={skill._id}
-              className={`constellation-node is-${status} role-${skill.mapNodeRole || 'lesson'}`}
+              className={`constellation-node is-${status} role-${skill.mapNodeRole || 'lesson'} ${isLevelGated ? 'is-level-gated' : ''} ${selectedSkillId === skill._id ? 'is-star-lens-selected' : ''}`}
               transform={`translate(${point.x} ${point.y})`}
               role="button"
               tabIndex={0}
@@ -410,6 +535,11 @@ function ConstellationTree({
                 labelY={labelY}
                 isStart={index === 0 && detail.map.scope === 'topic'}
               />
+              {isLevelGated && <g className="constellation-level-fog" filter={`url(#${idPrefix}-level-fog)`} aria-hidden="true">
+                <path className="constellation-fog-back" d="M -190 8 C -158 -70 -86 -82 -30 -50 C 22 -104 126 -78 142 -22 C 202 -9 204 66 141 78 C 72 111 -18 86 -51 70 C -118 101 -205 76 -190 8 Z" />
+                <path className="constellation-fog-front" d="M -174 36 C -142 -18 -88 -34 -35 -7 C 6 -61 83 -54 116 -10 C 177 -15 206 47 160 78 C 106 118 28 92 -8 75 C -68 112 -159 91 -174 36 Z" />
+                <ellipse className="constellation-fog-veil" cx="0" cy="8" rx="156" ry="74" />
+              </g>}
             </g>
           );
         })}
@@ -420,11 +550,11 @@ function ConstellationTree({
 
   if (!selectedDiscipline) {
     return (
-      <section className="constellation-shell constellation-overview" aria-labelledby="constellation-title">
+      <section className={`constellation-shell constellation-overview ${compactOverview ? 'is-compact-overview' : ''}`} aria-labelledby={`${idPrefix}-title`}>
         <header className="constellation-heading">
           <div>
             <p>Learning paths</p>
-            <h2 id="constellation-title">Skill Constellations</h2>
+            <h2 id={`${idPrefix}-title`}>{heading}</h2>
           </div>
           <div className="constellation-legend" aria-label="Node status">
             <span><i className="is-unlocked" />Unlocked</span>
@@ -447,20 +577,27 @@ function ConstellationTree({
             const detail = disciplineDetails[map._id];
             const unlockedCount = detail?.skills.filter(skill => unlockedSet.has(skill._id)).length || 0;
             const total = detail?.skills.length || 0;
-            return (
-              <button
-                type="button"
-                className="constellation-overview-item"
-                key={map._id}
-                data-map-id={map._id}
-                onClick={() => selectDiscipline(map._id)}
-                disabled={!detail}
-              >
+            const overviewContent = <>
                 <span className="constellation-overview-copy">
                   <span className="constellation-overview-title">{map.name}</span>
                   <span className="constellation-overview-progress">{unlockedCount} / {total} unlocked</span>
                 </span>
-                <svg viewBox={`0 0 ${map.viewport.width} ${map.viewport.height}`} aria-hidden="true">
+                <svg
+                  viewBox={compactOverview
+                    ? `100 ${Math.max(0, map.viewport.height / 2 - 90)} ${Math.max(400, map.viewport.width - 200)} 210`
+                    : `0 0 ${map.viewport.width} ${map.viewport.height}`}
+                  preserveAspectRatio="xMidYMid meet"
+                  aria-hidden={compactOverview ? undefined : true}
+                  aria-label={compactOverview ? `${map.name} topics` : undefined}
+                >
+                  <defs>
+                    <filter id={`${idPrefix}-level-fog`} x="-70%" y="-100%" width="240%" height="300%" colorInterpolationFilters="sRGB">
+                      <feTurbulence type="fractalNoise" baseFrequency="0.018 0.045" numOctaves="3" seed="17" result="noise" />
+                      <feDisplacementMap in="SourceGraphic" in2="noise" scale="34" xChannelSelector="R" yChannelSelector="B" result="warped" />
+                      <feGaussianBlur in="warped" stdDeviation="8" result="soft" />
+                      <feMerge><feMergeNode in="soft" /><feMergeNode in="warped" /></feMerge>
+                    </filter>
+                  </defs>
                   <g className="constellation-star-field">
                     {backgroundStarsFor(map).map((star, index) => (
                       <circle
@@ -478,11 +615,22 @@ function ConstellationTree({
                       {renderMapLayer(detail, {
                         className: 'constellation-mini-layer',
                         gatewayOnly: true,
-                        onNodeClick: () => undefined
+                        straightLineFit: compactOverview,
+                        onNodeClick: skill => {
+                          if (compactOverview) onOpenSkill(skill);
+                        }
                       })}
                     </g>
                   )}
                 </svg>
+              </>;
+            return compactOverview ? (
+              <div className="constellation-overview-item is-direct-topic-line" key={map._id} data-map-id={map._id}>
+                {overviewContent}
+              </div>
+            ) : (
+              <button type="button" className="constellation-overview-item" key={map._id} data-map-id={map._id} onClick={() => selectDiscipline(map._id)} disabled={!detail}>
+                {overviewContent}
               </button>
             );
           })}
@@ -501,6 +649,7 @@ function ConstellationTree({
   const canvasMap = topicDetail?.map || activeMap;
   const mapWidth = canvasMap?.viewport.width || 1600;
   const mapHeight = canvasMap?.viewport.height || 900;
+
   const activeGateway = topicGateway || previewSkill;
   const gatewayIndex = activeGateway
     ? selectedDiscipline.skills.findIndex(skill => skill._id === activeGateway._id)
@@ -568,32 +717,12 @@ function ConstellationTree({
         </div>
 
         <svg
+          ref={canvasRef}
           className="constellation-canvas"
           viewBox={`0 0 ${mapWidth} ${mapHeight}`}
           role="application"
           aria-busy={loadingTopic}
           aria-label={`${topicDetail?.map.name || activeMap?.name} constellation map`}
-          onWheel={(event) => {
-            event.preventDefault();
-            if (loadingTopic) return;
-            const factor = event.deltaY > 0 ? 0.9 : 1.1;
-            const matrix = event.currentTarget.getScreenCTM();
-            if (!matrix) return;
-            const pointer = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
-            setCamera(current => {
-              const nextZoom = Math.max(
-                canvasMap?.viewport.minZoom || 0.3,
-                Math.min(canvasMap?.viewport.maxZoom || 3, current.zoom * factor)
-              );
-              const worldX = (pointer.x - current.x) / current.zoom;
-              const worldY = (pointer.y - current.y) / current.zoom;
-              return {
-                zoom: nextZoom,
-                x: pointer.x - worldX * nextZoom,
-                y: pointer.y - worldY * nextZoom
-              };
-            });
-          }}
           onPointerDown={(event) => {
             if (loadingTopic || (event.target as Element).closest('.constellation-node')) return;
             dragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
@@ -620,19 +749,25 @@ function ConstellationTree({
           onPointerCancel={() => { dragRef.current = null; setIsDirectManipulating(false); }}
         >
           <defs>
-            <pattern id="constellation-grid" width="54" height="54" patternUnits="userSpaceOnUse">
+            <pattern id={`${idPrefix}-grid`} width="54" height="54" patternUnits="userSpaceOnUse">
               <circle cx="2" cy="2" r="1.6" fill="var(--constellation-border)" opacity="0.52" />
             </pattern>
-            <filter id="constellation-glow" x="-80%" y="-80%" width="260%" height="260%">
+            <filter id={`${idPrefix}-glow`} x="-80%" y="-80%" width="260%" height="260%">
               <feGaussianBlur stdDeviation="6" result="blur" />
               <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
             </filter>
-            <marker id="constellation-arrow" className="constellation-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <filter id={`${idPrefix}-level-fog`} x="-70%" y="-100%" width="240%" height="300%" colorInterpolationFilters="sRGB">
+              <feTurbulence type="fractalNoise" baseFrequency="0.018 0.045" numOctaves="3" seed="17" result="noise" />
+              <feDisplacementMap in="SourceGraphic" in2="noise" scale="34" xChannelSelector="R" yChannelSelector="B" result="warped" />
+              <feGaussianBlur in="warped" stdDeviation="8" result="soft" />
+              <feMerge><feMergeNode in="soft" /><feMergeNode in="warped" /></feMerge>
+            </filter>
+            <marker id={`${idPrefix}-arrow`} className="constellation-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
               <path d="M 0 0 L 10 5 L 0 10 Z" />
             </marker>
           </defs>
           <rect width={mapWidth} height={mapHeight} fill="var(--constellation-bg)" pointerEvents="none" />
-          <rect width={mapWidth} height={mapHeight} fill="url(#constellation-grid)" pointerEvents="none" />
+          <rect width={mapWidth} height={mapHeight} fill={`url(#${idPrefix}-grid)`} pointerEvents="none" />
           <g
             className={`constellation-camera ${isDirectManipulating ? 'is-direct-manipulation' : ''}`}
             transform={`translate(${camera.x} ${camera.y}) scale(${camera.zoom})`}
@@ -642,6 +777,7 @@ function ConstellationTree({
               offsetX: disciplineContextOffset.x,
               offsetY: disciplineContextOffset.y,
               gatewayOnly: true,
+              focusedGatewayId: topicGateway?._id,
               onNodeClick: skill => showPreview(skill)
             })}
             {topicDetail && renderMapLayer(topicDetail, {
@@ -677,7 +813,10 @@ function ConstellationTree({
               <h3>{labelForSkill(previewSkill)}</h3>
             </div>
             <p>{previewSkill.nodePreview?.summary || previewSkill.description}</p>
-            <div className="constellation-preview-media">
+            <div
+              className="constellation-preview-media"
+              aria-label={`${labelForSkill(previewSkill)} preview`}
+            >
               {previewSkill.nodePreview?.imageUrl && !failedPreviewImages.has(previewSkill.nodePreview.imageUrl) ? (
                 <img
                   src={previewSkill.nodePreview.imageUrl}
@@ -700,7 +839,9 @@ function ConstellationTree({
               <span>{statusForSkill(previewSkill)}</span>
               {statusForSkill(previewSkill) === 'locked' && (
                 <p className="constellation-requirement">
-                  {previewSkill.prerequisites?.length
+                  {(previewSkill.topicLevel || userLevel) > userLevel
+                    ? `Reach Level ${previewSkill.topicLevel} to enter this topic.`
+                    : previewSkill.prerequisites?.length
                     ? `Complete ${previewSkill.prerequisites.map(id => selectedDiscipline.skills.find(skill => skill._id === id)?.title || 'the required skill').join(', ')} first.`
                     : 'Complete the required skills first.'}
                 </p>
@@ -716,7 +857,7 @@ function ConstellationTree({
                 {loadingTopic
                   ? 'Opening...'
                   : statusForSkill(previewSkill) === 'locked'
-                    ? 'Prerequisites required'
+                    ? (previewSkill.topicLevel || userLevel) > userLevel ? `Unlocks at Level ${previewSkill.topicLevel}` : 'Prerequisites required'
                     : statusForSkill(previewSkill) === 'pending'
                       ? 'Approval pending'
                       : previewSkill.nodePreview?.actionLabel || 'View Path'}

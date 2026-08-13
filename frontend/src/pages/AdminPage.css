@@ -695,6 +695,7 @@
   font-weight: 700;
   color: rgba(20, 48, 109, 1);
 }
+.user-level-input { width: 62px; min-height: 34px; padding: 0 8px; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 4px; font: inherit; font-weight: 700; }
 
 .view-user-btn {
   padding: 8px 16px;
@@ -1351,6 +1352,10 @@
   font-size: 8px;
   font-weight: 800;
   pointer-events: none;
+}
+
+@media (min-width: 821px) {
+  .quest-editor-advanced-lock text { font-size: 11px; }
 }
 
 .quest-editor-connect {
@@ -3342,4 +3347,583 @@
     top: 18px;
     left: 18px;
   }
+}
+
+/* Canonical Starbound admin theme
+   Admin keeps the celestial language while using tighter, work-focused spacing. */
+.admin-container {
+  --admin-void: #edf3f8;
+  --admin-space: #f8fbfe;
+  --admin-panel: #ffffff;
+  --admin-panel-raised: #e9f2f8;
+  --admin-ink: #14263a;
+  --admin-muted: #52677b;
+  --admin-line: #bdcbd7;
+  --admin-cyan: #087f9b;
+  --admin-blue: #315f9b;
+  --admin-gold: #9a6500;
+  --admin-red: #b42335;
+  --admin-violet: #6941c6;
+  --admin-green: #147a55;
+  min-width: 0;
+  padding: 18px clamp(14px, 3vw, 48px);
+  color: var(--admin-ink);
+  background: var(--admin-void);
+  font-family: "Noto Sans Thai", "Trebuchet MS", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.admin-container *,
+.admin-container *::before,
+.admin-container *::after { box-sizing: border-box; }
+
+.loading {
+  color: var(--admin-cyan, #087f9b);
+  background: var(--admin-void, #edf3f8);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 22px;
+  font-weight: 500;
+}
+
+.admin-topbar {
+  min-height: 68px;
+  margin-bottom: 0;
+  padding: 12px 18px;
+  background: var(--admin-space);
+  border: 1px solid var(--admin-line);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.admin-title {
+  justify-content: flex-start;
+  color: var(--admin-ink);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 25px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.admin-title svg { color: var(--admin-gold); }
+
+.back-to-menu-btn,
+.clear-filters-btn,
+.cancel-btn,
+.close-modal-btn,
+.reset-btn,
+.duplicate-btn {
+  min-height: 38px;
+  padding: 7px 13px;
+  color: var(--admin-ink);
+  background: var(--admin-panel);
+  border: 1px solid var(--admin-line);
+  border-radius: 4px;
+  box-shadow: none;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.back-to-menu-btn:hover,
+.clear-filters-btn:hover,
+.cancel-btn:hover,
+.close-modal-btn:hover,
+.reset-btn:hover,
+.duplicate-btn:hover {
+  color: var(--admin-cyan);
+  background: var(--admin-panel-raised);
+  border-color: var(--admin-cyan);
+  box-shadow: none;
+  transform: none;
+}
+
+.admin-navbar {
+  margin: 0;
+  padding: 0 14px;
+  gap: 20px;
+  background: var(--admin-space);
+  border: 1px solid var(--admin-line);
+  border-top: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.nav-tab {
+  min-height: 48px;
+  padding: 0 2px;
+  color: var(--admin-muted);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.nav-tab:hover { color: var(--admin-ink); background: transparent; }
+.nav-tab.active {
+  color: var(--admin-gold);
+  background: transparent;
+  border-bottom-color: var(--admin-gold);
+  box-shadow: none;
+}
+
+.admin-mobile-navigation {
+  color: var(--admin-muted);
+  background: var(--admin-space);
+  border-color: var(--admin-line);
+  border-radius: 0;
+  font-family: inherit;
+}
+
+.admin-mobile-navigation select {
+  color: var(--admin-ink);
+  background: var(--admin-panel);
+  border-color: var(--admin-line);
+  border-radius: 4px;
+}
+
+.admin-content {
+  min-width: 0;
+  min-height: calc(100vh - 136px);
+  padding: 24px;
+  color: var(--admin-ink);
+  background: var(--admin-space);
+  border: 1px solid var(--admin-line);
+  border-top: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.admin-content.is-constellation-workspace {
+  padding: 0;
+  overflow: hidden;
+}
+
+.admin-content.is-constellation-workspace .skilltree-section {
+  width: 100%;
+  min-height: calc(100vh - 136px);
+}
+
+.admin-content.is-constellation-workspace .constellation-admin {
+  width: 100%;
+  min-height: calc(100vh - 136px);
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.section-title,
+.subsection-title,
+.guild-leader-title,
+.welcome-message h3,
+.skill-detail-header h3,
+.node-edit-header h3,
+.guilds-list h3,
+.info-content h3 {
+  color: var(--admin-ink);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.section-title { margin: 0 0 18px; }
+.subsection-title { margin-bottom: 16px; font-size: 18px; }
+
+.dashboard-stats,
+.guild-leader-stats,
+.skilltree-info,
+.skill-cards-grid { gap: 12px; margin-bottom: 20px; }
+
+.stat-card,
+.guild-stat-card,
+.info-card,
+.skill-card,
+.guild-card {
+  padding: 15px;
+  color: var(--admin-ink);
+  background: var(--admin-panel);
+  border: 1px solid var(--admin-line);
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+.stat-card:hover,
+.guild-stat-card:hover,
+.info-card:hover,
+.skill-card:hover,
+.guild-card:hover {
+  background: var(--admin-panel-raised);
+  border-color: #526581;
+  box-shadow: none;
+  transform: none;
+}
+
+.guild-card.selected,
+.skill-card:focus-within {
+  background: var(--admin-panel-raised);
+  border-color: var(--admin-cyan);
+  box-shadow: inset 3px 0 var(--admin-cyan);
+}
+
+.stat-icon,
+.guild-stat-icon,
+.info-icon { color: var(--admin-gold); font-size: 28px; }
+.stat-number,
+.guild-stat-number { color: var(--admin-cyan); font-size: 24px; font-weight: 700; }
+.stat-label,
+.guild-stat-label,
+.skill-card-description,
+.info-content p { color: var(--admin-muted); font-size: 13px; }
+.skill-card-title,
+.guild-name { color: var(--admin-ink); font-size: 16px; }
+.skill-card-cost,
+.skill-detail-cost { color: var(--admin-gold); background: #fff7e6; border: 1px solid #d8b56d; }
+
+.welcome-message,
+.guild-leader-section,
+.create-guild-form,
+.filter-controls,
+.users-table-container,
+.skilltree-placeholder,
+.empty-skills-message,
+.skill-tree-help,
+.connection-options,
+.asset-points-management {
+  padding: 16px;
+  color: var(--admin-ink);
+  background: var(--admin-panel);
+  border: 1px solid var(--admin-line);
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+.welcome-message,
+.empty-skills-message,
+.skilltree-placeholder { border-style: dashed; }
+.welcome-message p,
+.placeholder-text,
+.placeholder-subtext,
+.empty-message,
+.empty-users-message p,
+.empty-skills-message p,
+.connection-help,
+.skill-tree-help p { color: var(--admin-muted); font-size: 13px; }
+
+.users-count,
+.filter-label,
+.guild-name,
+.member-name,
+.user-name-cell,
+.stat-value-cell,
+.change-leader-label,
+.connection-skill-info strong { color: var(--admin-ink); }
+.user-email-cell,
+.member-role,
+.guild-leader-name,
+.connection-skill-layer { color: var(--admin-muted); }
+
+.users-table,
+.members-table {
+  overflow: hidden;
+  background: var(--admin-panel);
+  border: 1px solid var(--admin-line);
+  border-radius: 4px;
+}
+
+.users-table-header {
+  padding: 10px 12px;
+  color: var(--admin-muted);
+  background: #edf3f8;
+  border-bottom: 1px solid var(--admin-line);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.user-table-row,
+.member-row {
+  padding: 10px 12px;
+  color: var(--admin-ink);
+  background: transparent;
+  border-color: #d0dce5;
+}
+
+.user-table-row:hover,
+.member-row:hover { background: var(--admin-panel-raised); }
+.table-col,
+.user-name-cell,
+.user-email-cell,
+.stat-value-cell { font-size: 12px; }
+
+.role-badge,
+.guild-badge,
+.no-guild-badge,
+.stat-badge,
+.skill-layer-badge,
+.skill-position-badge,
+.saved-badge,
+.unsaved-badge,
+.guild-leader-badge {
+  padding: 3px 7px;
+  border-width: 1px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+}
+
+.role-badge.user,
+.no-guild-badge { color: var(--admin-muted); background: #edf3f8; border-color: var(--admin-line); }
+.role-badge.admin,
+.saved-badge { color: var(--admin-cyan); background: #e8f6f9; border-color: #7dbdca; }
+.role-badge.super-admin { color: var(--admin-violet); background: #f4f0ff; border-color: #b9a5eb; }
+.guild-badge,
+.skill-card-cost,
+.unsaved-badge { color: var(--admin-gold); background: #fff7e6; border-color: #d8b56d; }
+.stat-badge,
+.skill-position-badge { color: var(--admin-green); background: #eaf8f2; border-color: #7cc7aa; }
+
+.admin-container input,
+.admin-container select,
+.admin-container textarea,
+.filter-select,
+.filter-input,
+.guild-input,
+.guild-select,
+.user-select,
+.skill-input,
+.skill-textarea,
+.points-input {
+  min-height: 38px;
+  padding: 8px 10px;
+  color: var(--admin-ink);
+  background: #ffffff;
+  border: 1px solid var(--admin-line);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.admin-container textarea { line-height: 1.5; }
+.admin-container input::placeholder,
+.admin-container textarea::placeholder { color: #738697; opacity: 1; }
+.form-group label,
+.connection-option-label,
+.shop-guild-access legend { color: var(--admin-muted); font-family: inherit; font-size: 12px; }
+
+.submit-btn,
+.create-guild-btn,
+.create-skill-btn,
+.view-guild-btn,
+.save-btn,
+.add-btn {
+  min-height: 38px;
+  padding: 7px 14px;
+  color: #ffffff;
+  background: var(--admin-cyan);
+  border: 1px solid var(--admin-cyan);
+  border-radius: 4px;
+  box-shadow: none;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.submit-btn:hover,
+.create-guild-btn:hover,
+.create-skill-btn:hover,
+.view-guild-btn:hover,
+.save-btn:hover,
+.add-btn:hover { color: #ffffff; background: #06677e; border-color: #06677e; box-shadow: none; transform: none; }
+
+.edit-btn,
+.manage-btn,
+.view-user-btn,
+.connection-btn-normal,
+.zoom-btn {
+  min-height: 36px;
+  padding: 6px 11px;
+  color: #ffffff;
+  background: var(--admin-cyan);
+  border: 1px solid var(--admin-cyan);
+  border-radius: 4px;
+  box-shadow: none;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.edit-btn:hover,
+.manage-btn:hover,
+.view-user-btn:hover,
+.connection-btn-normal:hover,
+.zoom-btn:hover { background: #06677e; border-color: #06677e; transform: none; }
+
+.delete-btn,
+.remove-btn,
+.delete-connection-btn,
+.connection-btn-special,
+.subtract-btn {
+  color: #ffffff;
+  background: var(--admin-red);
+  border: 1px solid var(--admin-red);
+  border-radius: 4px;
+  box-shadow: none;
+  font-family: inherit;
+}
+
+.delete-btn:hover,
+.remove-btn:hover,
+.delete-connection-btn:hover,
+.connection-btn-special:hover,
+.subtract-btn:hover { background: #8f1c2b; border-color: #8f1c2b; transform: none; }
+.delete-guild-btn { color: var(--admin-red); }
+
+.shop-guild-access,
+.shop-item-guild-access,
+.shop-guild-option {
+  color: var(--admin-muted);
+  background: #ffffff;
+  border-color: var(--admin-line);
+  border-radius: 4px;
+}
+.shop-guild-option-all { color: var(--admin-cyan); border-color: #286273; }
+
+.modal-overlay {
+  padding: 20px;
+  background: rgb(35 52 69 / 38%);
+  backdrop-filter: blur(3px);
+}
+
+.modal-content,
+.skill-modal,
+.skill-detail-modal,
+.connection-modal,
+.node-edit-modal {
+  color: var(--admin-ink);
+  background: var(--admin-space);
+  border: 1px solid var(--admin-line);
+  border-radius: 6px;
+  box-shadow: 0 24px 70px rgb(43 65 84 / 24%);
+}
+
+.node-edit-header { padding: 16px 20px; border-color: var(--admin-line); }
+.node-edit-header p { color: var(--admin-muted); font-size: 12px; }
+.node-edit-fields,
+.node-edit-preview { color: var(--admin-ink); background: var(--admin-space); }
+.node-edit-preview { border-left: 1px solid var(--admin-line); }
+.modal-actions { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--admin-line); }
+
+.node-step-editor,
+.node-step-card,
+.node-step-imported-content,
+.node-preview-shell,
+.node-preview-step,
+.connection-skill-item {
+  color: var(--admin-ink);
+  background: var(--admin-panel);
+  border-color: var(--admin-line);
+  border-radius: 4px;
+}
+.node-step-card.is-open,
+.node-preview-step.is-open { border-color: var(--admin-cyan); }
+.node-step-card-title,
+.node-preview-section-heading,
+.node-preview-step-trigger { color: var(--admin-ink); }
+.node-step-card-meta,
+.node-preview-description,
+.node-preview-empty,
+.node-preview-copy { color: var(--admin-muted); }
+.node-preview-kicker { color: var(--admin-cyan); }
+.node-preview-cost,
+.node-preview-reward { color: var(--admin-gold); }
+.node-preview-complete { color: var(--admin-green); }
+
+.skill-tree-container,
+.quest-tree-editor {
+  background: var(--admin-void);
+  border: 1px solid var(--admin-line);
+  border-radius: 4px;
+  box-shadow: none;
+}
+.quest-editor-stage-guide { stroke: var(--admin-line); }
+.quest-editor-connection { stroke: #536582; }
+.quest-editor-connection.special { stroke: var(--admin-red); }
+.quest-editor-node-title { fill: var(--admin-ink); font-family: Georgia, "Times New Roman", serif; font-weight: 500; }
+.quest-editor-node-halo { stroke: var(--admin-cyan); }
+.quest-editor-bezier-guide line { stroke: var(--admin-cyan); }
+.quest-editor-bezier-handle { fill: var(--admin-panel); stroke: var(--admin-cyan); }
+.quest-editor-connect circle { fill: var(--admin-cyan); stroke: var(--admin-void); }
+.quest-editor-connect:hover circle,
+.quest-editor-connect:focus circle { fill: var(--admin-gold); stroke: var(--admin-void); }
+.quest-editor-start-label,
+.quest-editor-placeholder text { fill: var(--admin-muted); }
+.quest-editor-placeholder path,
+.quest-editor-placeholder circle { stroke: var(--admin-line); }
+.quest-editor-placeholder circle { fill: var(--admin-panel); }
+.quest-editor-placeholder .quest-editor-placeholder-core { fill: #8298aa; }
+.zoom-controls,
+.save-controls,
+.connection-edit-controls { color: var(--admin-ink); background: rgb(255 255 255 / 96%); border: 1px solid var(--admin-line); border-radius: 4px; box-shadow: 0 8px 24px rgb(43 65 84 / 12%); }
+.connection-edit-header,
+.connection-edit-help,
+.connection-edit-hint { color: var(--admin-muted); }
+.connection-edit-option { color: var(--admin-ink); background: var(--admin-panel); border-color: var(--admin-line); }
+
+.admin-inline-error {
+  color: var(--admin-red);
+  background: #fff1f2;
+  border-color: #efb4bc;
+  border-radius: 4px;
+  font-family: inherit;
+}
+
+.admin-container button:focus-visible,
+.admin-container a:focus-visible,
+.admin-container input:focus-visible,
+.admin-container select:focus-visible,
+.admin-container textarea:focus-visible,
+.admin-container [tabindex]:focus-visible {
+  outline: 2px solid var(--admin-cyan);
+  outline-offset: 2px;
+  border-color: var(--admin-cyan);
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-container *,
+  .admin-container *::before,
+  .admin-container *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+}
+
+@media (max-width: 900px) {
+  .admin-container { padding: 8px; }
+  .admin-topbar { min-height: 58px; padding: 10px 12px; flex-direction: row; align-items: center; }
+  .admin-title { font-size: 20px; }
+  .back-to-menu-btn { width: auto; min-height: 44px; }
+  .admin-mobile-navigation { margin: 0; border-top: 0; }
+  .admin-content { min-height: calc(100vh - 112px); padding: 16px 12px; }
+  .guilds-layout { gap: 16px; }
+  .guilds-list { border-color: var(--admin-line); }
+  .node-edit-workspace { grid-template-columns: 1fr; height: min(72vh, 720px); overflow-y: auto; }
+  .node-edit-fields,
+  .node-edit-preview { overflow: visible; }
+  .node-edit-preview { border-top: 1px solid var(--admin-line); border-left: 0; }
+}
+
+@media (max-width: 520px) {
+  .admin-topbar { gap: 8px; }
+  .admin-title { min-width: 0; font-size: 18px; }
+  .back-to-menu-btn { padding: 6px 9px; font-size: 12px; }
+  .admin-mobile-navigation { grid-template-columns: 1fr; gap: 5px; }
+  .admin-content { padding: 14px 10px; }
+  .section-title { font-size: 20px !important; }
+  .dashboard-stats { grid-template-columns: 1fr; }
+  .stat-card { padding: 12px; }
+  .modal-overlay { padding: 8px; }
+  .modal-content { width: 100%; max-width: 100% !important; padding: 14px !important; }
+  .modal-content.node-edit-modal { padding: 0 !important; }
 }

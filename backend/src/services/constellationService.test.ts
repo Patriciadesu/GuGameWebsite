@@ -1,10 +1,39 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  assertConstellationHierarchyIntegrity,
   assertRoleAllowedForScope,
   ConstellationOperationError,
   normalizeConstellationLayout
 } from './constellationService';
+
+test('hierarchy accepts a topic under a same-type discipline', () => {
+  assert.doesNotThrow(() => assertConstellationHierarchyIntegrity(
+    { scope: 'discipline', constellationType: 'main' },
+    { scope: 'topic', constellationType: 'main' }
+  ));
+});
+
+test('hierarchy rejects cross-type parent and child maps', () => {
+  assert.throws(
+    () => assertConstellationHierarchyIntegrity(
+      { scope: 'discipline', constellationType: 'main' },
+      { scope: 'topic', constellationType: 'skill' }
+    ),
+    (error: unknown) => error instanceof ConstellationOperationError && error.statusCode === 409
+  );
+});
+
+test('hierarchy rejects invalid parent and child scopes', () => {
+  assert.throws(() => assertConstellationHierarchyIntegrity(
+    { scope: 'topic', constellationType: 'skill' },
+    { scope: 'topic', constellationType: 'skill' }
+  ), /discipline map/);
+  assert.throws(() => assertConstellationHierarchyIntegrity(
+    { scope: 'discipline', constellationType: 'skill' },
+    { scope: 'discipline', constellationType: 'skill' }
+  ), /Only topic maps/);
+});
 
 test('discipline maps accept topic gateways', () => {
   assert.doesNotThrow(() => assertRoleAllowedForScope('discipline', 'topic-gateway'));

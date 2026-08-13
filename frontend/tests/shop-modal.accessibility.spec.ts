@@ -73,3 +73,13 @@ test('fiction dialog traps focus and Escape closes safely', async ({ page }) => 
   expect(releaseCount).toBe(1);
 });
 
+test('shop dark theme keeps catalog and fiction dialog readable', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('gugame-theme', 'dark'));
+  await mockShop(page, () => undefined);
+  await page.goto('shop');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.screenshot({ path: '/tmp/constellation-visual/dark-shop.png', fullPage: true });
+  await page.getByRole('button', { name: 'Read' }).click();
+  await expect(page.getByRole('dialog', { name: /Shared Story/ })).toBeVisible();
+  await page.screenshot({ path: '/tmp/constellation-visual/dark-shop-dialog.png', fullPage: true });
+});

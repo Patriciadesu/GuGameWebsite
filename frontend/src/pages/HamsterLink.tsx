@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
+import { ArrowLeft, CircleAlert, Link2, LoaderCircle } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from '../config/axios';
-import './MainMenu.css';
+import './HamsterLink.css';
 
 function HamsterLink() {
   const navigate = useNavigate();
@@ -25,13 +26,41 @@ function HamsterLink() {
       });
   }, [navigate, searchParams]);
 
+  const hasError = Boolean(error);
+
   return (
-    <main className="hamster-link-page">
-      <section className="hamster-link-panel">
-        <div className="hamster-link-spinner" aria-hidden="true" />
-        <h1>{error ? 'Link failed' : 'Linking HamsterQuest'}</h1>
-        <p>{error || 'Syncing your account and inventory...'}</p>
-        {error && <button type="button" onClick={() => navigate('/mainmenu', { replace: true })}>Back to Main Menu</button>}
+    <main className="hlink-page">
+      <div className="hlink-stars" aria-hidden="true" />
+      <section className={`hlink-panel${hasError ? ' hlink-panel-error' : ''}`} aria-labelledby="hlink-title">
+        <header className="hlink-brand">
+          <span className="hlink-sigil" aria-hidden="true" />
+          <span>GuGame</span>
+          <span className="hlink-divider" aria-hidden="true" />
+          <span>External Link</span>
+        </header>
+
+        <div className="hlink-status-icon" aria-hidden="true">
+          {hasError ? <CircleAlert /> : <LoaderCircle className="hlink-spinner" />}
+        </div>
+
+        <div className="hlink-copy" role="status" aria-live="polite">
+          <span className="hlink-kicker">{hasError ? 'Connection interrupted' : 'Account connection'}</span>
+          <h1 id="hlink-title">{hasError ? 'Link failed' : 'Linking HamsterQuest'}</h1>
+          <p>{error || 'Syncing your account and inventory. Keep this window open.'}</p>
+        </div>
+
+        <div className="hlink-route" aria-hidden="true">
+          <span>GuGame</span>
+          <span className="hlink-route-line"><i /><Link2 /></span>
+          <span>HamsterQuest</span>
+        </div>
+
+        {hasError && (
+          <button type="button" className="hlink-back" onClick={() => navigate('/mainmenu', { replace: true })}>
+            <ArrowLeft aria-hidden="true" />
+            Back to Main Menu
+          </button>
+        )}
       </section>
     </main>
   );

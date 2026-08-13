@@ -5,7 +5,9 @@ import mongoose from 'mongoose';
 import ApprovalRequest from '../models/ApprovalRequest';
 import FictionContribution from '../models/FictionContribution';
 import FictionWritingLock from '../models/FictionWritingLock';
+import ExternalPurchaseOperation from '../models/ExternalPurchaseOperation';
 import Purchase from '../models/Purchase';
+import ShopItem from '../models/ShopItem';
 import Skill from '../models/Skill';
 import User from '../models/User';
 import {
@@ -18,9 +20,13 @@ import {
 } from './fictionService';
 import {
   PurchaseOperationError,
+  completeExternalPurchase,
+  reserveExternalPurchase,
+  rollbackExternalPurchase,
   reserveLocalPurchase,
   rollbackLocalPurchase
 } from './purchaseService';
+import { retireShopItem } from './shopItemService';
 import { completeQuestStepOnce, unlockSkillOnce } from './progressionService';
 
 dotenv.config();
@@ -36,6 +42,8 @@ describe('purchaseService transactions', { skip: !runIntegrationTests }, () => {
     await Promise.all([
       User.syncIndexes(),
       Purchase.syncIndexes(),
+      ExternalPurchaseOperation.syncIndexes(),
+      ShopItem.syncIndexes(),
       Skill.syncIndexes(),
       ApprovalRequest.syncIndexes(),
       FictionContribution.syncIndexes(),
@@ -47,6 +55,8 @@ describe('purchaseService transactions', { skip: !runIntegrationTests }, () => {
     await Promise.all([
       User.deleteMany({}),
       Purchase.deleteMany({}),
+      ExternalPurchaseOperation.deleteMany({}),
+      ShopItem.deleteMany({}),
       Skill.deleteMany({}),
       ApprovalRequest.deleteMany({}),
       FictionContribution.deleteMany({}),
@@ -132,6 +142,72 @@ describe('purchaseService transactions', { skip: !runIntegrationTests }, () => {
     ]);
     assert.equal(user?.assetPoints, 100);
     assert.equal(purchase?.quantity, 0);
+  });
+
+  test('an external purchase operation reserves and charges exactly once', async () => {
+    await createUser('external-user', 100);
+    const itemId = new mongoose.Types.ObjectId().toString();
+    const input = {
+      operationId: 'checkout-1',
+      userId: 'external-user',
+      itemId,
+      externalItemId: 'office-item-1',
+      price: 10
+    };
+
+    const first = await reserveExternalPurchase(input);
+    const replay = await reserveExternalPurchase(input);
+    const completed = await completeExternalPurchase(input.operationId);
+
+    assert.equal(first.replayed, false);
+    assert.equal(replay.replayed, true);
+    assert.equal(completed?.status, 'completed');
+    const [user, purchase, operations] = await Promise.all([
+      User.findOne({ discordId: input.userId }).lean(),
+      Purchase.findOne({ userId: input.userId, shopItemId: itemId }).lean(),
+      ExternalPurchaseOperation.find({ operationId: input.operationId }).lean()
+    ]);
+    assert.equal(user?.assetPoints, 90);
+    assert.equal(purchase?.quantity, 1);
+    assert.equal(operations.length, 1);
+  });
+
+  test('external purchase rollback is durable and refunds only once', async () => {
+    await createUser('external-rollback-user', 100);
+    const itemId = new mongoose.Types.ObjectId().toString();
+    await reserveExternalPurchase({
+      operationId: 'checkout-rollback',
+      userId: 'external-rollback-user',
+      itemId,
+      externalItemId: 'office-item-2',
+      price: 10
+    });
+
+    assert.equal(await rollbackExternalPurchase('checkout-rollback'), true);
+    assert.equal(await rollbackExternalPurchase('checkout-rollback'), false);
+
+    const [user, purchase] = await Promise.all([
+      User.findOne({ discordId: 'external-rollback-user' }).lean(),
+      Purchase.findOne({ userId: 'external-rollback-user', shopItemId: itemId }).lean()
+    ]);
+    assert.equal(user?.assetPoints, 100);
+    assert.equal(purchase?.quantity, 0);
+  });
+
+  test('retiring a shop item preserves purchase history', async () => {
+    const item = await ShopItem.create({ title: 'Retired item', price: 10 });
+    await Purchase.create({
+      userId: 'history-user',
+      shopItemId: item._id,
+      status: 'completed',
+      quantity: 1
+    });
+
+    const retired = await retireShopItem(item._id.toString());
+
+    assert.equal(retired.isActive, false);
+    assert.ok(await ShopItem.exists({ _id: item._id }));
+    assert.ok(await Purchase.exists({ shopItemId: item._id }));
   });
 
   test('admin purchases deduct AP like every other user', async () => {

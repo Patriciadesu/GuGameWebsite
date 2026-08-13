@@ -1,97 +1,239 @@
-.login-container {
+.login-page {
+  --void: #edf3f8;
+  --space: #f8fbfe;
+  --panel: #ffffff;
+  --ink: #14263a;
+  --muted: #52677b;
+  --line: #bdcbd7;
+  --cyan: #087f9b;
+  --gold: #9a6500;
+  position: relative;
   min-height: 100vh;
+  min-height: 100dvh;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  padding: 32px 20px;
+  color: var(--ink);
+  background-color: var(--void);
+  background-image:
+    linear-gradient(rgba(71, 101, 126, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(71, 101, 126, 0.08) 1px, transparent 1px),
+    radial-gradient(circle at 50% 42%, #ffffff 0, var(--void) 58%);
+  background-size: 72px 72px, 72px 72px, auto;
+  font-family: "Noto Sans Thai", "Trebuchet MS", sans-serif;
+  isolation: isolate;
+}
+
+.login-stars {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+}
+
+.login-stars-near {
+  background-image:
+    radial-gradient(circle, rgba(49, 95, 155, 0.42) 0 1px, transparent 1.5px),
+    radial-gradient(circle, rgba(8, 127, 155, 0.48) 0 1px, transparent 1.5px);
+  background-position: 18px 24px, 72px 96px;
+  background-size: 137px 149px, 211px 193px;
+  opacity: 0.55;
+}
+
+.login-stars-far {
+  background-image: radial-gradient(circle, rgba(156, 169, 189, 0.7) 0 0.7px, transparent 1px);
+  background-position: 39px 61px;
+  background-size: 83px 97px;
+  opacity: 0.35;
+}
+
+.login-constellation {
+  position: absolute;
+  z-index: -1;
+  top: 50%;
+  left: 50%;
+  width: min(820px, 88vw);
+  height: min(620px, 78vh);
+  transform: translate(-50%, -50%);
+  opacity: 0.52;
+  pointer-events: none;
+}
+
+.login-path {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  height: 1px;
+  transform-origin: left center;
+  background: linear-gradient(90deg, rgba(77, 231, 255, 0.75), rgba(98, 162, 255, 0.08));
+}
+
+.login-path-one { width: 42%; transform: rotate(-31deg); }
+.login-path-two { width: 39%; transform: rotate(24deg); }
+.login-path-three { width: 31%; transform: rotate(145deg); }
+.login-path-four { width: 28%; transform: rotate(206deg); }
+
+.login-star {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--cyan);
+  background: var(--void);
+  transform: rotate(45deg);
+  box-shadow: 0 0 12px rgba(77, 231, 255, 0.65);
+}
+
+.login-star-one { left: calc(50% - 4px); top: calc(50% - 4px); }
+.login-star-two { left: 84%; top: 24%; }
+.login-star-three { left: 81%; top: 66%; border-color: var(--gold); box-shadow: 0 0 12px rgba(255, 196, 91, 0.55); }
+.login-star-four { left: 20%; top: 70%; }
+.login-star-five { left: 26%; top: 30%; width: 5px; height: 5px; }
+
+.login-gateway {
+  width: min(100%, 430px);
+  padding: 34px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 22px 70px rgba(43, 65, 84, 0.18), inset 0 1px rgba(255, 255, 255, 0.8);
+  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px));
+  animation: login-gateway-enter 380ms ease-out both;
+}
+
+.login-brand {
   display: flex;
   align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  padding: 20px;
+  gap: 18px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--line);
 }
 
-.login-card {
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
-  border-radius: 20px;
-  padding: 60px 40px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-  max-width: 450px;
-  width: 100%;
-  text-align: center;
-  animation: fadeInUp 0.6s ease-out;
+.login-sigil {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border: 1px solid var(--gold);
+  transform: rotate(45deg);
 }
 
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(30px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.login-sigil::before,
+.login-sigil::after {
+  content: "";
+  position: absolute;
+  inset: 10px;
+  border: 1px solid rgba(77, 231, 255, 0.72);
 }
 
-.login-header h1 {
-  font-size: 3rem;
-  font-weight: 700;
-  color: #667eea;
-  margin-bottom: 10px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+.login-sigil::after {
+  inset: 17px;
+  border: 0;
+  background: var(--ink);
+  box-shadow: 0 0 9px var(--cyan);
 }
 
-.login-header p {
-  font-size: 1.1rem;
-  color: #666;
-  margin-bottom: 40px;
+.login-kicker {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.login-brand h1 {
+  margin: 0;
+  color: var(--ink);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 38px;
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.login-copy {
+  padding: 27px 0 25px;
+}
+
+.login-copy p {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.login-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--cyan);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.login-status span {
+  width: 6px;
+  height: 6px;
+  background: var(--cyan);
+  transform: rotate(45deg);
+  box-shadow: 0 0 8px rgba(77, 231, 255, 0.85);
 }
 
 .discord-login-btn {
   width: 100%;
-  padding: 16px 24px;
-  background: #5865F2;
-  color: white;
-  border: none;
-  border-radius: 12px;
-  font-size: 1.1rem;
-  font-weight: 600;
-  cursor: pointer;
+  min-height: 52px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 12px;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 15px rgba(88, 101, 242, 0.4);
-}
-
-.discord-login-btn:hover {
-  background: #4752C4;
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(88, 101, 242, 0.6);
-}
-
-.discord-login-btn:active {
-  transform: translateY(0);
-  box-shadow: 0 2px 10px rgba(88, 101, 242, 0.4);
+  padding: 13px 20px;
+  border: 1px solid var(--cyan);
+  border-radius: 0;
+  color: #ffffff;
+  background: var(--cyan);
+  box-shadow: 0 8px 24px rgba(8, 127, 155, 0.18);
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
+  cursor: pointer;
+  font: 700 15px/1.2 "Noto Sans Thai", "Trebuchet MS", sans-serif;
+  letter-spacing: 0;
+  transition: background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .discord-login-btn svg {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
 }
 
-/* Responsive */
-@media (max-width: 768px) {
-  .login-card {
-    padding: 40px 30px;
-  }
+.discord-login-btn:hover {
+  background: #06677e;
+  box-shadow: 0 10px 28px rgba(8, 127, 155, 0.24);
+  transform: translateY(-1px);
+}
 
-  .login-header h1 {
-    font-size: 2.5rem;
-  }
+.discord-login-btn:active { transform: translateY(0); }
 
-  .login-header p {
-    font-size: 1rem;
-  }
+.discord-login-btn:focus-visible {
+  outline: 3px solid var(--cyan);
+  outline-offset: 4px;
+}
+
+@keyframes login-gateway-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 520px) {
+  .login-page { padding: 18px 14px; }
+  .login-gateway { padding: 28px 22px; }
+  .login-brand { gap: 15px; }
+  .login-brand h1 { font-size: 34px; }
+  .login-constellation { width: 130vw; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-gateway { animation: none; }
+  .discord-login-btn { transition: none; }
 }

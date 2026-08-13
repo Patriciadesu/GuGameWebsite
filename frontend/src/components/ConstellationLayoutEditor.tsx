@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import type { WheelEvent as ReactWheelEvent } from 'react';
-import { RotateCcw, Save } from 'lucide-react';
+import { LocateFixed, RotateCcw, Save, Sparkles, ZoomIn, ZoomOut } from 'lucide-react';
 import type { ConstellationMap, ConstellationSkill } from './constellationTypes';
 import ConstellationNodeGlyph from './ConstellationNodeGlyph';
 import {
@@ -8,6 +7,7 @@ import {
   straightConstellationPath
 } from './constellationVisuals';
 import './ConstellationTree.css';
+import { autoStyleConstellation } from './constellationAutoLayout';
 
 export interface ConstellationLayoutPosition {
   x: number;
@@ -23,6 +23,7 @@ interface ConstellationLayoutEditorProps {
   selectedSkillId: string;
   disabled?: boolean;
   onSelectSkill: (skillId: string) => void;
+  onSelectionChange?: (skillIds: string[]) => void;
   onTapSkill?: (skillId: string) => void;
   onActivateSkill?: (skillId: string) => void;
   onContextMenuSkill?: (skillId: string, clientX: number, clientY: number) => void;
@@ -32,7 +33,7 @@ interface ConstellationLayoutEditorProps {
 }
 
 interface EditorGesture {
-  type: 'node' | 'pan';
+  type: 'node' | 'pan' | 'select';
   pointerId: number;
   skillId?: string;
   startClientX: number;
@@ -41,10 +42,35 @@ interface EditorGesture {
   startPanY: number;
   startNodeX?: number;
   startNodeY?: number;
+  startNodePositions?: Record<string, ConstellationLayoutPosition>;
+  startWorldX?: number;
+  startWorldY?: number;
+  additiveSelection?: boolean;
+  initialSelectionIds?: string[];
+}
+
+interface SelectionBox {
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
 }
 
 const NODE_MARGIN = 46;
 const SNAP_SIZE = 20;
+
+const editorConnectionPath = (source: ConstellationLayoutPosition, target: ConstellationLayoutPosition) => {
+  const distance = Math.hypot(target.x - source.x, target.y - source.y);
+  if (distance === 0) return straightConstellationPath(source, target);
+  const unitX = (target.x - source.x) / distance;
+  const unitY = (target.y - source.y) / distance;
+  const sourceInset = Math.min(34, distance * 0.22);
+  const targetInset = Math.min(54, distance * 0.3);
+  return straightConstellationPath(
+    { x: source.x + unitX * sourceInset, y: source.y + unitY * sourceInset },
+    { x: target.x - unitX * targetInset, y: target.y - unitY * targetInset }
+  );
+};
 
 const fallbackPosition = (index: number, map: ConstellationMap): ConstellationLayoutPosition => {
   const columns = Math.max(1, Math.ceil(Math.sqrt(index + 1)));
@@ -63,6 +89,7 @@ function ConstellationLayoutEditor({
   selectedSkillId,
   disabled,
   onSelectSkill,
+  onSelectionChange,
   onTapSkill,
   onActivateSkill,
   onContextMenuSkill,
@@ -73,6 +100,8 @@ function ConstellationLayoutEditor({
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [gesture, setGesture] = useState<EditorGesture | null>(null);
+  const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(new Set());
+  const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const lastTapRef = useRef<{ skillId: string; timestamp: number } | null>(null);
 
@@ -80,7 +109,18 @@ function ConstellationLayoutEditor({
     const mobile = window.matchMedia('(max-width: 820px)').matches;
     setZoom(mobile ? Math.min(1.5, map.viewport.maxZoom || 3) : 1);
     setPan({ x: 0, y: 0 });
+    setSelectedSkillIds(new Set());
+    setSelectionBox(null);
   }, [map._id, map.viewport.maxZoom]);
+
+  useEffect(() => {
+    if (!selectedSkillId) return;
+    setSelectedSkillIds(current => current.has(selectedSkillId) ? current : new Set([selectedSkillId]));
+  }, [selectedSkillId]);
+
+  useEffect(() => {
+    onSelectionChange?.([...selectedSkillIds]);
+  }, [onSelectionChange, selectedSkillIds]);
 
   const skillIds = useMemo(() => new Set(skills.map(skill => skill._id)), [skills]);
   const connectionEdges = useMemo(() => {
@@ -131,19 +171,49 @@ function ConstellationLayoutEditor({
   }, [connectionEdges, points]);
 
   const updateZoom = (nextZoom: number) => {
-    setZoom(Math.max(1, Math.min(map.viewport.maxZoom || 3, nextZoom)));
+    setZoom(Math.max(map.viewport.minZoom || 0.5, Math.min(map.viewport.maxZoom || 3, nextZoom)));
   };
 
-  const moveNode = (skillId: string, rawPosition: ConstellationLayoutPosition) => {
-    const round = (value: number) => Math.round(value / SNAP_SIZE) * SNAP_SIZE;
-    onPositionChange(skillId, {
-      x: Math.max(NODE_MARGIN, Math.min(map.viewport.width - NODE_MARGIN, round(rawPosition.x))),
-      y: Math.max(NODE_MARGIN, Math.min(map.viewport.height - NODE_MARGIN, round(rawPosition.y)))
-    });
+  const resetView = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
+  const clientToWorld = (clientX: number, clientY: number) => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    return {
+      x: viewX + ((clientX - rect.left) / rect.width) * viewWidth,
+      y: viewY + ((clientY - rect.top) / rect.height) * viewHeight
+    };
+  };
+
+  const moveNodeGroup = (
+    startPositions: Record<string, ConstellationLayoutPosition>,
+    anchorSkillId: string,
+    rawDeltaX: number,
+    rawDeltaY: number
+  ) => {
+    const entries = Object.entries(startPositions);
+    const anchor = startPositions[anchorSkillId];
+    if (!anchor || entries.length === 0) return;
+    const snappedDeltaX = Math.round((anchor.x + rawDeltaX) / SNAP_SIZE) * SNAP_SIZE - anchor.x;
+    const snappedDeltaY = Math.round((anchor.y + rawDeltaY) / SNAP_SIZE) * SNAP_SIZE - anchor.y;
+    const minDeltaX = Math.max(...entries.map(([, position]) => NODE_MARGIN - position.x));
+    const maxDeltaX = Math.min(...entries.map(([, position]) => map.viewport.width - NODE_MARGIN - position.x));
+    const minDeltaY = Math.max(...entries.map(([, position]) => NODE_MARGIN - position.y));
+    const maxDeltaY = Math.min(...entries.map(([, position]) => map.viewport.height - NODE_MARGIN - position.y));
+    const deltaX = Math.max(minDeltaX, Math.min(maxDeltaX, snappedDeltaX));
+    const deltaY = Math.max(minDeltaY, Math.min(maxDeltaY, snappedDeltaY));
+    entries.forEach(([skillId, position]) => onPositionChange(skillId, {
+      x: position.x + deltaX,
+      y: position.y + deltaY
+    }));
   };
 
   const beginGesture = (nextGesture: EditorGesture, onTap?: () => void) => {
     let moved = false;
+    let finalSelection = new Set(nextGesture.initialSelectionIds || []);
     setGesture(nextGesture);
     const handleMove = (event: PointerEvent) => {
       if (nextGesture.pointerId !== event.pointerId) return;
@@ -152,11 +222,37 @@ function ConstellationLayoutEditor({
       if (nextGesture.type === 'node' && nextGesture.skillId) {
         if (!moved) return;
         const rect = svgRef.current?.getBoundingClientRect();
-        if (!rect || nextGesture.startNodeX === undefined || nextGesture.startNodeY === undefined) return;
-        moveNode(nextGesture.skillId, {
-          x: nextGesture.startNodeX + ((event.clientX - nextGesture.startClientX) / rect.width) * viewWidth,
-          y: nextGesture.startNodeY + ((event.clientY - nextGesture.startClientY) / rect.height) * viewHeight
+        if (!rect || !nextGesture.startNodePositions) return;
+        moveNodeGroup(
+          nextGesture.startNodePositions,
+          nextGesture.skillId,
+          ((event.clientX - nextGesture.startClientX) / rect.width) * viewWidth,
+          ((event.clientY - nextGesture.startClientY) / rect.height) * viewHeight
+        );
+        return;
+      }
+      if (nextGesture.type === 'select') {
+        const world = clientToWorld(event.clientX, event.clientY);
+        if (!world || nextGesture.startWorldX === undefined || nextGesture.startWorldY === undefined) return;
+        const box = {
+          startX: nextGesture.startWorldX,
+          startY: nextGesture.startWorldY,
+          currentX: world.x,
+          currentY: world.y
+        };
+        setSelectionBox(box);
+        if (!moved) return;
+        const left = Math.min(box.startX, box.currentX);
+        const right = Math.max(box.startX, box.currentX);
+        const top = Math.min(box.startY, box.currentY);
+        const bottom = Math.max(box.startY, box.currentY);
+        const selected = new Set(nextGesture.additiveSelection ? (nextGesture.initialSelectionIds || []) : []);
+        skills.forEach((skill, index) => {
+          const point = positionFor(skill, index);
+          if (point.x >= left && point.x <= right && point.y >= top && point.y <= bottom) selected.add(skill._id);
         });
+        finalSelection = selected;
+        setSelectedSkillIds(selected);
         return;
       }
       const rect = svgRef.current?.getBoundingClientRect();
@@ -175,7 +271,16 @@ function ConstellationLayoutEditor({
       if (nextGesture.pointerId !== event.pointerId) return;
       cleanup();
       setGesture(null);
-      if (event.type === 'pointerup' && !moved) onTap?.();
+      if (nextGesture.type === 'select') {
+        setSelectionBox(null);
+        if (!moved) {
+          setSelectedSkillIds(new Set());
+          onSelectSkill('');
+        } else {
+          setSelectedSkillIds(finalSelection);
+          onSelectSkill(finalSelection.values().next().value || '');
+        }
+      } else if (event.type === 'pointerup' && !moved) onTap?.();
     };
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleEnd);
@@ -197,24 +302,45 @@ function ConstellationLayoutEditor({
     lastTapRef.current = { skillId, timestamp };
   };
 
-  const handleWheel = (event: ReactWheelEvent<SVGSVGElement>) => {
+  const handleWheel = (event: WheelEvent) => {
+    const minZoom = map.viewport.minZoom || 0.5;
+    const maxZoom = map.viewport.maxZoom || 3;
+    const zoomingIn = event.deltaY < 0;
+    if ((zoomingIn && zoom >= maxZoom) || (!zoomingIn && zoom <= minZoom)) return;
     event.preventDefault();
-    updateZoom(zoom * (event.deltaY < 0 ? 1.12 : 0.9));
+    updateZoom(zoom * (zoomingIn ? 1.12 : 0.9));
   };
+
+  useEffect(() => {
+    const canvas = svgRef.current;
+    if (!canvas) return;
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', handleWheel);
+  }, [map.viewport.maxZoom, map.viewport.minZoom, zoom]);
 
   const handleKeyboard = (event: React.KeyboardEvent<SVGSVGElement>) => {
     if (!selectedSkillId || !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
-    const current = positions[selectedSkillId];
-    if (!current) return;
+    const movingIds = selectedSkillIds.has(selectedSkillId) ? [...selectedSkillIds] : [selectedSkillId];
+    const startPositions = Object.fromEntries(movingIds.flatMap(skillId => {
+      const index = skills.findIndex(candidate => candidate._id === skillId);
+      return index < 0 ? [] : [[skillId, positionFor(skills[index], index)]];
+    }));
+    if (!startPositions[selectedSkillId]) return;
     event.preventDefault();
     const distance = event.shiftKey ? SNAP_SIZE : 1;
-    moveNode(selectedSkillId, {
-      x: current.x + (event.key === 'ArrowLeft' ? -distance : event.key === 'ArrowRight' ? distance : 0),
-      y: current.y + (event.key === 'ArrowUp' ? -distance : event.key === 'ArrowDown' ? distance : 0)
-    });
+    moveNodeGroup(
+      startPositions,
+      selectedSkillId,
+      event.key === 'ArrowLeft' ? -distance : event.key === 'ArrowRight' ? distance : 0,
+      event.key === 'ArrowUp' ? -distance : event.key === 'ArrowDown' ? distance : 0
+    );
   };
 
   const theme = map.visualTheme;
+  const autoStyleSelection = () => {
+    const nextPositions = autoStyleConstellation(skills, [...selectedSkillIds], positions, map);
+    Object.entries(nextPositions).forEach(([skillId, position]) => onPositionChange(skillId, position));
+  };
   const themeStyle = {
     '--constellation-bg': theme?.backgroundColor || '#f7f9fc',
     '--constellation-surface': theme?.surfaceColor || '#ffffff',
@@ -237,13 +363,23 @@ function ConstellationLayoutEditor({
           <h2>{map.name}</h2>
         </div>
         <div className="constellation-layout-simple-actions">
+          {selectedSkillIds.size > 1 && <span className="constellation-layout-selection-count">{selectedSkillIds.size} selected</span>}
+          <button type="button" className="constellation-admin-secondary" disabled={disabled || selectedSkillIds.size < 2} onClick={autoStyleSelection} title="Arrange selected stars from their connections"><Sparkles size={15} aria-hidden="true" /> Auto Style</button>
           {dirtySkillIds.size > 0 && <span className="constellation-layout-dirty-count is-dirty">Unsaved</span>}
           <button type="button" className="constellation-admin-secondary" disabled={disabled || dirtySkillIds.size === 0} onClick={onCancel}><RotateCcw size={15} aria-hidden="true" /> Cancel</button>
-          <button type="button" className="constellation-admin-primary" disabled={disabled || dirtySkillIds.size === 0} onClick={onSave}><Save size={15} aria-hidden="true" /> Save</button>
+          <button type="button" className="constellation-admin-primary" disabled={disabled || dirtySkillIds.size === 0} onClick={onSave} title="Save (Ctrl+S)"><Save size={15} aria-hidden="true" /> Save</button>
         </div>
       </header>
 
       <div className={`constellation-canvas-wrap constellation-layout-canvas-wrap ${gesture?.type === 'pan' ? 'is-panning' : ''}`}>
+        {skills.length > 0 && (
+          <div className="constellation-layout-view-controls" aria-label="Layout view controls">
+            <button type="button" onClick={() => updateZoom(zoom * 1.2)} disabled={disabled} title="Zoom in" aria-label="Zoom in"><ZoomIn aria-hidden="true" /></button>
+            <button type="button" onClick={resetView} disabled={disabled} title="Center constellation" aria-label="Center constellation"><LocateFixed aria-hidden="true" /></button>
+            <button type="button" onClick={() => updateZoom(zoom * 0.8)} disabled={disabled} title="Zoom out" aria-label="Zoom out"><ZoomOut aria-hidden="true" /></button>
+            <span className="constellation-layout-zoom-value" aria-label={`Zoom ${Math.round(zoom * 100)} percent`}>{Math.round(zoom * 100)}%</span>
+          </div>
+        )}
         {skills.length === 0 ? (
           <div className="constellation-layout-empty">Assign a quest to this map to begin arranging its constellation.</div>
         ) : (
@@ -254,12 +390,29 @@ function ConstellationLayoutEditor({
             role="application"
             aria-label={`${map.name} visual layout editor`}
             tabIndex={0}
-            onWheel={handleWheel}
             onKeyDown={handleKeyboard}
             onPointerDown={event => {
               if ((event.target as Element).closest('.constellation-layout-node')) return;
-              onSelectSkill('');
+              const shouldPan = event.pointerType !== 'mouse' || event.button === 1 || event.altKey;
+              if (!shouldPan && event.button !== 0) return;
               event.currentTarget.setPointerCapture(event.pointerId);
+              const world = clientToWorld(event.clientX, event.clientY);
+              if (!shouldPan && world) {
+                beginGesture({
+                  type: 'select',
+                  pointerId: event.pointerId,
+                  startClientX: event.clientX,
+                  startClientY: event.clientY,
+                  startPanX: panX,
+                  startPanY: panY,
+                  startWorldX: world.x,
+                  startWorldY: world.y,
+                  additiveSelection: event.shiftKey || event.metaKey || event.ctrlKey,
+                  initialSelectionIds: [...selectedSkillIds]
+                });
+                setSelectionBox({ startX: world.x, startY: world.y, currentX: world.x, currentY: world.y });
+                return;
+              }
               beginGesture({
                 type: 'pan',
                 pointerId: event.pointerId,
@@ -278,12 +431,24 @@ function ConstellationLayoutEditor({
                 <feGaussianBlur stdDeviation="6" result="blur" />
                 <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
               </filter>
+              <marker id={`constellation-editor-arrow-${map._id}`} className="constellation-layout-arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto" markerUnits="strokeWidth">
+                <path d="M 1 1 L 11 6 L 1 11 Z" />
+              </marker>
+              <marker id={`constellation-editor-special-arrow-${map._id}`} className="constellation-layout-arrow is-special" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto" markerUnits="strokeWidth">
+                <path d="M 1 1 L 11 6 L 1 11 Z" />
+              </marker>
             </defs>
             <rect width={map.viewport.width} height={map.viewport.height} fill="var(--constellation-bg)" pointerEvents="none" />
             <rect width={map.viewport.width} height={map.viewport.height} fill={`url(#constellation-admin-grid-${map._id})`} pointerEvents="none" />
             <g className="constellation-lines constellation-layout-lines" aria-hidden="true">
               {visualEdges.map(edge => (
-                <path key={`${edge.sourceId}-${edge.targetId}`} className={edge.special ? 'is-special' : ''} d={straightConstellationPath(edge.source, edge.target)} vectorEffect="non-scaling-stroke" />
+                <path
+                  key={`${edge.sourceId}-${edge.targetId}`}
+                  className={edge.special ? 'is-special' : ''}
+                  d={editorConnectionPath(edge.source, edge.target)}
+                  markerEnd={`url(#constellation-editor-${edge.special ? 'special-arrow' : 'arrow'}-${map._id})`}
+                  vectorEffect="non-scaling-stroke"
+                />
               ))}
             </g>
             {map.scope === 'discipline' && visualEdges.map(edge => (
@@ -295,6 +460,17 @@ function ConstellationLayoutEditor({
                 r="5"
               />
             ))}
+            {selectionBox && (
+              <rect
+                className="constellation-layout-marquee"
+                x={Math.min(selectionBox.startX, selectionBox.currentX)}
+                y={Math.min(selectionBox.startY, selectionBox.currentY)}
+                width={Math.abs(selectionBox.currentX - selectionBox.startX)}
+                height={Math.abs(selectionBox.currentY - selectionBox.startY)}
+                vectorEffect="non-scaling-stroke"
+                pointerEvents="none"
+              />
+            )}
             <g className="constellation-layout-nodes">
               {skills.map((skill, index) => {
                 const position = positionFor(skill, index);
@@ -310,7 +486,7 @@ function ConstellationLayoutEditor({
                   <g
                     key={skill._id}
                     data-skill-id={skill._id}
-                    className={`constellation-node is-available constellation-layout-node role-${role} ${selectedSkillId === skill._id ? 'is-selected' : ''} ${dirtySkillIds.has(skill._id) ? 'is-dirty' : ''}`}
+                    className={`constellation-node is-available constellation-layout-node role-${role} ${selectedSkillIds.has(skill._id) ? 'is-selected' : ''} ${dirtySkillIds.has(skill._id) ? 'is-dirty' : ''}`}
                     transform={`translate(${position.x} ${position.y})`}
                     role="button"
                     tabIndex={selectedSkillId === skill._id || (!selectedSkillId && index === 0) ? 0 : -1}
@@ -333,11 +509,30 @@ function ConstellationLayoutEditor({
                       if (disabled) return;
                       event.stopPropagation();
                       if (event.button !== 0) {
+                        setSelectedSkillIds(new Set([skill._id]));
                         onSelectSkill(skill._id);
                         return;
                       }
                       event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId);
-                      onSelectSkill(skill._id);
+                      let movingSelection = selectedSkillIds;
+                      if (event.shiftKey || event.metaKey || event.ctrlKey) {
+                        movingSelection = new Set(selectedSkillIds);
+                        if (movingSelection.has(skill._id)) movingSelection.delete(skill._id);
+                        else movingSelection.add(skill._id);
+                        setSelectedSkillIds(movingSelection);
+                        onSelectSkill(movingSelection.has(skill._id) ? skill._id : movingSelection.values().next().value || '');
+                        if (!movingSelection.has(skill._id)) return;
+                      } else if (!selectedSkillIds.has(skill._id)) {
+                        movingSelection = new Set([skill._id]);
+                        setSelectedSkillIds(movingSelection);
+                        onSelectSkill(skill._id);
+                      } else {
+                        onSelectSkill(skill._id);
+                      }
+                      const startNodePositions = Object.fromEntries([...movingSelection].flatMap(selectedId => {
+                        const selectedIndex = skills.findIndex(candidate => candidate._id === selectedId);
+                        return selectedIndex < 0 ? [] : [[selectedId, positionFor(skills[selectedIndex], selectedIndex)]];
+                      }));
                       beginGesture({
                         type: 'node',
                         pointerId: event.pointerId,
@@ -347,17 +542,19 @@ function ConstellationLayoutEditor({
                         startPanX: panX,
                         startPanY: panY,
                         startNodeX: position.x,
-                        startNodeY: position.y
+                        startNodeY: position.y,
+                        startNodePositions
                       }, () => handleNodeTap(skill._id));
                     }}
                     onContextMenu={event => {
                       event.preventDefault();
                       event.stopPropagation();
+                      setSelectedSkillIds(new Set([skill._id]));
                       onSelectSkill(skill._id);
                       onContextMenuSkill?.(skill._id, event.clientX, event.clientY);
                     }}
                   >
-                    {selectedSkillId === skill._id && <circle className="constellation-layout-selection-ring" r={role === 'capstone' ? 58 : 46} />}
+                    {selectedSkillIds.has(skill._id) && <circle className="constellation-layout-selection-ring" r={role === 'capstone' ? 58 : 46} />}
                     <ConstellationNodeGlyph
                       skill={skill}
                       label={skill.constellationLabel || skill.title}

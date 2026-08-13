@@ -1,0 +1,613 @@
+<div id="gugame-game-ui" data-screen="overview">
+  <style>
+    #gugame-game-ui {
+      --gg-void: #080c18;
+      --gg-space: #0d1426;
+      --gg-panel: #111a2d;
+      --gg-panel-2: #172238;
+      --gg-ink: #f2eee3;
+      --gg-muted: #9ca9bd;
+      --gg-line: #36445e;
+      --gg-cyan: #4de7ff;
+      --gg-blue: #62a2ff;
+      --gg-gold: #ffc45b;
+      --gg-red: #ff5d68;
+      --gg-violet: #ad86ff;
+      --gg-green: #63d5a0;
+      color: var(--gg-ink);
+      font-family: "Noto Sans Thai", "Trebuchet MS", sans-serif;
+    }
+    #gugame-game-ui * { box-sizing: border-box; }
+    #gugame-game-ui button { font: inherit; }
+    #gugame-game-ui .gg-switcher {
+      display: flex;
+      justify-content: center;
+      gap: 4px;
+      margin-bottom: 10px;
+      padding: 3px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--card);
+    }
+    #gugame-game-ui .gg-switcher span {
+      align-self: center;
+      margin-right: 8px;
+      color: var(--muted-foreground);
+    }
+    #gugame-game-ui .gg-switcher button {
+      min-height: 36px;
+      padding: 7px 14px;
+      border: 0;
+      border-radius: 4px;
+      color: var(--foreground);
+      background: transparent;
+      cursor: pointer;
+    }
+    #gugame-game-ui .gg-switcher button[aria-pressed="true"] {
+      color: var(--primary-foreground);
+      background: var(--primary);
+    }
+    #gugame-game-ui .gg-window {
+      position: relative;
+      min-height: 760px;
+      overflow: hidden;
+      border: 1px solid #25304a;
+      border-radius: 5px;
+      background-color: var(--gg-void);
+      background-image:
+        radial-gradient(circle at 11% 14%, rgba(255,255,255,.8) 0 1px, transparent 1.4px),
+        radial-gradient(circle at 41% 26%, rgba(77,231,255,.7) 0 1px, transparent 1.5px),
+        radial-gradient(circle at 72% 18%, rgba(255,196,91,.6) 0 1px, transparent 1.5px),
+        radial-gradient(circle at 87% 39%, rgba(255,255,255,.65) 0 1px, transparent 1.4px),
+        radial-gradient(circle at 24% 73%, rgba(255,255,255,.55) 0 1px, transparent 1.3px);
+      background-size: 197px 173px, 251px 211px, 307px 269px, 229px 283px, 337px 241px;
+      box-shadow: 0 18px 55px rgba(3, 6, 14, 0.38);
+    }
+    #gugame-game-ui .gg-window::before,
+    #gugame-game-ui .gg-window::after {
+      position: absolute;
+      z-index: 7;
+      width: 58px;
+      height: 58px;
+      pointer-events: none;
+      content: "";
+      border-color: rgba(255,196,91,.6);
+    }
+    #gugame-game-ui .gg-window::before {
+      top: 10px;
+      left: 10px;
+      border-top: 1px solid;
+      border-left: 1px solid;
+    }
+    #gugame-game-ui .gg-window::after {
+      right: 10px;
+      bottom: 10px;
+      border-right: 1px solid;
+      border-bottom: 1px solid;
+    }
+    #gugame-game-ui .gg-hud {
+      position: relative;
+      z-index: 8;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      min-height: 68px;
+      padding: 0 26px;
+      border-bottom: 1px solid rgba(98,162,255,.26);
+      background: rgba(8,12,24,.92);
+    }
+    #gugame-game-ui .gg-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+    #gugame-game-ui .gg-sigil {
+      position: relative;
+      display: grid;
+      place-items: center;
+      width: 37px;
+      height: 37px;
+      border: 1px solid var(--gg-gold);
+      transform: rotate(45deg);
+    }
+    #gugame-game-ui .gg-sigil::before,
+    #gugame-game-ui .gg-sigil::after {
+      position: absolute;
+      content: "";
+      background: var(--gg-cyan);
+    }
+    #gugame-game-ui .gg-sigil::before { width: 17px; height: 1px; }
+    #gugame-game-ui .gg-sigil::after { width: 1px; height: 17px; }
+    #gugame-game-ui .gg-brand-copy { min-width: 0; }
+    #gugame-game-ui .gg-brand-copy strong {
+      display: block;
+      overflow: hidden;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 18px;
+      font-weight: 500;
+      letter-spacing: .04em;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #gugame-game-ui .gg-brand-copy small {
+      color: var(--gg-muted);
+      font-size: 10px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    #gugame-game-ui .gg-location {
+      color: var(--gg-gold);
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 13px;
+      letter-spacing: .12em;
+      text-align: center;
+      text-transform: uppercase;
+    }
+    #gugame-game-ui .gg-stats {
+      display: flex;
+      justify-content: flex-end;
+      gap: 18px;
+      color: var(--gg-muted);
+      font-size: 11px;
+    }
+    #gugame-game-ui .gg-stats b { color: var(--gg-ink); font-weight: 500; }
+    #gugame-game-ui .gg-content {
+      display: grid;
+      grid-template-columns: 290px minmax(0, 1fr);
+      min-height: 630px;
+      padding-bottom: 62px;
+    }
+    #gugame-game-ui .gg-info {
+      position: relative;
+      z-index: 5;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      padding: 28px 24px 24px;
+      border-right: 1px solid rgba(98,162,255,.25);
+      background: rgba(12,18,34,.94);
+    }
+    #gugame-game-ui .gg-info::after {
+      position: absolute;
+      top: 26px;
+      right: -5px;
+      width: 9px;
+      height: 42px;
+      border-top: 1px solid var(--gg-cyan);
+      border-bottom: 1px solid var(--gg-cyan);
+      background: var(--gg-space);
+      content: "";
+    }
+    #gugame-game-ui .gg-kicker {
+      color: var(--gg-gold);
+      font-size: 10px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    #gugame-game-ui .gg-info h2 {
+      margin: 8px 0 4px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 28px;
+      font-weight: 500;
+      letter-spacing: .03em;
+    }
+    #gugame-game-ui .gg-flavor {
+      margin: 0 0 18px;
+      color: var(--gg-cyan);
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 13px;
+      font-style: italic;
+    }
+    #gugame-game-ui .gg-description {
+      margin: 0;
+      color: #c8d1df;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    #gugame-game-ui .gg-preview-art {
+      position: relative;
+      height: 148px;
+      margin: 20px 0;
+      overflow: hidden;
+      border: 1px solid var(--gg-line);
+      background: #0a1020;
+    }
+    #gugame-game-ui .gg-preview-art::before {
+      position: absolute;
+      inset: 19px 48px;
+      border: 1px solid rgba(255,196,91,.55);
+      content: "";
+      transform: perspective(240px) rotateX(58deg) rotateZ(-18deg);
+      box-shadow:
+        0 0 0 12px rgba(77,231,255,.04),
+        inset 0 0 24px rgba(77,231,255,.13);
+    }
+    #gugame-game-ui .gg-preview-art::after {
+      position: absolute;
+      right: 26px;
+      bottom: 24px;
+      left: 26px;
+      height: 1px;
+      background: var(--gg-cyan);
+      content: "";
+      box-shadow: 0 -30px 0 rgba(77,231,255,.25), 0 -60px 0 rgba(77,231,255,.12);
+    }
+    #gugame-game-ui .gg-objective {
+      margin: 3px 0 16px;
+      padding: 14px 0;
+      border-top: 1px solid var(--gg-line);
+      border-bottom: 1px solid var(--gg-line);
+    }
+    #gugame-game-ui .gg-objective small {
+      display: block;
+      color: var(--gg-muted);
+      font-size: 9px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    #gugame-game-ui .gg-objective strong {
+      display: block;
+      margin-top: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      line-height: 1.45;
+    }
+    #gugame-game-ui .gg-rewards {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    #gugame-game-ui .gg-reward {
+      padding-left: 10px;
+      border-left: 2px solid var(--gg-gold);
+    }
+    #gugame-game-ui .gg-reward small { display: block; color: var(--gg-muted); font-size: 9px; }
+    #gugame-game-ui .gg-reward b { display: block; margin-top: 3px; font-size: 12px; font-weight: 500; }
+    #gugame-game-ui .gg-main-action {
+      position: relative;
+      min-height: 46px;
+      margin-top: auto;
+      border: 1px solid var(--gg-gold);
+      color: #201504;
+      background: var(--gg-gold);
+      font-weight: 500;
+      letter-spacing: .06em;
+      cursor: pointer;
+      clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 10px), calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px), 0 10px);
+    }
+    #gugame-game-ui .gg-map {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+    }
+    #gugame-game-ui .gg-heading {
+      position: absolute;
+      z-index: 4;
+      top: 24px;
+      right: 20px;
+      left: 20px;
+      pointer-events: none;
+      text-align: center;
+    }
+    #gugame-game-ui .gg-heading small {
+      color: var(--gg-blue);
+      font-size: 10px;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+    }
+    #gugame-game-ui .gg-heading h1 {
+      margin: 4px 0 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 31px;
+      font-weight: 500;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      text-shadow: 0 0 18px rgba(77,231,255,.2);
+    }
+    #gugame-game-ui .gg-heading p {
+      margin: 5px 0 0;
+      color: var(--gg-muted);
+      font-size: 11px;
+    }
+    #gugame-game-ui .gg-map-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    #gugame-game-ui .gg-rune-ring {
+      fill: none;
+      stroke: rgba(98,162,255,.12);
+      stroke-width: 1;
+      stroke-dasharray: 2 9;
+    }
+    #gugame-game-ui .gg-formation {
+      fill: none;
+      stroke: rgba(77,231,255,.16);
+      stroke-width: 7;
+      stroke-linecap: round;
+    }
+    #gugame-game-ui .gg-path {
+      fill: none;
+      stroke: #61718d;
+      stroke-width: 1.5;
+    }
+    #gugame-game-ui .gg-path.complete { stroke: var(--gg-cyan); stroke-width: 2; }
+    #gugame-game-ui .gg-path.available { stroke: var(--gg-gold); stroke-width: 2; }
+    #gugame-game-ui .gg-path.locked { stroke-dasharray: 5 7; opacity: .65; }
+    #gugame-game-ui .gg-node { cursor: pointer; }
+    #gugame-game-ui .gg-node-hit { fill: transparent; }
+    #gugame-game-ui .gg-node-halo {
+      fill: none;
+      stroke: transparent;
+      stroke-width: 2;
+    }
+    #gugame-game-ui .gg-node.selected .gg-node-halo {
+      stroke: var(--gg-cyan);
+      stroke-dasharray: 4 4;
+      animation: gg-orbit 7s linear infinite;
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+    #gugame-game-ui .gg-node-shell { fill: var(--gg-panel); stroke-width: 2; }
+    #gugame-game-ui .gg-node.complete .gg-node-shell { stroke: var(--gg-cyan); }
+    #gugame-game-ui .gg-node.available .gg-node-shell { stroke: var(--gg-gold); }
+    #gugame-game-ui .gg-node.locked .gg-node-shell { stroke: #6f7b90; }
+    #gugame-game-ui .gg-node.pending .gg-node-shell { stroke: var(--gg-violet); }
+    #gugame-game-ui .gg-node.boss .gg-node-shell { stroke: var(--gg-red); }
+    #gugame-game-ui .gg-star-core { fill: var(--gg-blue); }
+    #gugame-game-ui .gg-node.complete .gg-star-core { fill: var(--gg-cyan); }
+    #gugame-game-ui .gg-node.available .gg-star-core { fill: var(--gg-gold); }
+    #gugame-game-ui .gg-node.locked .gg-star-core { fill: #7b879c; }
+    #gugame-game-ui .gg-node.pending .gg-star-core { fill: var(--gg-violet); }
+    #gugame-game-ui .gg-node.boss .gg-star-core { fill: var(--gg-red); }
+    #gugame-game-ui .gg-node-label {
+      fill: var(--gg-ink);
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 15px;
+      font-weight: 500;
+      letter-spacing: .02em;
+    }
+    #gugame-game-ui .gg-node-state {
+      fill: var(--gg-muted);
+      font-family: "Noto Sans Thai", sans-serif;
+      font-size: 11px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    #gugame-game-ui .gg-node.boss .gg-node-state { fill: var(--gg-red); }
+    #gugame-game-ui .gg-node.complete .gg-node-state { fill: var(--gg-cyan); }
+    #gugame-game-ui .gg-node.available .gg-node-state { fill: var(--gg-gold); }
+    #gugame-game-ui .gg-map-tools {
+      position: absolute;
+      z-index: 5;
+      right: 18px;
+      bottom: 18px;
+      display: flex;
+      gap: 6px;
+    }
+    #gugame-game-ui .gg-map-tools button {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      border: 1px solid var(--gg-line);
+      color: var(--gg-ink);
+      background: rgba(10,16,32,.88);
+      cursor: pointer;
+    }
+    #gugame-game-ui .gg-legend {
+      position: absolute;
+      z-index: 5;
+      bottom: 24px;
+      left: 20px;
+      display: flex;
+      gap: 12px;
+      color: var(--gg-muted);
+      font-size: 10px;
+    }
+    #gugame-game-ui .gg-legend span::before {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      margin-right: 5px;
+      content: "";
+      transform: rotate(45deg);
+      background: currentColor;
+    }
+    #gugame-game-ui .gg-legend .c { color: var(--gg-cyan); }
+    #gugame-game-ui .gg-legend .a { color: var(--gg-gold); }
+    #gugame-game-ui .gg-legend .p { color: var(--gg-violet); }
+    #gugame-game-ui .gg-legend .l { color: #7b879c; }
+    #gugame-game-ui .gg-bottom-nav {
+      position: absolute;
+      z-index: 9;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 42px;
+      height: 62px;
+      border-top: 1px solid rgba(98,162,255,.25);
+      background: rgba(8,12,24,.95);
+    }
+    #gugame-game-ui .gg-bottom-nav button {
+      min-width: 70px;
+      min-height: 42px;
+      border: 0;
+      color: var(--gg-muted);
+      background: transparent;
+      font-size: 11px;
+      letter-spacing: .08em;
+      cursor: pointer;
+      text-transform: uppercase;
+    }
+    #gugame-game-ui .gg-bottom-nav button.is-active { color: var(--gg-gold); border-bottom: 1px solid var(--gg-gold); }
+    #gugame-game-ui .gg-overview,
+    #gugame-game-ui .gg-topic { display: none; }
+    #gugame-game-ui[data-screen="overview"] .gg-overview { display: block; }
+    #gugame-game-ui[data-screen="topic"] .gg-topic { display: block; }
+    @keyframes gg-orbit { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      #gugame-game-ui .gg-node.selected .gg-node-halo { animation: none; }
+    }
+    @media (max-width: 760px) {
+      #gugame-game-ui .gg-switcher { overflow-x: auto; justify-content: flex-start; }
+      #gugame-game-ui .gg-window { min-height: 1000px; }
+      #gugame-game-ui .gg-hud { grid-template-columns: 1fr auto; padding: 0 16px; }
+      #gugame-game-ui .gg-location { display: none; }
+      #gugame-game-ui .gg-stats span:not(:first-child) { display: none; }
+      #gugame-game-ui .gg-content { grid-template-columns: 1fr; grid-template-rows: auto 560px; padding-bottom: 58px; }
+      #gugame-game-ui .gg-info { order: 2; min-height: 330px; padding: 20px; border-top: 1px solid rgba(98,162,255,.25); border-right: 0; }
+      #gugame-game-ui .gg-info::after { display: none; }
+      #gugame-game-ui .gg-preview-art { display: none; }
+      #gugame-game-ui .gg-map { order: 1; min-height: 560px; }
+      #gugame-game-ui .gg-map-svg { left: 50%; width: 700px; transform: translateX(-50%); }
+      #gugame-game-ui .gg-heading h1 { font-size: 23px; }
+      #gugame-game-ui .gg-heading p { display: none; }
+      #gugame-game-ui .gg-legend { right: 12px; bottom: 12px; left: 12px; justify-content: center; gap: 8px; }
+      #gugame-game-ui .gg-map-tools { top: 76px; right: 12px; bottom: auto; flex-direction: column; }
+      #gugame-game-ui .gg-bottom-nav { gap: 0; justify-content: space-around; }
+      #gugame-game-ui .gg-bottom-nav button { min-width: 0; padding: 0 7px; }
+    }
+  </style>
+
+  <div class="gg-switcher" aria-label="Draft screen">
+    <span>Check screen</span>
+    <button type="button" data-screen-button="overview" aria-pressed="true">Skill universe</button>
+    <button type="button" data-screen-button="topic" aria-pressed="false">3D Modeling quest</button>
+  </div>
+
+  <section class="gg-window" aria-label="Game-like GuGame redesign draft">
+    <header class="gg-hud">
+      <div class="gg-brand">
+        <div class="gg-sigil" aria-hidden="true"></div>
+        <div class="gg-brand-copy"><strong>GuGame</strong><small>Starbound Learning Guild</small></div>
+      </div>
+      <div class="gg-location gg-overview">Skill Constellations</div>
+      <div class="gg-location gg-topic">Game Art · 3D Modeling</div>
+      <div class="gg-stats">
+        <span><b>500</b> AP</span>
+        <span><b>12m</b> today</span>
+        <span><b>Lv. 8</b> Tester</span>
+      </div>
+    </header>
+
+    <div class="gg-content">
+      <aside class="gg-info gg-overview">
+        <span class="gg-kicker">Available discipline</span>
+        <h2>Game Art</h2>
+        <p class="gg-flavor">Give form to impossible worlds.</p>
+        <p class="gg-description">Master shape, material, motion, effects, interface, and sound through connected production quests.</p>
+        <div class="gg-preview-art" aria-label="Game Art output preview"></div>
+        <div class="gg-objective"><small>Next path</small><strong>3D Modeling · Create your first game-ready environment</strong></div>
+        <div class="gg-rewards">
+          <div class="gg-reward"><small>Path progress</small><b>1 / 5 topics</b></div>
+          <div class="gg-reward"><small>Path reward</small><b>75 AP</b></div>
+        </div>
+        <button class="gg-main-action" type="button" data-open-topic>Enter 3D Modeling</button>
+      </aside>
+
+      <aside class="gg-info gg-topic">
+        <span class="gg-kicker">Boss quest · Available</span>
+        <h2>Scenery</h2>
+        <p class="gg-flavor">Build a world that speaks before anyone does.</p>
+        <p class="gg-description">Create one complete environment shot with clear focal hierarchy, readable materials, and purposeful lighting.</p>
+        <div class="gg-preview-art" aria-label="Scenery quest output preview"></div>
+        <div class="gg-objective"><small>Victory condition</small><strong>Submit one final cinematic environment image</strong></div>
+        <div class="gg-rewards">
+          <div class="gg-reward"><small>Reward</small><b>50 AP</b></div>
+          <div class="gg-reward"><small>Unlocks</small><b>Cinematic route</b></div>
+        </div>
+        <button class="gg-main-action" type="button">Begin Boss Quest</button>
+      </aside>
+
+      <div class="gg-map">
+        <div class="gg-heading gg-overview"><small>12 / 38 stars awakened</small><h1>Choose Your Constellation</h1><p>Three disciplines exist apart, but all belong to the same universe.</p></div>
+        <div class="gg-heading gg-topic"><small>4 / 11 quests mastered</small><h1>3D Modeling</h1><p>Two mastery paths converge at the Cinematic capstone.</p></div>
+
+        <svg class="gg-map-svg gg-overview" viewBox="0 0 900 650" role="img" aria-label="Programming, Unity Development and Game Art constellations">
+          <circle class="gg-rune-ring" cx="165" cy="337" r="118"/>
+          <circle class="gg-rune-ring" cx="455" cy="320" r="126"/>
+          <circle class="gg-rune-ring" cx="742" cy="334" r="132"/>
+          <path class="gg-formation" d="M112 280 L165 220 L218 280 L198 350 L165 416 L126 350 Z"/>
+          <path class="gg-path complete" d="M165 220 L112 280 L126 350"/>
+          <path class="gg-path available" d="M165 220 L218 280 L198 350"/>
+          <path class="gg-path locked" d="M126 350 L165 416 L198 350"/>
+          <path class="gg-formation" d="M455 204 L384 294 L455 374 L526 294 M455 204 L455 455"/>
+          <path class="gg-path complete" d="M455 204 L384 294 L455 374"/>
+          <path class="gg-path available" d="M455 204 L526 294 L455 374"/>
+          <path class="gg-path locked" d="M455 374 L455 455"/>
+          <path class="gg-formation" d="M742 208 L646 292 L675 404 L742 450 L811 404 L838 292 Z"/>
+          <path class="gg-path complete" d="M742 208 L646 292 L675 404"/>
+          <path class="gg-path available" d="M742 208 L838 292 L811 404"/>
+          <path class="gg-path locked" d="M675 404 L742 450 L811 404"/>
+
+          <g class="gg-node complete" transform="translate(165 220)"><circle class="gg-node-hit" r="30"/><circle class="gg-node-halo" r="24"/><circle class="gg-node-shell" r="15"/><path class="gg-star-core" d="M0-10 L3-3 L10 0 L3 3 L0 10 L-3 3 L-10 0 L-3-3Z"/><text class="gg-node-label" text-anchor="middle" y="-34">Programming</text><text class="gg-node-state" text-anchor="middle" y="-20">1 / 4 awakened</text></g>
+          <g class="gg-node available" transform="translate(455 204)"><circle class="gg-node-hit" r="30"/><circle class="gg-node-halo" r="24"/><circle class="gg-node-shell" r="15"/><path class="gg-star-core" d="M0-10 L3-3 L10 0 L3 3 L0 10 L-3 3 L-10 0 L-3-3Z"/><text class="gg-node-label" text-anchor="middle" y="-34">Unity Development</text><text class="gg-node-state" text-anchor="middle" y="-20">1 / 4 awakened</text></g>
+          <g class="gg-node selected available" transform="translate(742 208)"><circle class="gg-node-hit" r="34"/><circle class="gg-node-halo" r="27"/><circle class="gg-node-shell" r="16"/><path class="gg-star-core" d="M0-11 L3-3 L11 0 L3 3 L0 11 L-3 3 L-11 0 L-3-3Z"/><text class="gg-node-label" text-anchor="middle" y="-36">Game Art</text><text class="gg-node-state" text-anchor="middle" y="-21">1 / 5 awakened</text></g>
+          <g class="gg-node complete" transform="translate(646 292)"><circle class="gg-node-hit" r="26"/><circle class="gg-node-shell" r="12"/><path class="gg-star-core" d="M0-8 L3-2 L8 0 L3 2 L0 8 L-3 2 L-8 0 L-3-2Z"/><text class="gg-node-label" text-anchor="end" x="-20" y="5">3D Modeling</text></g>
+          <g class="gg-node available" transform="translate(838 292)"><circle class="gg-node-hit" r="26"/><circle class="gg-node-shell" r="12"/><path class="gg-star-core" d="M0-8 L3-2 L8 0 L3 2 L0 8 L-3 2 L-8 0 L-3-2Z"/><text class="gg-node-label" x="20" y="5">Materials</text></g>
+          <g class="gg-node locked" transform="translate(675 404)"><circle class="gg-node-hit" r="26"/><circle class="gg-node-shell" r="12"/><path class="gg-star-core" d="M0-8 L3-2 L8 0 L3 2 L0 8 L-3 2 L-8 0 L-3-2Z"/><text class="gg-node-label" text-anchor="end" x="-20" y="5">Animation</text></g>
+          <g class="gg-node locked" transform="translate(811 404)"><circle class="gg-node-hit" r="26"/><circle class="gg-node-shell" r="12"/><path class="gg-star-core" d="M0-8 L3-2 L8 0 L3 2 L0 8 L-3 2 L-8 0 L-3-2Z"/><text class="gg-node-label" x="20" y="5">VFX</text></g>
+        </svg>
+
+        <svg class="gg-map-svg gg-topic" viewBox="0 0 900 650" role="img" aria-label="3D Modeling quest constellation with two mastery paths and boss quests">
+          <circle class="gg-rune-ring" cx="510" cy="345" r="255"/>
+          <path class="gg-formation" d="M510 118 L510 248 M510 248 L308 350 L288 500 L510 580 M510 248 L712 350 L732 500 L510 580"/>
+          <path class="gg-path complete" d="M510 118 L510 182 L510 248"/>
+          <path class="gg-path available" d="M510 248 L362 330 L306 405 L288 500"/>
+          <path class="gg-path available" d="M510 248 L658 330 L714 405 L732 500"/>
+          <path class="gg-path locked" d="M288 500 L510 580 L732 500"/>
+          <text class="gg-node-state" x="292" y="302" fill="#ffc45b">PAINTING PATH</text>
+          <text class="gg-node-state" x="650" y="302" fill="#ffc45b">MODELING PATH</text>
+
+          <g class="gg-node complete" transform="translate(510 118)"><circle class="gg-node-hit" r="26"/><circle class="gg-node-shell" r="12"/><path class="gg-star-core" d="M0-8 L3-2 L8 0 L3 2 L0 8 L-3 2 L-8 0 L-3-2Z"/><text class="gg-node-label" x="22" y="5">Blender Setup</text></g>
+          <g class="gg-node complete" transform="translate(510 182)"><circle class="gg-node-hit" r="26"/><circle class="gg-node-shell" r="12"/><path class="gg-star-core" d="M0-8 L3-2 L8 0 L3 2 L0 8 L-3 2 L-8 0 L-3-2Z"/><text class="gg-node-label" x="22" y="5">Blender Basic</text></g>
+          <g class="gg-node available" transform="translate(510 248)"><circle class="gg-node-hit" r="28"/><circle class="gg-node-shell" r="14"/><path class="gg-star-core" d="M0-9 L3-3 L9 0 L3 3 L0 9 L-3 3 L-9 0 L-3-3Z"/><text class="gg-node-label" x="24" y="5">Addons</text></g>
+          <g class="gg-node available" transform="translate(362 330)"><circle class="gg-node-hit" r="26"/><circle class="gg-node-shell" r="12"/><path class="gg-star-core" d="M0-8 L3-2 L8 0 L3 2 L0 8 L-3 2 L-8 0 L-3-2Z"/><text class="gg-node-label" text-anchor="end" x="-21" y="5">Painting</text></g>
+          <g class="gg-node available" transform="translate(306 405)"><circle class="gg-node-hit" r="26"/><circle class="gg-node-shell" r="12"/><path class="gg-star-core" d="M0-8 L3-2 L8 0 L3 2 L0 8 L-3 2 L-8 0 L-3-2Z"/><text class="gg-node-label" text-anchor="end" x="-21" y="5">Lighting</text></g>
+          <g class="gg-node selected boss" transform="translate(288 500)"><circle class="gg-node-hit" r="34"/><circle class="gg-node-halo" r="28"/><circle class="gg-node-shell" r="17"/><path class="gg-star-core" d="M0-12 L4-4 L12 0 L4 4 L0 12 L-4 4 L-12 0 L-4-4Z"/><text class="gg-node-label" text-anchor="end" x="-28" y="1">Scenery</text><text class="gg-node-state" text-anchor="end" x="-28" y="17">Boss quest</text></g>
+          <g class="gg-node available" transform="translate(658 330)"><circle class="gg-node-hit" r="26"/><circle class="gg-node-shell" r="12"/><path class="gg-star-core" d="M0-8 L3-2 L8 0 L3 2 L0 8 L-3 2 L-8 0 L-3-2Z"/><text class="gg-node-label" x="21" y="5">Sculpt</text></g>
+          <g class="gg-node available" transform="translate(714 405)"><circle class="gg-node-hit" r="26"/><circle class="gg-node-shell" r="12"/><path class="gg-star-core" d="M0-8 L3-2 L8 0 L3 2 L0 8 L-3 2 L-8 0 L-3-2Z"/><text class="gg-node-label" x="21" y="5">Animation</text></g>
+          <g class="gg-node pending boss" transform="translate(732 500)"><circle class="gg-node-hit" r="34"/><circle class="gg-node-shell" r="17"/><path class="gg-star-core" d="M0-12 L4-4 L12 0 L4 4 L0 12 L-4 4 L-12 0 L-4-4Z"/><text class="gg-node-label" x="28" y="1">Action!</text><text class="gg-node-state" x="28" y="17">Pending review</text></g>
+          <g class="gg-node locked" transform="translate(510 580)"><circle class="gg-node-hit" r="38"/><circle class="gg-node-shell" r="20"/><path class="gg-star-core" d="M0-14 L5-5 L14 0 L5 5 L0 14 L-5 5 L-14 0 L-5-5Z"/><text class="gg-node-label" x="30" y="1">Cinematic</text><text class="gg-node-state" x="30" y="17">Big boss · locked</text></g>
+        </svg>
+
+        <div class="gg-legend"><span class="c">Awakened</span><span class="a">Available</span><span class="p">Pending</span><span class="l">Locked</span></div>
+        <div class="gg-map-tools">
+          <button type="button" aria-label="Zoom in">+</button>
+          <button type="button" aria-label="Center constellation">◎</button>
+          <button type="button" aria-label="Zoom out">−</button>
+        </div>
+      </div>
+    </div>
+
+    <nav class="gg-bottom-nav" aria-label="Primary navigation">
+      <button type="button" class="is-active">Constellations</button>
+      <button type="button">Guild</button>
+      <button type="button">Rewards</button>
+      <button type="button">Shop</button>
+    </nav>
+  </section>
+
+  <script>
+    (() => {
+      const root = document.getElementById('gugame-game-ui');
+      const setScreen = (screen) => {
+        root.dataset.screen = screen;
+        root.querySelectorAll('[data-screen-button]').forEach((button) => {
+          button.setAttribute('aria-pressed', String(button.dataset.screenButton === screen));
+        });
+      };
+      root.querySelectorAll('[data-screen-button]').forEach((button) => {
+        button.addEventListener('click', () => setScreen(button.dataset.screenButton));
+      });
+      root.querySelector('[data-open-topic]').addEventListener('click', () => setScreen('topic'));
+    })();
+  </script>
+</div>

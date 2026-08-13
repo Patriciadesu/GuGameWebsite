@@ -1,6 +1,17 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X } from 'lucide-react';
+import {
+  ArrowLeft,
+  BookOpen,
+  Check,
+  Coins,
+  ExternalLink,
+  LockKeyhole,
+  PenLine,
+  RefreshCw,
+  ShoppingBag,
+  X
+} from 'lucide-react';
 import axios from '../config/axios';
 import './MainMenu.css';
 import './Shop.css';
@@ -71,6 +82,7 @@ function Shop() {
   const fictionModalRef = useRef<HTMLDivElement | null>(null);
   const fictionModalCloseRef = useRef<HTMLButtonElement | null>(null);
   const fictionModalOpenerRef = useRef<HTMLElement | null>(null);
+  const purchaseOperationIdsRef = useRef(new Map<string, string>());
   const isClosingFictionModalRef = useRef(false);
   const isExternalInventoryItem = (item: ShopItem) => item.externalSource === 'office-catalog';
 
@@ -193,10 +205,32 @@ function Shop() {
 
     try {
       console.log('Sending purchase request to backend...');
-      const response = await axios.post(`/api/shop/items/${item._id}/purchase`);
+      const isExternalPurchase = isExternalInventoryItem(item);
+      const operationStorageKey = `gugame-purchase-operation:${item._id}`;
+      const operationId = isExternalPurchase
+        ? purchaseOperationIdsRef.current.get(item._id) || sessionStorage.getItem(operationStorageKey) || crypto.randomUUID()
+        : null;
+      if (operationId) {
+        purchaseOperationIdsRef.current.set(item._id, operationId);
+        sessionStorage.setItem(operationStorageKey, operationId);
+      }
+      const response = await axios.post(
+        `/api/shop/items/${item._id}/purchase`,
+        undefined,
+        operationId ? { headers: { 'Idempotency-Key': operationId } } : undefined
+      );
       console.log('Purchase response:', response.data);
+
+      if (response.status === 202 || response.data.pending) {
+        alert(response.data.message || 'Purchase pending reconciliation. You will not be charged again.');
+        return;
+      }
       
       if (response.data.success) {
+        if (operationId) {
+          purchaseOperationIdsRef.current.delete(item._id);
+          sessionStorage.removeItem(operationStorageKey);
+        }
         console.log('[Frontend] Purchase successful - Response data:', response.data);
         console.log('[Frontend] Current asset points before update:', assetPoints);
         console.log('[Frontend] Item price:', item.price);
@@ -261,9 +295,9 @@ function Shop() {
         } else {
           // For normal items: Show success message and reload stats
           if (item.itemType === 'normal' && response.data.productData) {
-            alert(`🎉 Successfully purchased "${item.title}"!\n\nProduct: ${response.data.productData}`);
+            alert(`Successfully purchased "${item.title}"!\n\nProduct: ${response.data.productData}`);
           } else {
-            alert(`🎉 Successfully purchased "${item.title}"!\n\n${response.data.message || ''}`);
+            alert(`Successfully purchased "${item.title}"!\n\n${response.data.message || ''}`);
           }
           
           // Reload shop items and user stats to reflect the purchase
@@ -280,6 +314,10 @@ function Shop() {
     } catch (error: any) {
       console.error('Error purchasing item:', error);
       console.error('Error details:', error.response?.data);
+      if (error.response?.data?.code === 'EXTERNAL_GRANT_REJECTED' || error.response?.data?.code === 'PURCHASE_ROLLED_BACK') {
+        purchaseOperationIdsRef.current.delete(item._id);
+        sessionStorage.removeItem(`gugame-purchase-operation:${item._id}`);
+      }
       alert(error.response?.data?.error || 'Failed to purchase item');
     }
   };
@@ -612,570 +650,192 @@ function Shop() {
     setShowFictionModal(true);
   };
 
+  const handleItemAction = (item: ShopItem) => {
+    if (item.itemType === 'normal' && item.isPurchased && item.productData) {
+      window.open(item.productData, '_blank');
+    } else if (item.itemType === 'fiction' || item.itemType === undefined) {
+      if (item.hasEverPurchased && !item.isPurchased) {
+        handleViewFiction(item);
+      } else if (item.isPurchased && assetPoints < item.price) {
+        handleViewFiction(item);
+      } else {
+        handlePurchase(item);
+      }
+    } else {
+      handlePurchase(item);
+    }
+  };
+
+  const isItemActionDisabled = (item: ShopItem) => {
+    const isFiction = item.itemType === 'fiction' || item.itemType === undefined;
+
+    // Fiction remains readable after the first purchase, even without enough
+    // balance for another writing pass.
+    if (isFiction && item.hasEverPurchased) return false;
+    if (item.itemType === 'normal' && item.isPurchased && item.productData) return false;
+    if (item.isPurchased && item.itemType === 'normal' && !isExternalInventoryItem(item)) return true;
+
+    return !item.isActive || assetPoints < item.price;
+  };
+
+  const formatLockTime = (milliseconds: number) =>
+    Math.floor(milliseconds / 1000 / 60) + ':' +
+    String(Math.floor((milliseconds / 1000) % 60)).padStart(2, '0');
+
   if (loading) {
     return (
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        height: '100vh',
-        fontSize: '2rem'
-      }}>
-        Loading...
+      <div className="shop-loading" role="status">
+        <span className="shop-loading-mark" aria-hidden="true" />
+        Loading shop
       </div>
     );
   }
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-      padding: '20px'
-    }}>
-      <div style={{
-        maxWidth: '1400px',
-        margin: '0 auto',
-        background: 'white',
-        borderRadius: '24px',
-        boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
-        overflow: 'hidden',
-        minHeight: 'calc(100vh - 40px)',
-        display: 'flex',
-        flexDirection: 'column'
-      }}>
-        {/* Header */}
-        <div style={{
-          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-          padding: '30px 40px',
-          color: 'white',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          position: 'relative'
-        }}>
-          <button
-            onClick={() => navigate('/mainmenu')}
-            style={{
-              padding: '12px 24px',
-              background: 'rgba(255, 255, 255, 0.2)',
-              backdropFilter: 'blur(10px)',
-              color: 'white',
-              border: '2px solid rgba(255, 255, 255, 0.3)',
-              borderRadius: '12px',
-              fontSize: '1.5rem',
-              fontWeight: '600',
-              cursor: 'pointer',
-              fontFamily: 'Dongle, sans-serif',
-              transition: 'all 0.3s',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.3)';
-              e.currentTarget.style.transform = 'translateX(-4px)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)';
-              e.currentTarget.style.transform = 'translateX(0)';
-            }}
-          >
-            ← Back
+    <main className="shop-page">
+      <section className="shop-window" aria-labelledby="shop-title">
+        <header className="shop-hud">
+          <button className="shop-back" type="button" onClick={() => navigate('/mainmenu')}>
+            <ArrowLeft aria-hidden="true" size={18} />
+            <span>Constellations</span>
           </button>
-          
-          <div style={{ 
-            display: 'flex', 
-            flexDirection: 'column', 
-            alignItems: 'center',
-            gap: '8px'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <h1 style={{ 
-                fontSize: '3.5rem', 
-                fontWeight: '700', 
-                margin: 0,
-                fontFamily: 'Dongle, sans-serif',
-                textShadow: '0 2px 10px rgba(0,0,0,0.2)'
-              }}>
-                🛒 Shop
-              </h1>
-              {(user?.role === 'admin' || user?.role === 'super-admin') && (
-                <span style={{
-                  padding: '4px 12px',
-                  background: 'rgba(255, 255, 255, 0.3)',
-                  backdropFilter: 'blur(10px)',
-                  borderRadius: '12px',
-                  fontSize: '1.2rem',
-                  fontWeight: '600',
-                  fontFamily: 'Dongle, sans-serif',
-                  border: '2px solid rgba(255, 255, 255, 0.4)'
-                }}>
-                  👑 Admin
-                </span>
-              )}
-            </div>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '8px 20px',
-              background: 'rgba(255, 255, 255, 0.2)',
-              backdropFilter: 'blur(10px)',
-              borderRadius: '20px',
-              border: '2px solid rgba(255, 255, 255, 0.3)',
-              fontSize: '1.6rem',
-              fontWeight: '600',
-              fontFamily: 'Dongle, sans-serif'
-            }}>
-              <span>💎</span>
-              <span>{assetPoints.toLocaleString()} {assetPointName}</span>
+
+          <div className="shop-brand">
+            <span className="shop-sigil" aria-hidden="true" />
+            <div>
+              <span className="shop-kicker">GuGame Exchange</span>
+              <h1 id="shop-title">Starbound Shop</h1>
             </div>
           </div>
-          
-          <div style={{ width: '100px' }}></div>
+
+          <div className="shop-balance" aria-label={'Balance: ' + assetPoints.toLocaleString() + ' ' + assetPointName}>
+            <Coins aria-hidden="true" size={18} />
+            <span>Balance</span>
+            <strong>{assetPoints.toLocaleString()}</strong>
+            <small>{assetPointName}</small>
+          </div>
+        </header>
+
+        <div className="shop-section-heading">
+          <div>
+            <span className="shop-kicker">Available provisions</span>
+            <h2>Exchange inventory</h2>
+          </div>
+          <span className="shop-item-count">
+            {shopItems.length} {shopItems.length === 1 ? 'item' : 'items'}
+          </span>
         </div>
 
-        {/* Shop Items Grid */}
-        <div style={{ 
-          padding: '40px', 
-          flex: 1,
-          background: '#f8fafc'
-        }}>
+        <div className="shop-items-container">
           {shopItems.length === 0 ? (
-            <div style={{ 
-              textAlign: 'center', 
-              padding: '80px 20px',
-              background: 'white',
-              borderRadius: '20px',
-              border: '2px dashed #e5e7eb',
-              maxWidth: '600px',
-              margin: '0 auto'
-            }}>
-              <div style={{ 
-                fontSize: '5rem', 
-                marginBottom: '20px',
-                filter: 'grayscale(0.3)'
-              }}>
-                🛒
-              </div>
-              <h2 style={{ 
-                fontSize: '2.5rem', 
-                color: '#374151', 
-                marginBottom: '12px',
-                fontFamily: 'Dongle, sans-serif',
-                fontWeight: '700'
-              }}>
-                Shop is Empty
-              </h2>
-              <p style={{ 
-                fontSize: '1.6rem', 
-                color: '#6b7280',
-                fontFamily: 'Dongle, sans-serif'
-              }}>
-                Check back later for new items!
-              </p>
+            <div className="empty-shop">
+              <ShoppingBag aria-hidden="true" size={34} />
+              <h2>Inventory unavailable</h2>
+              <p>New provisions will appear here when the exchange is restocked.</p>
             </div>
           ) : (
-            <div style={{ 
-              display: 'grid', 
-              gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', 
-              gap: '28px' 
-            }}>
-              {shopItems.map((item) => (
-                <div
-                  key={item._id}
-                  style={{
-                    background: 'white',
-                    borderRadius: '20px',
-                    border: `3px solid ${item.isPurchased ? '#22c55e' : !item.isActive ? '#fbbf24' : assetPoints >= item.price ? '#e5e7eb' : '#f3f4f6'}`,
-                    overflow: 'hidden',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                    cursor: ((assetPoints >= item.price && (!item.isPurchased || isExternalInventoryItem(item)) && item.isActive) || 
-                             (item.isPurchased && (item.itemType === 'fiction' || item.itemType === undefined) && assetPoints >= item.price && item.isActive))
-                             ? 'pointer' : 'default',
-                    boxShadow: item.isPurchased 
-                      ? '0 4px 20px rgba(34, 197, 94, 0.3)' 
-                      : !item.isActive
-                      ? '0 4px 15px rgba(251, 191, 36, 0.2)'
-                      : assetPoints >= item.price
-                      ? '0 4px 15px rgba(0,0,0,0.08)'
-                      : '0 2px 8px rgba(0,0,0,0.05)',
-                    position: 'relative',
-                    opacity: !item.isActive ? 0.7 : 1
-                  }}
-                  onMouseEnter={(e) => {
-                    if (assetPoints >= item.price && !item.isPurchased && item.isActive) {
-                      e.currentTarget.style.transform = 'translateY(-8px) scale(1.02)';
-                      e.currentTarget.style.boxShadow = '0 12px 30px rgba(102, 126, 234, 0.25)';
-                      e.currentTarget.style.borderColor = '#667eea';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = 'translateY(0) scale(1)';
-                    e.currentTarget.style.boxShadow = item.isPurchased 
-                      ? '0 4px 20px rgba(34, 197, 94, 0.3)' 
-                      : !item.isActive
-                      ? '0 4px 15px rgba(251, 191, 36, 0.2)'
-                      : assetPoints >= item.price
-                      ? '0 4px 15px rgba(0,0,0,0.08)'
-                      : '0 2px 8px rgba(0,0,0,0.05)';
-                    e.currentTarget.style.borderColor = item.isPurchased ? '#22c55e' : !item.isActive ? '#fbbf24' : assetPoints >= item.price ? '#e5e7eb' : '#f3f4f6';
-                  }}
-                  onClick={() => {
-                    // Allow purchase for unpurchased items
-                    // Allow repurchase for Fiction items if user has enough AP
-                    if (assetPoints >= item.price && item.isActive) {
-                      if (!item.isPurchased || (item.itemType === 'fiction' || item.itemType === undefined) || isExternalInventoryItem(item)) {
-                        handlePurchase(item);
-                      }
-                    }
-                  }}
-                >
-                  {/* Purchased Badge */}
-                  {item.isPurchased && (
-                    <div style={{
-                      position: 'absolute',
-                      top: '12px',
-                      right: '12px',
-                      background: '#22c55e',
-                      color: 'white',
-                      padding: '6px 14px',
-                      borderRadius: '20px',
-                      fontSize: '1.2rem',
-                      fontWeight: '600',
-                      fontFamily: 'Dongle, sans-serif',
-                      zIndex: 10,
-                      boxShadow: '0 2px 8px rgba(34, 197, 94, 0.4)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px'
-                    }}>
-                      ✓ Purchased
-                    </div>
-                  )}
+            <div className="shop-items-grid">
+              {shopItems.map((item) => {
+                const isFiction = item.itemType === 'fiction' || item.itemType === undefined;
+                const canAfford = assetPoints >= item.price;
+                const isDisabled = isItemActionDisabled(item);
+                const status = !item.isActive
+                  ? 'Inactive'
+                  : item.isPurchased && isFiction
+                    ? 'Writing pass active'
+                    : item.isPurchased
+                      ? 'Owned'
+                      : isFiction && item.hasEverPurchased
+                        ? 'Reading unlocked'
+                        : canAfford
+                          ? 'Available'
+                          : 'Insufficient balance';
+                const stateClass = !item.isActive
+                  ? 'is-inactive'
+                  : item.isPurchased
+                    ? 'is-purchased'
+                    : canAfford
+                      ? 'is-available'
+                      : 'is-unaffordable';
+                const actionLabel = item.isPurchased
+                  ? isFiction
+                    ? canAfford ? 'Repurchase and write' : 'Read fiction'
+                    : item.itemType === 'normal' && item.productData
+                      ? 'View product'
+                      : isExternalInventoryItem(item) ? 'Buy another' : 'Purchased'
+                  : isFiction && item.hasEverPurchased
+                    ? 'Read fiction'
+                    : !item.isActive
+                      ? 'Unavailable'
+                      : canAfford
+                        ? isFiction ? 'Buy and write' : 'Purchase'
+                        : 'Need ' + (item.price - assetPoints).toLocaleString() + ' more';
 
-                  {/* Item Image */}
-                  <div style={{ 
-                    position: 'relative', 
-                    width: '100%', 
-                    paddingBottom: '75%', 
-                    background: 'linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)',
-                    overflow: 'hidden'
-                  }}>
-                    <img
-                      src={item.imageUrl}
-                      alt={item.title}
-                      style={{
-                        position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'cover',
-                        transition: 'transform 0.3s'
-                      }}
-                      onMouseEnter={(e) => {
-                        if (assetPoints >= item.price && !item.isPurchased) {
-                          (e.target as HTMLImageElement).style.transform = 'scale(1.1)';
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        (e.target as HTMLImageElement).style.transform = 'scale(1)';
-                      }}
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="%23f3f4f6"/><text x="50%25" y="50%25" text-anchor="middle" dy=".3em" fill="%239ca3af" font-size="14">No Image</text></svg>';
-                      }}
-                    />
-                    {item.isPurchased && (
-                      <div style={{
-                        position: 'absolute',
-                        inset: 0,
-                        background: 'rgba(34, 197, 94, 0.15)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center'
-                      }}>
-                        <div style={{
-                          background: 'rgba(34, 197, 94, 0.9)',
-                          color: 'white',
-                          padding: '12px 24px',
-                          borderRadius: '12px',
-                          fontSize: '1.8rem',
-                          fontWeight: '700',
-                          fontFamily: 'Dongle, sans-serif',
-                          boxShadow: '0 4px 12px rgba(0,0,0,0.2)'
-                        }}>
-                          ✓ Owned
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Item Info */}
-                  <div style={{ 
-                    padding: '20px', 
-                    display: 'flex', 
-                    flexDirection: 'column', 
-                    gap: '16px', 
-                    flex: 1 
-                  }}>
-                    <div>
-                      <h3 style={{ 
-                        fontSize: '2rem', 
-                        fontWeight: '700', 
-                        color: '#14306d', 
-                        marginBottom: '10px',
-                        fontFamily: 'Dongle, sans-serif',
-                        lineHeight: '1.2',
-                        minHeight: '2.4rem'
-                      }}>
-                        {item.title}
-                      </h3>
-                      {item.description && (
-                        <p style={{ 
-                          fontSize: '1.4rem', 
-                          color: '#6b7280', 
-                          lineHeight: '1.6',
-                          fontFamily: 'Dongle, sans-serif',
-                          display: '-webkit-box',
-                          WebkitLineClamp: 3,
-                          WebkitBoxOrient: 'vertical',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          minHeight: '6.7rem'
-                        }}>
-                          {item.description}
-                        </p>
-                      )}
+                return (
+                  <article key={item._id} className={'shop-item-card ' + stateClass}>
+                    <div className="shop-item-media">
+                      <img
+                        src={item.imageUrl}
+                        alt={item.title}
+                        onError={(event) => {
+                          event.currentTarget.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="%23111a2d"/><text x="50%25" y="50%25" text-anchor="middle" dy=".3em" fill="%239ca9bd" font-size="16">No image</text></svg>';
+                        }}
+                      />
+                      <span className="shop-item-status">
+                        <span aria-hidden="true" />
+                        {status}
+                      </span>
                     </div>
 
-                    {/* Price and Purchase Button */}
-                    <div style={{ 
-                      marginTop: 'auto', 
-                      display: 'flex', 
-                      flexDirection: 'column', 
-                      gap: '14px',
-                      paddingTop: '8px',
-                      borderTop: '1px solid #f3f4f6'
-                    }}>
-                      <div style={{ 
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between'
-                      }}>
-                        <span style={{
-                          fontSize: '1.4rem',
-                          color: '#6b7280',
-                          fontFamily: 'Dongle, sans-serif',
-                          fontWeight: '600'
-                        }}>
-                          Price:
+                    <div className="shop-item-body">
+                      <div className="shop-item-heading">
+                        <span className="shop-item-type">
+                          {isFiction ? 'Collaborative fiction' : isExternalInventoryItem(item) ? 'Inventory item' : 'Provision'}
                         </span>
-                        <div style={{ 
-                          fontSize: '2.2rem', 
-                          fontWeight: '700', 
-                          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                          WebkitBackgroundClip: 'text',
-                          WebkitTextFillColor: 'transparent',
-                          backgroundClip: 'text',
-                          fontFamily: 'Dongle, sans-serif'
-                        }}>
-                          {item.price.toLocaleString()} {assetPointName}
-                        </div>
+                        <h3 className="shop-item-title">{item.title}</h3>
                       </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          console.log('Shop item button clicked:', {
-                            itemId: item._id,
-                            title: item.title,
-                            itemType: item.itemType,
-                            isPurchased: item.isPurchased,
-                            assetPoints,
-                            price: item.price,
-                            isActive: item.isActive
-                          });
-                          
-                          if (item.itemType === 'normal' && item.isPurchased && item.productData) {
-                            // Show product data for normal items
-                            window.open(item.productData, '_blank');
-                          } else if ((item.itemType === 'fiction' || item.itemType === undefined)) {
-                            // For fiction items:
-                            // - If hasEverPurchased but not isPurchased: open to read
-                            // - If isPurchased (recent): allow repurchase to write again
-                            // - If not purchased at all: purchase to buy
-                            if (item.hasEverPurchased && !item.isPurchased) {
-                              // User has purchased before but purchase is old - open to read
-                              console.log('Fiction item purchased before, opening to read');
-                              handleViewFiction(item);
-                            } else if (item.isPurchased) {
-                              // Recent purchase - can write, but can also repurchase to write again
-                              console.log('Fiction item recently purchased, checking if can repurchase...');
-                              if (assetPoints >= item.price) {
-                                console.log('User has enough AP, calling handlePurchase for repurchase');
-                                // Repurchase - call handlePurchase
-                                handlePurchase(item);
-                              } else {
-                                console.log('User does not have enough AP, opening view modal');
-                                // If not enough AP, just open the view modal
-                                handleViewFiction(item);
-                              }
-                            } else {
-                              // First time purchase for fiction item
-                              console.log('First time purchase for fiction item');
-                              handlePurchase(item);
-                            }
-                          } else {
-                            // Purchase new item (normal or other types)
-                            console.log('Purchase new item');
-                            handlePurchase(item);
-                          }
-                        }}
-                        disabled={(() => {
-                          const isDisabled = (item.isPurchased && item.itemType === 'normal' && !isExternalInventoryItem(item)) ||
-                            (!item.isPurchased && (assetPoints < item.price || !item.isActive)) ||
-                            (item.isPurchased && ((item.itemType === 'fiction' || item.itemType === undefined) || isExternalInventoryItem(item)) && (assetPoints < item.price || !item.isActive));
-                          
-                          // Only log if it's a purchased item to reduce console spam
-                          if (item.isPurchased) {
-                            console.log('Button disabled check for purchased item:', {
-                              itemId: item._id,
-                              title: item.title,
-                              itemType: item.itemType,
-                              isPurchased: item.isPurchased,
-                              assetPoints,
-                              price: item.price,
-                              isActive: item.isActive,
-                              isDisabled,
-                              reason: item.isPurchased && item.itemType === 'normal' ? 'normal-purchased' :
-                                     !item.isPurchased && (assetPoints < item.price || !item.isActive) ? 'not-purchased-no-ap-or-inactive' :
-                                     item.isPurchased && (item.itemType === 'fiction' || item.itemType === undefined) && assetPoints < item.price ? 'fiction-purchased-no-ap' :
-                                     'enabled'
-                            });
-                          }
-                          
-                          return isDisabled;
-                        })()}
-                        style={{
-                          width: '100%',
-                          padding: '14px',
-                          background: item.isPurchased
-                            ? ((item.itemType === 'fiction' || item.itemType === undefined) && assetPoints >= item.price
-                                ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
-                                : '#22c55e')
-                            : (item.itemType === 'fiction' || item.itemType === undefined) && item.hasEverPurchased
-                            ? 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)' // Blue for "Read" button
-                            : !item.isActive
-                            ? 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)'
-                            : assetPoints >= item.price
-                            ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
-                            : '#d1d5db',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '12px',
-                          fontSize: '1.5rem',
-                          fontWeight: '700',
-                          cursor: (
-                            (assetPoints >= item.price && !item.isPurchased && !item.hasEverPurchased && item.isActive) ||
-                            (item.isPurchased && item.itemType === 'fiction' && assetPoints >= item.price && item.isActive) ||
-                            (item.isPurchased && isExternalInventoryItem(item) && assetPoints >= item.price && item.isActive) ||
-                            ((item.itemType === 'fiction' || item.itemType === undefined) && item.hasEverPurchased && !item.isPurchased && item.isActive)
-                          ) ? 'pointer' : 'not-allowed',
-                          fontFamily: 'Dongle, sans-serif',
-                          transition: 'all 0.3s',
-                          boxShadow: (
-                            (assetPoints >= item.price && !item.isPurchased && !item.hasEverPurchased && item.isActive) ||
-                            (item.isPurchased && (item.itemType === 'fiction' || item.itemType === undefined) && assetPoints >= item.price && item.isActive) ||
-                            (item.isPurchased && isExternalInventoryItem(item) && assetPoints >= item.price && item.isActive) ||
-                            ((item.itemType === 'fiction' || item.itemType === undefined) && item.hasEverPurchased && !item.isPurchased && item.isActive)
-                          )
-                            ? (item.isPurchased && (item.itemType === 'fiction' || item.itemType === undefined)
-                                ? '0 4px 15px rgba(245, 158, 11, 0.4)'
-                                : (item.itemType === 'fiction' || item.itemType === undefined) && item.hasEverPurchased && !item.isPurchased
-                                ? '0 4px 15px rgba(59, 130, 246, 0.4)'
-                                : '0 4px 15px rgba(102, 126, 234, 0.4)')
-                            : 'none',
-                          position: 'relative',
-                          overflow: 'hidden'
-                        }}
-                        onMouseEnter={(e) => {
-                          const canInteract = (assetPoints >= item.price && !item.isPurchased && !item.hasEverPurchased && item.isActive) ||
-                                            (item.isPurchased && item.itemType === 'fiction' && assetPoints >= item.price && item.isActive) ||
-                                            (item.isPurchased && isExternalInventoryItem(item) && assetPoints >= item.price && item.isActive) ||
-                                            ((item.itemType === 'fiction' || item.itemType === undefined) && item.hasEverPurchased && !item.isPurchased && item.isActive);
-                          if (canInteract) {
-                            e.currentTarget.style.transform = 'scale(1.05)';
-                            const isReadButton = (item.itemType === 'fiction' || item.itemType === undefined) && item.hasEverPurchased && !item.isPurchased;
-                            e.currentTarget.style.boxShadow = isReadButton
-                              ? '0 6px 20px rgba(59, 130, 246, 0.5)'
-                              : '0 6px 20px rgba(102, 126, 234, 0.5)';
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.transform = 'scale(1)';
-                          const canInteract = (assetPoints >= item.price && !item.isPurchased && !item.hasEverPurchased && item.isActive) ||
-                                            (item.isPurchased && item.itemType === 'fiction' && assetPoints >= item.price && item.isActive) ||
-                                            (item.isPurchased && isExternalInventoryItem(item) && assetPoints >= item.price && item.isActive) ||
-                                            ((item.itemType === 'fiction' || item.itemType === undefined) && item.hasEverPurchased && !item.isPurchased && item.isActive);
-                          const isReadButton = (item.itemType === 'fiction' || item.itemType === undefined) && item.hasEverPurchased && !item.isPurchased;
-                          e.currentTarget.style.boxShadow = canInteract
-                            ? (isReadButton
-                                ? '0 4px 15px rgba(59, 130, 246, 0.4)'
-                                : '0 4px 15px rgba(102, 126, 234, 0.4)')
-                            : 'none';
-                        }}
-                      >
-                        {item.isPurchased 
-                          ? ((item.itemType === 'fiction' || item.itemType === undefined)
-                              ? (assetPoints >= item.price 
-                                  ? '🔄 Repurchase & Write' 
-                                  : '📖 Read')
-                              : item.itemType === 'normal' && item.productData
-                              ? '🔗 View Product'
-                              : isExternalInventoryItem(item)
-                              ? 'Buy Another'
-                              : '✓ Purchased')
-                          : (item.itemType === 'fiction' || item.itemType === undefined) && item.hasEverPurchased
-                          ? '📖 Read'
-                          : !item.isActive
-                          ? '⚠️ Inactive Item'
-                          : assetPoints >= item.price 
-                          ? (item.itemType === 'fiction' ? '🛒 Buy & Write' : '🛒 Purchase Now')
-                          : `Need ${item.price - assetPoints} more ${assetPointName}`}
-                      </button>
+
+                      {item.description && (
+                        <p className="shop-item-description">{item.description}</p>
+                      )}
+
+                      <div className="shop-item-footer">
+                        <div className="shop-item-price">
+                          <span>Price</span>
+                          <strong>{item.price.toLocaleString()}</strong>
+                          <small>{assetPointName}</small>
+                        </div>
+                        <button
+                          type="button"
+                          className={'shop-item-button ' + (isFiction && item.hasEverPurchased && !item.isPurchased ? 'is-secondary' : '')}
+                          onClick={() => handleItemAction(item)}
+                          disabled={isDisabled}
+                        >
+                          {item.isPurchased && !isFiction && item.productData ? <ExternalLink aria-hidden="true" size={17} />
+                            : isFiction && item.hasEverPurchased && !item.isPurchased ? <BookOpen aria-hidden="true" size={17} />
+                            : item.isPurchased && isFiction ? <RefreshCw aria-hidden="true" size={17} />
+                            : item.isPurchased ? <Check aria-hidden="true" size={17} />
+                            : <ShoppingBag aria-hidden="true" size={17} />}
+                          <span>{actionLabel}</span>
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                </div>
-              ))}
+                  </article>
+                );
+              })}
             </div>
           )}
         </div>
-      </div>
+      </section>
 
-      {/* Fiction Modal */}
       {showFictionModal && selectedFictionItem && (
-        <div 
+        <div
           className="modal-overlay fiction-modal-overlay"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) void closeFictionModal();
           }}
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            padding: '20px'
-          }}
         >
-          <div 
+          <div
             ref={fictionModalRef}
             className="modal-content fiction-modal-content"
             role="dialog"
@@ -1183,22 +843,14 @@ function Shop() {
             aria-labelledby="fiction-modal-title"
             tabIndex={-1}
             onMouseDown={(event) => event.stopPropagation()}
-            style={{ 
-              maxWidth: '800px', 
-              width: '100%',
-              maxHeight: '90vh', 
-              overflowY: 'auto',
-              background: 'white',
-              borderRadius: '16px',
-              padding: '30px',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.3)'
-            }}
           >
             <div className="fiction-modal-header">
               <div>
-                <h3 id="fiction-modal-title" style={{ margin: 0, fontSize: '24px', fontWeight: '700', color: '#14306d' }}>
-                  📖 {selectedFictionItem.title}
-                </h3>
+                <span className="shop-kicker">Collaborative archive</span>
+                <h3 id="fiction-modal-title">{selectedFictionItem.title}</h3>
+                <p>
+                  {fictionContributions.length} {fictionContributions.length === 1 ? 'entry' : 'entries'} in this chronicle
+                </p>
               </div>
               <button
                 ref={fictionModalCloseRef}
@@ -1212,415 +864,191 @@ function Shop() {
               </button>
             </div>
 
-            {/* Fiction Content Display */}
-            <div style={{ marginBottom: '24px', padding: '20px', background: '#f9fafb', borderRadius: '12px', border: '2px solid #e5e7eb' }}>
+            <div className="fiction-dialog-balance">
+              <span>Available balance</span>
+              <strong>{assetPoints.toLocaleString()} {assetPointName}</strong>
+            </div>
+
+            <section className="fiction-archive" aria-label="Fiction contributions">
               {fictionContributions.length === 0 ? (
-                <p style={{ textAlign: 'center', padding: '40px', color: '#6b7280', fontSize: '16px' }}>
-                  No contributions yet. Be the first to write!
-                </p>
+                <p className="fiction-empty">No entries yet. The first line is waiting to be written.</p>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div className="fiction-contribution-list">
                   {fictionContributions.map((contrib) => (
-                    <div
-                      key={contrib._id}
-                      style={{
-                        padding: '16px',
-                        background: 'white',
-                        borderRadius: '8px',
-                        border: '1px solid #e5e7eb'
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                        {contrib.user?.avatar && (
-                          <img
-                            src={`https://cdn.discordapp.com/avatars/${contrib.userId}/${contrib.user.avatar}.png`}
-                            alt={contrib.user.username}
-                            style={{
-                              width: '40px',
-                              height: '40px',
-                              borderRadius: '50%',
-                              border: '2px solid #e5e7eb'
-                            }}
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).src = `https://cdn.discordapp.com/embed/avatars/${Math.abs(parseInt(contrib.userId, 10)) % 5}.png`;
-                            }}
-                          />
-                        )}
-                        {!contrib.user?.avatar && (
-                          <img
-                            src={`https://cdn.discordapp.com/embed/avatars/${Math.abs(parseInt(contrib.userId, 10)) % 5}.png`}
-                            alt={contrib.user?.username || 'User'}
-                            style={{
-                              width: '40px',
-                              height: '40px',
-                              borderRadius: '50%',
-                              border: '2px solid #e5e7eb'
-                            }}
-                          />
-                        )}
+                    <article key={contrib._id} className="fiction-contribution">
+                      <header>
+                        <img
+                          src={contrib.user?.avatar
+                            ? 'https://cdn.discordapp.com/avatars/' + contrib.userId + '/' + contrib.user.avatar + '.png'
+                            : 'https://cdn.discordapp.com/embed/avatars/' + (Math.abs(parseInt(contrib.userId, 10)) % 5) + '.png'}
+                          alt=""
+                          onError={(event) => {
+                            event.currentTarget.src = 'https://cdn.discordapp.com/embed/avatars/' + (Math.abs(parseInt(contrib.userId, 10)) % 5) + '.png';
+                          }}
+                        />
                         <div>
-                          <div style={{ fontSize: '16px', fontWeight: '600', color: '#374151' }}>
+                          <strong>
                             {contrib.user?.nickname || contrib.user?.username || 'Unknown User'}
-                            {contrib.user?.discriminator && (
-                              <span style={{ color: '#6b7280' }}>#{contrib.user.discriminator}</span>
-                            )}
-                          </div>
-                          <div style={{ fontSize: '12px', color: '#9ca3af' }}>
+                            {contrib.user?.discriminator && <span>#{contrib.user.discriminator}</span>}
+                          </strong>
+                          <time dateTime={contrib.createdAt}>
                             {new Date(contrib.createdAt).toLocaleString()}
-                          </div>
+                          </time>
                         </div>
-                      </div>
-                      <div style={{ 
-                        fontSize: '15px', 
-                        color: '#374151', 
-                        lineHeight: '1.6',
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-word'
-                      }}>
-                        {contrib.content}
-                      </div>
-                    </div>
+                      </header>
+                      <p>{contrib.content}</p>
+                    </article>
                   ))}
                 </div>
               )}
-            </div>
+            </section>
 
-            {/* Repurchase Button for Fiction Items - Only show if hasEverPurchased but not currently purchased */}
             {selectedFictionItem.hasEverPurchased && !selectedFictionItem.isPurchased && (
-            <div style={{ 
-              marginBottom: '20px',
-              padding: '16px',
-              background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
-              borderRadius: '12px',
-              border: '2px solid #fbbf24',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between'
-            }}>
-              <div>
-                <div style={{ fontSize: '16px', fontWeight: '700', color: '#92400e', marginBottom: '4px' }}>
-                  🔄 Want to Repurchase?
+              <div className="fiction-notice is-gold fiction-repurchase">
+                <div>
+                  <strong>Writing requires a new passage token</strong>
+                  <p>Repurchase this fiction to open the writing interface again.</p>
                 </div>
-                <div style={{ fontSize: '13px', color: '#78350f' }}>
-                  Repurchase to open the writing interface again ({selectedFictionItem.price.toLocaleString()} {assetPointName})
-                </div>
+                <button
+                  type="button"
+                  className="fiction-action-button"
+                  aria-label={`Repurchase (${selectedFictionItem.price.toLocaleString()} ${assetPointName})`}
+                  onClick={() => handlePurchase(selectedFictionItem)}
+                  disabled={assetPoints < selectedFictionItem.price}
+                >
+                  <RefreshCw aria-hidden="true" size={17} />
+                  Repurchase for {selectedFictionItem.price.toLocaleString()}
+                </button>
               </div>
-              <button
-                onClick={async () => {
-                  if (assetPoints < selectedFictionItem.price) {
-                    alert(`Insufficient ${assetPointName}. You need ${selectedFictionItem.price.toLocaleString()} ${assetPointName} but only have ${assetPoints.toLocaleString()} ${assetPointName}.`);
-                    return;
-                  }
-                  // No confirmation needed - proceed directly with purchase
-                  await handlePurchase(selectedFictionItem);
-                }}
-                disabled={assetPoints < selectedFictionItem.price}
-                style={{
-                  padding: '10px 20px',
-                  background: assetPoints >= selectedFictionItem.price
-                    ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
-                    : '#d1d5db',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  fontWeight: '700',
-                  cursor: assetPoints >= selectedFictionItem.price ? 'pointer' : 'not-allowed',
-                  fontFamily: 'Dongle, sans-serif',
-                  transition: 'all 0.3s',
-                  whiteSpace: 'nowrap'
-                }}
-              >
-                🔄 Repurchase ({selectedFictionItem.price.toLocaleString()} {assetPointName})
-              </button>
-            </div>
             )}
 
-            {/* Add Contribution Form */}
-            <div style={{ 
-              marginTop: '24px', 
-              padding: '20px', 
-              background: !selectedFictionItem.isPurchased ? '#fef3c7' : '#f9fafb', 
-              borderRadius: '12px',
-              border: !selectedFictionItem.isPurchased ? '2px solid #fbbf24' : '2px solid #e5e7eb'
-            }}>
+            <section
+              className={'fiction-composer ' + (!selectedFictionItem.isPurchased ? 'is-locked' : '')}
+              aria-labelledby="fiction-compose-title"
+            >
               {!selectedFictionItem.isPurchased && !selectedFictionItem.hasEverPurchased ? (
-                <div style={{
-                  padding: '16px',
-                  background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
-                  borderRadius: '8px',
-                  border: '2px solid #fbbf24',
-                  textAlign: 'center'
-                }}>
-                  <div style={{ fontSize: '18px', fontWeight: '700', color: '#92400e', marginBottom: '8px' }}>
-                    💰 Purchase Required to Contribute
-                  </div>
-                  <div style={{ fontSize: '14px', color: '#78350f', marginBottom: '16px' }}>
-                    To contribute to this fiction, you need to purchase or repurchase this item. Each contribution requires a new purchase.
+                <div className="fiction-notice is-gold fiction-purchase-gate">
+                  <div>
+                    <strong id="fiction-compose-title">Purchase required to contribute</strong>
+                    <p>Each contribution requires a new purchase. Reading remains available after your first purchase.</p>
                   </div>
                   <button
-                    onClick={async () => {
-                      if (assetPoints < selectedFictionItem.price) {
-                        alert(`Insufficient ${assetPointName}. You need ${selectedFictionItem.price.toLocaleString()} ${assetPointName} but only have ${assetPoints.toLocaleString()} ${assetPointName}.`);
-                        return;
-                      }
-                      
-                      // Show loading state
-                      const button = event?.currentTarget as HTMLButtonElement;
+                    type="button"
+                    className="fiction-action-button"
+                    onClick={async (event) => {
+                      const button = event.currentTarget;
                       const originalText = button.textContent;
                       button.disabled = true;
                       button.textContent = 'Processing...';
-                      
                       try {
                         await handlePurchase(selectedFictionItem);
-                        // UI will update automatically via handlePurchase
-                      } catch (error) {
-                        // Error already handled in handlePurchase
                       } finally {
-                        // Restore button state (though it should be updated by the purchase)
-                        if (button) {
-                          button.disabled = false;
-                          button.textContent = originalText || '🛒 Purchase';
-                        }
+                        button.disabled = false;
+                        button.textContent = originalText || 'Purchase';
                       }
                     }}
                     disabled={assetPoints < selectedFictionItem.price}
-                    style={{
-                      padding: '12px 24px',
-                      background: assetPoints >= selectedFictionItem.price
-                        ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
-                        : '#d1d5db',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '8px',
-                      fontSize: '16px',
-                      fontWeight: '700',
-                      cursor: assetPoints >= selectedFictionItem.price ? 'pointer' : 'not-allowed',
-                      fontFamily: 'Dongle, sans-serif',
-                      transition: 'all 0.3s'
-                    }}
                   >
-                    {selectedFictionItem.isPurchased ? '🔄 Repurchase' : '🛒 Purchase'} ({selectedFictionItem.price.toLocaleString()} {assetPointName})
+                    <ShoppingBag aria-hidden="true" size={17} />
+                    Purchase for {selectedFictionItem.price.toLocaleString()}
                   </button>
                 </div>
               ) : (
                 <>
-                  {/* Writing Lock Status */}
                   {writingLock && writingLock.isLocked && (
-                    <div style={{
-                      padding: '16px',
-                      background: 'linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)',
-                      borderRadius: '8px',
-                      border: '2px solid #ef4444',
-                      marginBottom: '16px',
-                      textAlign: 'center'
-                    }}>
-                      <div style={{ fontSize: '18px', fontWeight: '700', color: '#991b1b', marginBottom: '8px' }}>
-                        🔒 Writing Locked
+                    <div className="fiction-lock-status is-busy" role="status">
+                      <LockKeyhole aria-hidden="true" size={19} />
+                      <div>
+                        <strong>Writing locked</strong>
+                        <p>{writingLock.lockedBy ? writingLock.lockedBy + ' is currently writing.' : 'Another user is currently writing.'}</p>
+                        {writingLock.timeRemaining !== undefined && writingLock.timeRemaining > 0 && (
+                          <span>Available in {formatLockTime(writingLock.timeRemaining)}</span>
+                        )}
+                        {writingLock.timeRemaining !== undefined && writingLock.timeRemaining <= 0 && (
+                          <span>Lock expired. Writing access can be requested again.</span>
+                        )}
                       </div>
-                      <div style={{ fontSize: '14px', color: '#7f1d1d' }}>
-                        {writingLock.lockedBy ? `${writingLock.lockedBy} is currently writing.` : 'Another user is currently writing.'}
-                      </div>
-                      {writingLock.timeRemaining !== undefined && writingLock.timeRemaining > 0 && (
-                        <div style={{ fontSize: '13px', color: '#7f1d1d', marginTop: '8px', fontWeight: '600' }}>
-                          Lock expires in: {Math.floor(writingLock.timeRemaining / 1000 / 60)}:{String(Math.floor((writingLock.timeRemaining / 1000) % 60)).padStart(2, '0')}
-                        </div>
-                      )}
-                      {writingLock.timeRemaining !== undefined && writingLock.timeRemaining <= 0 && (
-                        <div style={{ fontSize: '13px', color: '#991b1b', marginTop: '8px', fontWeight: '600' }}>
-                          ⚠️ Lock expired! You can now try to acquire the lock.
-                        </div>
-                      )}
                     </div>
                   )}
-                  
+
                   {writingLock && writingLock.hasLock && !writingLock.isLocked && (
-                    <div style={{
-                      padding: '16px',
-                      background: 'linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%)',
-                      borderRadius: '8px',
-                      border: '2px solid #22c55e',
-                      marginBottom: '16px',
-                      textAlign: 'center'
-                    }}>
-                      <div style={{ fontSize: '18px', fontWeight: '700', color: '#166534', marginBottom: '8px' }}>
-                        ✍️ You Have Writing Access
+                    <div className="fiction-lock-status is-yours" role="status">
+                      <PenLine aria-hidden="true" size={19} />
+                      <div>
+                        <strong>Writing access active</strong>
+                        {writingLock.timeRemaining !== undefined && writingLock.timeRemaining > 0 && (
+                          <span>{formatLockTime(writingLock.timeRemaining)} remaining</span>
+                        )}
+                        {writingLock.timeRemaining !== undefined && writingLock.timeRemaining <= 0 && (
+                          <span>Access expired. Request a new lock to continue.</span>
+                        )}
                       </div>
-                      {writingLock.timeRemaining !== undefined && writingLock.timeRemaining > 0 && (
-                        <div style={{ fontSize: '14px', color: '#14532d', fontWeight: '600' }}>
-                          Time remaining: {Math.floor(writingLock.timeRemaining / 1000 / 60)}:{String(Math.floor((writingLock.timeRemaining / 1000) % 60)).padStart(2, '0')}
-                        </div>
-                      )}
-                      {writingLock.timeRemaining !== undefined && writingLock.timeRemaining <= 0 && (
-                        <div style={{ fontSize: '14px', color: '#991b1b', fontWeight: '600' }}>
-                          ⚠️ Lock expired! Please acquire a new lock to continue writing.
-                        </div>
-                      )}
                     </div>
                   )}
 
                   {(!writingLock || !writingLock.hasLock || writingLock.isLocked) && selectedFictionItem.isPurchased && (
-                    <div style={{
-                      padding: '16px',
-                      background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
-                      borderRadius: '8px',
-                      border: '2px solid #f59e0b',
-                      marginBottom: '16px',
-                      textAlign: 'center'
-                    }}>
-                      <div style={{ fontSize: '18px', fontWeight: '700', color: '#92400e', marginBottom: '8px' }}>
-                        🔓 Acquire Writing Lock
-                      </div>
-                      <div style={{ fontSize: '14px', color: '#78350f', marginBottom: '12px' }}>
-                        Only one user can write at a time. Click below to acquire the writing lock (5 minutes).
+                    <div className="fiction-notice is-gold fiction-lock-request">
+                      <div>
+                        <strong>Request writing access</strong>
+                        <p>One writer at a time. Access lasts five minutes.</p>
                       </div>
                       <button
+                        type="button"
+                        className="fiction-action-button"
                         onClick={async () => {
-                          if (selectedFictionItem) {
-                            const result = await acquireWritingLock(selectedFictionItem._id);
-                            if (result && result.isLocked) {
-                              alert(`Writing is currently locked by ${result.lockedBy || 'another user'}. Please wait for the lock to expire.`);
-                            } else if (result && result.hasLock) {
-                              // Success - UI will update automatically via setWritingLock
-                            } else {
-                              alert('Failed to acquire writing lock. Please try again.');
-                            }
+                          const result = await acquireWritingLock(selectedFictionItem._id);
+                          if (result && result.isLocked) {
+                            alert('Writing is currently locked by ' + (result.lockedBy || 'another user') + '. Please wait for the lock to expire.');
+                          } else if (!result?.hasLock) {
+                            alert('Failed to acquire writing lock. Please try again.');
                           }
                         }}
                         disabled={writingLock?.isLocked}
-                        style={{
-                          padding: '10px 20px',
-                          background: writingLock?.isLocked 
-                            ? '#d1d5db'
-                            : 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '8px',
-                          fontSize: '16px',
-                          fontWeight: '700',
-                          cursor: writingLock?.isLocked ? 'not-allowed' : 'pointer',
-                          fontFamily: 'Dongle, sans-serif',
-                          transition: 'all 0.3s',
-                          opacity: writingLock?.isLocked ? 0.6 : 1
-                        }}
                       >
-                        🔓 Acquire Lock
+                        <LockKeyhole aria-hidden="true" size={17} />
+                        Acquire lock
                       </button>
                     </div>
                   )}
 
-                  <label style={{ 
-                    display: 'block', 
-                    marginBottom: '12px', 
-                    fontSize: '18px', 
-                    fontWeight: '700', 
-                    color: '#14306d',
-                    fontFamily: 'Dongle, sans-serif'
-                  }}>
-                    ✍️ Write Your Contribution (Max 100 characters):
+                  <label id="fiction-compose-title" className="fiction-compose-label" htmlFor="fiction-contribution">
+                    Write your contribution
                   </label>
-                  <div style={{
-                    padding: '12px',
-                    background: '#fef3c7',
-                    borderRadius: '8px',
-                    marginBottom: '12px',
-                    fontSize: '13px',
-                    color: '#78350f',
-                    border: '1px solid #fbbf24'
-                  }}>
-                    💡 <strong>Note:</strong> After contributing, you'll need to repurchase this item to contribute again.
-                  </div>
+                  <p className="fiction-compose-note">
+                    After submitting, another contribution requires a new purchase.
+                  </p>
                   <textarea
+                    id="fiction-contribution"
                     value={newContribution}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      if (value.length <= 100) {
-                        setNewContribution(value);
-                      }
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (value.length <= 100) setNewContribution(value);
                     }}
-                    placeholder="Continue the story... Write your part of this collaborative fiction... (Max 100 characters)"
+                    placeholder="Continue the story..."
                     disabled={!selectedFictionItem.isPurchased || !writingLock || !writingLock.hasLock || writingLock.isLocked}
                     maxLength={100}
-                    style={{
-                      width: '100%',
-                      minHeight: '120px',
-                      padding: '16px',
-                      border: newContribution.length > 100 ? '2px solid #ef4444' : '2px solid #e5e7eb',
-                      borderRadius: '8px',
-                      fontSize: '15px',
-                      fontFamily: 'inherit',
-                      resize: 'vertical',
-                      lineHeight: '1.6',
-                      transition: 'border-color 0.2s',
-                      backgroundColor: !selectedFictionItem.isPurchased ? '#f3f4f6' : 'white',
-                      cursor: !selectedFictionItem.isPurchased ? 'not-allowed' : 'text'
-                    }}
-                    onFocus={(e) => {
-                      if (selectedFictionItem.isPurchased) {
-                        e.currentTarget.style.borderColor = '#667eea';
-                      }
-                    }}
-                    onBlur={(e) => {
-                      e.currentTarget.style.borderColor = newContribution.length > 100 ? '#ef4444' : '#e5e7eb';
-                    }}
                   />
-                  <div style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center',
-                    marginTop: '12px'
-                  }}>
-                    <span style={{ 
-                      fontSize: '13px', 
-                      color: newContribution.length > 100 ? '#ef4444' : newContribution.length === 100 ? '#f59e0b' : '#6b7280',
-                      fontStyle: 'italic',
-                      fontWeight: newContribution.length === 100 ? '700' : 'normal'
-                    }}>
-                      {newContribution.length}/100 characters
+                  <div className="fiction-compose-footer">
+                    <span className={newContribution.length === 100 ? 'is-limit' : ''}>
+                      {newContribution.length}/100
                     </span>
                     <button
+                      type="button"
+                      className="fiction-submit"
                       onClick={handleAddContribution}
-                      disabled={!newContribution.trim() || newContribution.trim().length > 100 || !selectedFictionItem.isPurchased}
-                      style={{
-                        padding: '12px 32px',
-                        background: (newContribution.trim() && newContribution.trim().length <= 100 && selectedFictionItem.isPurchased)
-                          ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
-                          : '#d1d5db',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '10px',
-                        fontSize: '16px',
-                        fontWeight: '700',
-                        cursor: (newContribution.trim() && newContribution.trim().length <= 100 && selectedFictionItem.isPurchased) ? 'pointer' : 'not-allowed',
-                        fontFamily: 'Dongle, sans-serif',
-                        transition: 'all 0.3s',
-                        boxShadow: (newContribution.trim() && newContribution.trim().length <= 100 && selectedFictionItem.isPurchased)
-                          ? '0 4px 12px rgba(102, 126, 234, 0.3)'
-                          : 'none'
-                      }}
-                      onMouseEnter={(e) => {
-                        if (newContribution.trim() && newContribution.trim().length <= 100 && selectedFictionItem.isPurchased) {
-                          e.currentTarget.style.transform = 'translateY(-2px)';
-                          e.currentTarget.style.boxShadow = '0 6px 16px rgba(102, 126, 234, 0.4)';
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (newContribution.trim() && newContribution.trim().length <= 100 && selectedFictionItem.isPurchased) {
-                          e.currentTarget.style.transform = 'translateY(0)';
-                          e.currentTarget.style.boxShadow = '0 4px 12px rgba(102, 126, 234, 0.3)';
-                        }
-                      }}
+                      disabled={!newContribution.trim() || !selectedFictionItem.isPurchased || !writingLock?.hasLock || writingLock.isLocked}
                     >
-                      Add Contribution
+                      <PenLine aria-hidden="true" size={17} />
+                      Add contribution
                     </button>
                   </div>
                 </>
               )}
-            </div>
+            </section>
           </div>
         </div>
       )}
-    </div>
+    </main>
   );
 }
 

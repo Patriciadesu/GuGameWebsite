@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Building2, CheckCircle2, Images, LayoutDashboard, PackagePlus, Settings, ShieldCheck, ShoppingCart, Sparkles, Trash2, Users } from 'lucide-react';
+import { ArrowLeft, Building2, CheckCircle2, Images, LayoutDashboard, Orbit, PackagePlus, ShieldCheck, ShoppingCart, Sparkles, Trash2, Users } from 'lucide-react';
 import axios from '../config/axios';
 import ConstellationAdmin from '../components/ConstellationAdmin';
+import { useModalAccessibility } from '../components/modalAccessibility';
 import './AdminPage.css';
 
 interface User {
@@ -13,6 +14,7 @@ interface User {
   email?: string;
   isAdmin: boolean;
   role: 'user' | 'admin' | 'super-admin';
+  level: number;
 }
 
 interface GuildMember {
@@ -22,6 +24,7 @@ interface GuildMember {
   avatar: string | null;
   email?: string;
   role: 'user' | 'admin' | 'super-admin';
+  level: number;
   guildId?: string;
   assetPoints: number;
   techTokens: number;
@@ -136,7 +139,15 @@ interface ApprovalRequest {
   };
 }
 
-type AdminSection = 'dashboard' | 'guilds' | 'users' | 'skilltree' | 'approvals' | 'images' | 'shop' | 'selection' | 'preorders' | 'settings';
+type AdminSection = 'dashboard' | 'guilds' | 'users' | 'mainconstellation' | 'skilltree' | 'approvals' | 'images' | 'shop' | 'selection' | 'preorders' | 'settings';
+
+const visibleAdminSections: AdminSection[] = ['dashboard', 'guilds', 'users', 'mainconstellation', 'skilltree', 'approvals', 'images', 'shop', 'selection'];
+const constellationEditorSections = new Set<AdminSection>(['mainconstellation', 'skilltree']);
+
+const initialAdminSection = (): AdminSection => {
+  const requested = new URLSearchParams(window.location.search).get('section') as AdminSection | null;
+  return requested && visibleAdminSections.includes(requested) ? requested : 'dashboard';
+};
 
 interface OfficeCatalogItem {
   _id: string;
@@ -152,11 +163,26 @@ interface OfficeCatalogItem {
   } | null;
 }
 
+function LegacyModalOverlay({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalAccessibility({ active: true, dialogRef, onClose, setDialogSemantics: true });
+
+  return (
+    <div
+      ref={dialogRef}
+      className="modal-overlay"
+      onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}
+    >
+      {children}
+    </div>
+  );
+}
+
 function AdminPage() {
   const navigate = useNavigate();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeSection, setActiveSection] = useState<AdminSection>('dashboard');
+  const [activeSection, setActiveSection] = useState<AdminSection>(initialAdminSection);
   const [guilds, setGuilds] = useState<Guild[]>([]);
   const [selectedGuild, setSelectedGuild] = useState<Guild | null>(null);
   const [guildMembers, setGuildMembers] = useState<GuildMember[]>([]);
@@ -435,6 +461,12 @@ function AdminPage() {
     } catch (error) {
       console.error('Error loading users:', error);
     }
+  };
+
+  const updateUserLevel = async (discordId: string, level: number) => {
+    const normalizedLevel = Math.max(1, Math.floor(level));
+    await axios.patch(`/api/users/${discordId}/level`, { level: normalizedLevel });
+    setAllUsers(current => current.map(user => user.discordId === discordId ? { ...user, level: normalizedLevel } : user));
   };
 
   const loadUserGuildInfo = async () => {
@@ -1835,10 +1867,13 @@ function AdminPage() {
 
   const requestActiveSection = (section: AdminSection) => {
     if (section === activeSection) return;
-    if (activeSection === 'skilltree' && constellationEditorDirty &&
+    if (constellationEditorSections.has(activeSection) && constellationEditorDirty &&
       !confirm('Discard unsaved constellation layout changes?')) return;
-    if (activeSection === 'skilltree') setConstellationEditorDirty(false);
+    if (constellationEditorSections.has(activeSection)) setConstellationEditorDirty(false);
     setActiveSection(section);
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.set('section', section);
+    window.history.replaceState(window.history.state, '', nextUrl);
   };
 
   // Filter users based on selected filters
@@ -2068,41 +2103,53 @@ function AdminPage() {
           <option value="dashboard">Dashboard</option>
           <option value="guilds">Guilds</option>
           <option value="users">Users</option>
+          <option value="mainconstellation">Main Constellation</option>
           <option value="skilltree">Constellation Editor</option>
           <option value="approvals">Approvals</option>
           {user?.role === 'super-admin' && <option value="images">Images</option>}
           <option value="shop">Shop</option>
           <option value="selection">Item Import</option>
-          <option value="settings">Settings</option>
         </select>
       </label>
       <nav className="admin-navbar" aria-label="Admin sections">
         <button
           className={`nav-tab ${activeSection === 'dashboard' ? 'active' : ''}`}
+          data-group="overview"
           onClick={() => requestActiveSection('dashboard')}
         >
           <LayoutDashboard aria-hidden="true" /> Dashboard
         </button>
         <button 
           className={`nav-tab ${activeSection === 'guilds' ? 'active' : ''}`}
+          data-group="community"
           onClick={() => requestActiveSection('guilds')}
         >
           <Building2 aria-hidden="true" /> Guilds
         </button>
         <button 
           className={`nav-tab ${activeSection === 'users' ? 'active' : ''}`}
+          data-group="community"
           onClick={() => requestActiveSection('users')}
         >
           <Users aria-hidden="true" /> Users
         </button>
         <button
+          className={`nav-tab ${activeSection === 'mainconstellation' ? 'active' : ''}`}
+          data-group="world"
+          onClick={() => requestActiveSection('mainconstellation')}
+        >
+          <Orbit aria-hidden="true" /> Main Constellation
+        </button>
+        <button
           className={`nav-tab ${activeSection === 'skilltree' ? 'active' : ''}`}
+          data-group="world"
           onClick={() => requestActiveSection('skilltree')}
         >
           <Sparkles aria-hidden="true" /> Constellation Editor
         </button>
         <button 
           className={`nav-tab ${activeSection === 'approvals' ? 'active' : ''}`}
+          data-group="world"
           onClick={() => requestActiveSection('approvals')}
         >
           <CheckCircle2 aria-hidden="true" /> Approvals
@@ -2111,6 +2158,7 @@ function AdminPage() {
         {user?.role === 'super-admin' && (
           <button 
             className={`nav-tab ${activeSection === 'images' ? 'active' : ''}`}
+            data-group="system"
             onClick={() => requestActiveSection('images')}
           >
             <Images aria-hidden="true" /> Images
@@ -2118,25 +2166,21 @@ function AdminPage() {
         )}
         <button 
           className={`nav-tab ${activeSection === 'shop' ? 'active' : ''}`}
+          data-group="commerce"
           onClick={() => requestActiveSection('shop')}
         >
           <ShoppingCart aria-hidden="true" /> Shop
         </button>
         <button 
           className={`nav-tab ${activeSection === 'selection' ? 'active' : ''}`}
+          data-group="commerce"
           onClick={() => requestActiveSection('selection')}
         >
           <PackagePlus aria-hidden="true" /> Item Import
         </button>
-        <button 
-          className={`nav-tab ${activeSection === 'settings' ? 'active' : ''}`}
-          onClick={() => requestActiveSection('settings')}
-        >
-          <Settings aria-hidden="true" /> Settings
-        </button>
       </nav>
 
-      <div className="admin-content">
+      <div className={`admin-content ${activeSection === 'skilltree' || activeSection === 'mainconstellation' ? 'is-constellation-workspace' : ''}`}>
         {/* Dashboard Section */}
         {activeSection === 'dashboard' && (
           <div className="dashboard-section">
@@ -2605,6 +2649,7 @@ function AdminPage() {
                 <div className="users-table-header">
                   <div className="table-col col-user">User</div>
                   <div className="table-col col-role">Role</div>
+                  <div className="table-col col-stats">Level</div>
                   <div className="table-col col-guild">Guild</div>
                   <div className="table-col col-stats">Asset Points</div>
                   <div className="table-col col-stats">Tech Tokens</div>
@@ -2626,6 +2671,9 @@ function AdminPage() {
                           {user.role === 'super-admin' ? '🔐' : user.role === 'admin' ? '⚡' : '👤'}
                           {user.role.toUpperCase()}
                         </span>
+                      </div>
+                      <div className="table-col col-stats">
+                        <input className="user-level-input" aria-label={`${user.username} level`} type="number" min="1" step="1" defaultValue={user.level || 1} onBlur={event => void updateUserLevel(user.discordId, Number(event.target.value)).catch(() => { event.currentTarget.value = String(user.level || 1); })} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} />
                       </div>
                       <div className="table-col col-guild">
                         {user.guildId ? (
@@ -2706,6 +2754,7 @@ function AdminPage() {
               skills={skills}
               onSkillsChanged={loadSkills}
               onDirtyChange={setConstellationEditorDirty}
+              constellationType="skill"
             />
 
             {skillEditorMode === 'legacy' && <div
@@ -3113,6 +3162,17 @@ function AdminPage() {
                 })()}
               </div>
             </div>}
+          </div>
+        )}
+
+        {activeSection === 'mainconstellation' && (user?.role === 'admin' || user?.role === 'super-admin') && (
+          <div className="skilltree-section">
+            <ConstellationAdmin
+              skills={skills}
+              onSkillsChanged={loadSkills}
+              onDirtyChange={setConstellationEditorDirty}
+              constellationType="main"
+            />
           </div>
         )}
 
@@ -3761,7 +3821,7 @@ function AdminPage() {
 
         {/* Shop Item Analytics Modal */}
         {showShopItemAnalytics && selectedShopItemAnalytics && (
-          <div className="modal-overlay" onClick={() => { setShowShopItemAnalytics(false); setSelectedShopItemAnalytics(null); }}>
+          <LegacyModalOverlay onClose={() => { setShowShopItemAnalytics(false); setSelectedShopItemAnalytics(null); }}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '700px', maxHeight: '80vh', overflowY: 'auto' }}>
               <h3 style={{ marginBottom: '20px', fontSize: '24px', fontWeight: '700', color: '#14306d' }}>
                 📊 Analytics: {selectedShopItemAnalytics.itemTitle}
@@ -3876,12 +3936,12 @@ function AdminPage() {
                 </button>
               </div>
             </div>
-          </div>
+          </LegacyModalOverlay>
         )}
 
         {/* Skill Progress Modal */}
         {showSkillProgressModal && selectedUserForProgress && (
-          <div className="modal-overlay" onClick={() => { setShowSkillProgressModal(false); setSelectedUserForProgress(null); }}>
+          <LegacyModalOverlay onClose={() => { setShowSkillProgressModal(false); setSelectedUserForProgress(null); }}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ 
               maxWidth: '1000px', 
               maxHeight: '90vh', 
@@ -4459,7 +4519,7 @@ function AdminPage() {
                 </button>
               </div>
             </div>
-          </div>
+          </LegacyModalOverlay>
         )}
 
         {/* Settings Section */}
@@ -4473,7 +4533,7 @@ function AdminPage() {
 
         {/* Member Management Modal */}
         {showMemberManagement && selectedMember && (
-          <div className="modal-overlay" onClick={() => setShowMemberManagement(false)}>
+          <LegacyModalOverlay onClose={() => setShowMemberManagement(false)}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
               <h3>Manage: {selectedMember.username}</h3>
               
@@ -4520,12 +4580,12 @@ function AdminPage() {
                 Close
               </button>
             </div>
-          </div>
+          </LegacyModalOverlay>
         )}
 
         {/* Create Skill Modal */}
         {showCreateSkill && (
-          <div className="modal-overlay" onClick={() => {
+          <LegacyModalOverlay onClose={() => {
             setShowCreateSkill(false);
             resetSkillForm();
           }}>
@@ -4876,12 +4936,12 @@ function AdminPage() {
                 </button>
               </div>
             </div>
-          </div>
+          </LegacyModalOverlay>
         )}
 
         {/* Skill Detail/Edit Modal */}
         {showSkillDetail && selectedSkill && (
-          <div className="modal-overlay" onClick={() => {
+          <LegacyModalOverlay onClose={() => {
             setShowSkillDetail(false);
             setEditingSkill(false);
             resetSkillForm();
@@ -5425,12 +5485,12 @@ function AdminPage() {
                 </>
               )}
             </div>
-          </div>
+          </LegacyModalOverlay>
         )}
 
         {/* Prerequisite Selection Modal */}
         {showPrerequisiteModal && (
-          <div className="modal-overlay" onClick={() => setShowPrerequisiteModal(false)}>
+          <LegacyModalOverlay onClose={() => setShowPrerequisiteModal(false)}>
             <div className="modal-content connection-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
               <h3>🔗 Select Prerequisites</h3>
               <p className="connection-help" style={{ marginBottom: '16px' }}>
@@ -5504,12 +5564,12 @@ function AdminPage() {
                 </button>
               </div>
             </div>
-          </div>
+          </LegacyModalOverlay>
         )}
 
         {/* Connection Modal */}
         {showConnectionModal && connectionSource && (
-          <div className="modal-overlay" onClick={() => {
+          <LegacyModalOverlay onClose={() => {
             setShowConnectionModal(false);
             setConnectionSource(null);
           }}>
@@ -5572,12 +5632,12 @@ function AdminPage() {
                 Cancel
               </button>
             </div>
-          </div>
+          </LegacyModalOverlay>
         )}
 
         {/* Create Shop Item Modal */}
         {showCreateShopItem && (
-          <div className="modal-overlay" onClick={() => { setShowCreateShopItem(false); resetShopItemForm(); }}>
+          <LegacyModalOverlay onClose={() => { setShowCreateShopItem(false); resetShopItemForm(); }}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
               <h3>Create Shop Item</h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '20px' }}>
@@ -5810,12 +5870,12 @@ function AdminPage() {
                 </button>
               </div>
             </div>
-          </div>
+          </LegacyModalOverlay>
         )}
 
         {/* Edit Shop Item Modal */}
         {showEditShopItem && selectedShopItem && (
-          <div className="modal-overlay" onClick={() => { setShowEditShopItem(false); resetShopItemForm(); }}>
+          <LegacyModalOverlay onClose={() => { setShowEditShopItem(false); resetShopItemForm(); }}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
               <h3>Edit Shop Item</h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '20px' }}>
@@ -6048,11 +6108,11 @@ function AdminPage() {
                 </button>
               </div>
             </div>
-          </div>
+          </LegacyModalOverlay>
         )}
 
         {showQuestJsonModal && (
-          <div className="modal-overlay" onClick={() => !isImportingQuestJson && setShowQuestJsonModal(false)}>
+          <LegacyModalOverlay onClose={() => !isImportingQuestJson && setShowQuestJsonModal(false)}>
             <div className="modal-content" onClick={(event) => event.stopPropagation()} style={{ maxWidth: '760px' }}>
               <h3>Import Quest Tree JSON</h3>
               <textarea
@@ -6072,12 +6132,12 @@ function AdminPage() {
                 </button>
               </div>
             </div>
-          </div>
+          </LegacyModalOverlay>
         )}
 
         {/* Approve Modal */}
         {showApproveModal && selectedApprovalRequest && (
-          <div className="modal-overlay" onClick={() => setShowApproveModal(false)}>
+          <LegacyModalOverlay onClose={() => setShowApproveModal(false)}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
               <h3>Approve Request</h3>
               <p style={{ marginBottom: '16px', fontSize: '14px', color: '#6b7280' }}>
@@ -6140,7 +6200,7 @@ function AdminPage() {
                 </button>
               </div>
             </div>
-          </div>
+          </LegacyModalOverlay>
         )}
     </div>
   );

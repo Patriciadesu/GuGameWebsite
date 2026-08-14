@@ -784,7 +784,16 @@ test('empty topic explains that no quests are available yet', async ({ page }) =
 test('player can explore a constellation with keyboard, camera controls, and browser-style back navigation', async ({ page }) => {
   await installApiFixtures(page);
   await page.goto('mainmenu');
+  const skillFrame = page.locator('.skill-constellation-panel .constellation-shell');
+  const overviewFrame = await skillFrame.boundingBox();
+  expect(overviewFrame).not.toBeNull();
+  expect(overviewFrame!.width / overviewFrame!.height).toBeCloseTo(16 / 9, 2);
   await page.getByRole('button', { name: /Game Art/ }).click();
+
+  const disciplineFrame = await skillFrame.boundingBox();
+  expect(disciplineFrame).not.toBeNull();
+  expect(Math.abs(disciplineFrame!.height - overviewFrame!.height)).toBeLessThanOrEqual(1);
+  expect(Math.abs(disciplineFrame!.width - overviewFrame!.width)).toBeLessThanOrEqual(1);
 
   const canvas = page.getByRole('group', { name: 'Game Art constellation map' });
   const camera = canvas.locator('.constellation-camera');
@@ -822,6 +831,11 @@ test('player can explore a constellation with keyboard, camera controls, and bro
   await page.getByRole('button', { name: 'View Path' }).click();
   await expect(page.locator('.skill-constellation-panel .constellation-focus')).toHaveClass(/is-topic-active/);
   await expect(page.locator('.constellation-topic-layer')).toHaveCSS('transition-duration', /0\.36s/);
+  const topicFrame = await skillFrame.boundingBox();
+  expect(topicFrame).not.toBeNull();
+  expect(Math.abs(topicFrame!.height - overviewFrame!.height)).toBeLessThanOrEqual(1);
+  expect(Math.abs(topicFrame!.width - overviewFrame!.width)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: '/tmp/constellation-visual/desktop-skill-topic-16x9.png', fullPage: true });
 
   await page.getByRole('button', { name: 'Back' }).click();
   await expect(page.getByRole('heading', { name: 'Game Art' })).toBeVisible();

@@ -1137,3 +1137,22 @@
   .is-main-quest-rail .constellation-node-label { font-size: 20px; }
   .is-main-quest-rail .constellation-node-hit-target { r: 76px; }
 }
+
+/* Desktop skill maps keep one stable 16:9 stage across overview, discipline, and topic. */
+@media (min-width: 769px) {
+  .skill-constellation-panel .constellation-shell {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    aspect-ratio: 16 / 9;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .skill-constellation-panel .constellation-overview-grid,
+  .skill-constellation-panel .constellation-overview-item,
+  .skill-constellation-panel .constellation-canvas-wrap {
+    height: 100%;
+    min-height: 0;
+  }
+}

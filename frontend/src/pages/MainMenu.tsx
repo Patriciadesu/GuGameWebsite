@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Backpack, ShieldCheck, ShoppingCart, Sparkles } from 'lucide-react';
+import { Backpack, ChevronDown, CircleUserRound, ShieldCheck, ShoppingCart, Sparkles } from 'lucide-react';
 import axios from '../config/axios';
 import ConstellationTree from '../components/ConstellationTree';
 import MainQuestStrip from '../components/MainQuestStrip';
@@ -1153,7 +1153,22 @@ function MainMenu() {
           <span><strong>Lv. {user?.level || 1}</strong></span>
           <span><strong>{assetPoints}</strong> {assetPointName}</span>
           <span><strong>{voiceMinutesToday}m</strong> today</span>
-          <span className="topbar-player">{user?.username || 'Player'}</span>
+          <details className="player-account-menu">
+            <summary>
+              <CircleUserRound className="player-account-menu__icon" aria-hidden="true" />
+              <span>{user?.username || 'Player'}</span>
+              <ChevronDown className="player-account-menu__chevron" aria-hidden="true" />
+            </summary>
+            <div className="player-account-menu__menu">
+              {(user?.isAdmin || user?.role === 'admin' || user?.role === 'super-admin') && (
+                <button type="button" onClick={() => navigate('/admin')}>
+                  <ShieldCheck aria-hidden="true" />
+                  Admin Panel
+                </button>
+              )}
+              <button type="button" onClick={handleLogout}>Logout</button>
+            </div>
+          </details>
         </div>
       </div>
 
@@ -1188,18 +1203,8 @@ function MainMenu() {
 
       {/* Main Content Panel */}
       <div className="main-panel skill-constellation-panel" id="constellations">
-        {/* Header with Logout */}
         <div className="panel-header">
           <h2 className="panel-title">Constellation Deck</h2>
-          {(user?.isAdmin || user?.role === 'admin' || user?.role === 'super-admin') && (
-            <button className="admin-panel-btn" onClick={() => navigate('/admin')}>
-              <ShieldCheck aria-hidden="true" />
-              Admin Panel
-            </button>
-          )}
-          <button className="logout-btn" onClick={handleLogout}>
-            Logout
-          </button>
         </div>
 
         {/* Content */}

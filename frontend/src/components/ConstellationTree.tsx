@@ -722,10 +722,6 @@ function ConstellationTree({
   const disciplineContextOffset = gatewayPoint && topicDetail
     ? { x: mapWidth / 2 - gatewayPoint.x, y: mapHeight / 2 - gatewayPoint.y }
     : { x: 0, y: 0 };
-  const topicStart = topicDetail?.skills[0]
-    ? pointForSkill(topicDetail.skills[0], 0, topicDetail.skills.length, topicDetail.map)
-    : null;
-
   return (
     <section
       className={`constellation-shell constellation-focus ${directMap ? 'is-main-quest-rail' : ''} ${topicDetail ? 'is-topic-active' : ''} ${previewSkill && !topicDetail ? 'has-preview' : ''}`}
@@ -849,12 +845,6 @@ function ConstellationTree({
               className: 'constellation-topic-layer',
               onNodeClick: (skill, interaction, trigger) => onOpenSkill(skill, interaction, trigger)
             })}
-            {topicDetail && topicStart && (
-              <g className="constellation-anchor" transform={`translate(${topicStart.x} ${topicStart.y})`} aria-hidden="true">
-                <circle r="42" />
-                <path d="M 0 -27 L 8 -8 L 27 0 L 8 8 L 0 27 L -8 8 L -27 0 L -8 -8 Z" />
-              </g>
-            )}
           </g>
         </svg>
 

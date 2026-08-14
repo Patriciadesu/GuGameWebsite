@@ -37,8 +37,8 @@
   --star-panel: #111a2d;
   --star-panel-raised: #172238;
   --star-ink: #f2eee3;
-  --star-muted: #9ca9bd;
-  --star-line: #36445e;
+  --star-muted: #d0d7e3;
+  --star-line: #62718a;
   --star-cyan: #4de7ff;
   --star-gold: #ffc45b;
   --star-red: #ff5d68;
@@ -140,12 +140,12 @@
   --constellation-bg: #080c18 !important;
   --constellation-surface: #0d1426 !important;
   --constellation-text: #f2eee3 !important;
-  --constellation-muted: #9ca9bd !important;
-  --constellation-border: #36445e !important;
-  --constellation-line: #536582 !important;
+  --constellation-muted: #d0d7e3 !important;
+  --constellation-border: #62718a !important;
+  --constellation-line: #7d8da7 !important;
   --constellation-unlocked: #4de7ff !important;
   --constellation-available: #ffc45b !important;
-  --constellation-locked: #78869b !important;
+  --constellation-locked: #c4ccda !important;
   --constellation-boss: #ff5d68 !important;
   --constellation-capstone: #a98bff !important;
 }
@@ -154,6 +154,8 @@
 :root[data-theme="dark"] .constellation-node-star,
 :root[data-theme="dark"] .constellation-mini-layer .constellation-node-star { fill: var(--star-panel); }
 :root[data-theme="dark"] .constellation-canvas-wrap { background: var(--star-void); }
+:root[data-theme="dark"] .player-dock button { color: var(--star-muted); }
+:root[data-theme="dark"] .player-dock button.is-active { color: var(--star-gold); }
 :root[data-theme="dark"] .constellation-back,
 :root[data-theme="dark"] .constellation-camera-controls,
 :root[data-theme="dark"] .constellation-camera-controls button,

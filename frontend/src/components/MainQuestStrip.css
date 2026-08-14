@@ -20,12 +20,12 @@
   --mq-surface: #080f1e;
   --mq-raised: #111b30;
   --mq-text: #f4f6fa;
-  --mq-muted: #a9b5c8;
+  --mq-muted: #c0c9d8;
   --mq-line: #33435d;
   --mq-current: #ffbe4d;
   --mq-completed: #2fc2dc;
   --mq-pending: #a879ff;
-  --mq-future: #8797ad;
+  --mq-future: #a9b6c9;
 }
 
 .main-quest-strip__summary {
@@ -106,29 +106,40 @@
 }
 
 @media (max-width: 520px) {
-  .main-quest-strip__summary { gap: 10px; }
-  .main-quest-strip__title-row h2 { font-size: 18px; }
+  .main-quest-strip { min-height: 0; }
+  .main-quest-strip__summary { min-height: 64px; padding: 5px 10px; gap: 8px; }
+  .main-quest-strip__eyebrow { margin-bottom: 1px; font-size: 9px; }
+  .main-quest-strip__title-row { gap: 6px; }
+  .main-quest-strip__title-row h2 { font-size: 16px; }
+  .main-quest-strip__status { padding: 2px 5px; font-size: 9px; }
+  .main-quest-strip__summary p { margin-top: 2px; font-size: 10px; }
   .main-quest-strip__summary p span { display: none; }
-  .main-quest-strip__open { min-width: 44px; min-height: 44px; padding-inline: 10px; }
-  .main-quest-strip__track { scroll-snap-type: x proximity; }
-  .main-quest-strip__step { scroll-snap-align: center; }
+  .main-quest-strip__open { min-width: 42px; min-height: 42px; padding-inline: 8px; font-size: 10px; }
+  .main-quest-strip__track { min-height: 54px; padding: 3px 8px 2px; scroll-snap-type: x proximity; }
+  .main-quest-strip__step { min-width: 80px; flex-basis: 80px; scroll-snap-align: center; }
+  .main-quest-strip__marker { width: 34px; height: 34px; border-width: 2px; }
+  .main-quest-strip__marker svg { width: 13px; height: 13px; }
+  .main-quest-strip__step:not(:last-child)::after { top: 16px; }
+  .main-quest-strip__step-button { gap: 2px; }
+  .main-quest-strip__step-copy strong { font-size: 10px; }
+  .main-quest-strip__step-copy small { font-size: 8px; }
 }
 
 @media (min-width: 901px) {
-  .main-quest-strip { min-height: 104px; }
-  .main-quest-strip__summary { padding: 10px 14px; gap: 12px; }
+  .main-quest-strip { min-height: 84px; }
+  .main-quest-strip__summary { padding: 7px 12px; gap: 10px; }
   .main-quest-strip__eyebrow { margin-bottom: 2px; font-size: 10px; }
   .main-quest-strip__title-row h2 { font-size: 18px; }
   .main-quest-strip__status { padding: 2px 6px; font-size: 10px; }
   .main-quest-strip__summary p { margin-top: 3px; font-size: 11px; }
-  .main-quest-strip__open { min-height: 34px; padding: 7px 10px; font-size: 11px; }
-  .main-quest-strip__track { padding: 9px 16px 7px; }
-  .main-quest-strip__marker { width: 40px; height: 40px; }
+  .main-quest-strip__open { min-height: 32px; padding: 6px 9px; font-size: 11px; }
+  .main-quest-strip__track { padding: 6px 14px 5px; }
+  .main-quest-strip__marker { width: 36px; height: 36px; }
   .main-quest-strip__marker svg { width: 15px; height: 15px; }
-  .main-quest-strip__step:not(:last-child)::after { top: 19px; }
+  .main-quest-strip__step:not(:last-child)::after { top: 17px; }
   .main-quest-strip__step-button { gap: 3px; }
   .main-quest-strip__step-copy strong { font-size: 11px; }
-  .main-quest-strip__step-copy small { font-size: 9px; }
+  .main-quest-strip__step-copy small { font-size: 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

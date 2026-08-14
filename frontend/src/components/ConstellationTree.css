@@ -473,9 +473,12 @@
 }
 
 .is-topic-active .constellation-discipline-layer {
-  opacity: 0.17;
+  display: none;
+  opacity: 0;
   pointer-events: none;
 }
+
+.is-topic-active .constellation-anchor { display: none; }
 
 .is-topic-active .constellation-discipline-layer .constellation-node-label,
 .is-topic-active .constellation-discipline-layer .constellation-node-kicker {
@@ -484,7 +487,8 @@
 
 .is-topic-active .constellation-topic-layer {
   opacity: 1;
-  transform: scale(1);
+  transform: scale(1.12);
+  transform-origin: 50% 90%;
   pointer-events: auto;
 }
 
@@ -1176,4 +1180,68 @@
   .skill-constellation-panel .constellation-focus-header p { font-size: 10px; }
   .skill-constellation-panel .constellation-back { width: 36px; height: 36px; flex-basis: 36px; }
   .skill-constellation-panel .constellation-legend { gap: 7px 12px; font-size: 11px; }
+}
+
+/* Player-map density and interaction affordances. */
+.skill-constellation-panel .constellation-overview-item:not(.is-direct-topic-line):hover .constellation-overview-title,
+.skill-constellation-panel .constellation-overview-item:not(.is-direct-topic-line):focus-visible .constellation-overview-title {
+  color: var(--constellation-unlocked);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.skill-constellation-panel .constellation-overview-item:not(.is-direct-topic-line):active {
+  background: color-mix(in srgb, var(--constellation-unlocked) 10%, transparent);
+}
+
+.skill-constellation-panel .role-boss .constellation-node-aura,
+.skill-constellation-panel .role-capstone .constellation-node-aura { opacity: .08; }
+.skill-constellation-panel .role-boss .constellation-role-ring,
+.skill-constellation-panel .role-capstone .constellation-role-ring { opacity: .58; stroke-width: 2; }
+.skill-constellation-panel .role-boss .constellation-node-star,
+.skill-constellation-panel .role-capstone .constellation-node-star { filter: drop-shadow(0 2px 4px rgb(20 38 58 / 18%)); }
+.skill-constellation-panel .role-boss .constellation-node-kicker,
+.skill-constellation-panel .role-capstone .constellation-node-kicker { font-size: 13px; font-weight: 900; }
+.skill-constellation-panel .constellation-node:focus-visible .constellation-node-aura,
+.skill-constellation-panel .constellation-node.is-star-lens-selected .constellation-node-aura { opacity: .32; }
+.skill-constellation-panel .constellation-node:focus-visible .constellation-node-star,
+.skill-constellation-panel .constellation-node.is-star-lens-selected .constellation-node-star { stroke-width: 5; stroke-dasharray: 3 2; }
+.skill-constellation-panel .constellation-node:active .constellation-node-star { transform: scale(.92); transform-box: fill-box; transform-origin: center; }
+.skill-constellation-panel .constellation-back:focus-visible,
+.skill-constellation-panel .constellation-camera-controls button:focus-visible,
+.skill-constellation-panel .constellation-overview-pager button:focus-visible {
+  color: var(--constellation-text);
+  outline: 3px solid var(--constellation-unlocked);
+  outline-offset: 2px;
+}
+
+@media (min-width: 769px) {
+  .skill-constellation-panel .constellation-overview-item svg { transform: scale(1.26); transform-origin: 50% 54%; }
+  .skill-constellation-panel .constellation-overview-copy { z-index: 3; }
+}
+
+@media (max-width: 768px) {
+  .skill-constellation-panel .constellation-heading,
+  .skill-constellation-panel .constellation-focus-header { min-height: 64px; padding: 7px 10px; }
+  .skill-constellation-panel .constellation-heading h2,
+  .skill-constellation-panel .constellation-focus-header h2 { font-size: 20px; }
+  .skill-constellation-panel .constellation-heading p,
+  .skill-constellation-panel .constellation-focus-header p { margin-bottom: 1px; font-size: 10px; }
+  .skill-constellation-panel .constellation-back { width: 44px; height: 44px; flex-basis: 44px; }
+  .skill-constellation-panel .constellation-camera-controls button { width: 44px; height: 44px; flex-basis: 44px; }
+  .skill-constellation-panel .constellation-overview-grid,
+  .skill-constellation-panel .constellation-overview-item {
+    height: clamp(340px, calc(100svh - 450px), 430px);
+    min-height: 340px;
+  }
+  .skill-constellation-panel .constellation-overview-item svg { transform: scale(1.18); transform-origin: 50% 54%; }
+  .skill-constellation-panel .constellation-overview-pager { min-height: 52px; }
+  .skill-constellation-panel .constellation-canvas { height: clamp(360px, 58svh, 480px); flex-basis: clamp(360px, 58svh, 480px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skill-constellation-panel .constellation-overview-item,
+  .skill-constellation-panel .constellation-node-aura,
+  .skill-constellation-panel .constellation-node-star { transition: none; }
+  .skill-constellation-panel .constellation-node:active .constellation-node-star { transform: none; }
 }

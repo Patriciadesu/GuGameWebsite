@@ -452,7 +452,7 @@ test('player constellation states render without overflow', async ({ page }) => 
   await page.getByRole('button', { name: 'View Path' }).click();
   await expect(page.locator('.skill-constellation-panel .constellation-focus')).toHaveClass(/is-topic-active/);
   await expect(page.locator('.constellation-topic-layer')).toBeVisible();
-  await expect(page.locator('.constellation-anchor')).toHaveCSS('pointer-events', 'none');
+  await expect(page.locator('.constellation-anchor')).toHaveCount(0);
   await page.waitForTimeout(650);
 
   const connectionPaths = await page.locator('.constellation-lines path').evaluateAll(paths => (
@@ -529,12 +529,12 @@ test('main menu keeps Main Quest compact and exposes the Skill Constellation abo
   await expect(page.locator('.profile-section')).toHaveCount(0);
   await expect(page.locator('.progression-leaderboard')).toHaveCount(0);
   await expect(page.locator('.topbar-center')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Admin Panel' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Admin Panel' })).toBeHidden();
   await expect(page.locator('.main-constellation-panel .main-quest-strip')).toHaveCount(1);
   await expect(page.locator('.main-constellation-panel svg.constellation-canvas')).toHaveCount(0);
   const mainConstellationBox = await page.locator('.main-constellation-panel .main-quest-strip').boundingBox();
   expect(mainConstellationBox).not.toBeNull();
-  expect(mainConstellationBox!.height).toBeLessThanOrEqual(106);
+  expect(mainConstellationBox!.height).toBeLessThanOrEqual(88);
   await expect(page.locator('.main-quest-strip__step')).toHaveCount(4);
   await expect(page.locator('.main-quest-strip__step-copy strong')).toHaveText(['Level 1', 'Level 2', 'Level 3', 'Level 4']);
   await expect(page.locator('.main-quest-strip__summary').getByText('Arrival', { exact: true })).toHaveCount(1);
@@ -590,6 +590,8 @@ test('main menu keeps Main Quest compact and exposes the Skill Constellation abo
   ]);
   await page.screenshot({ path: '/tmp/constellation-visual/main-compact.png', fullPage: true });
 
+  await page.locator('.player-account-menu summary').click();
+  await expect(page.getByRole('button', { name: 'Admin Panel' })).toBeVisible();
   await page.getByRole('button', { name: 'Admin Panel' }).click();
   await expect(page).toHaveURL(/\/admin$/);
   await page.goBack();
@@ -612,8 +614,11 @@ test('mobile Main Quest opens Star Lens as a focus-contained bottom sheet', asyn
   await expect(compactStrip).toBeVisible();
   const compactStripBounds = await compactStrip.boundingBox();
   const skillPanelBounds = await page.locator('.skill-constellation-panel').boundingBox();
-  expect(compactStripBounds!.height).toBeLessThan(230);
-  expect(skillPanelBounds!.y).toBeLessThan(500);
+  expect(compactStripBounds!.height).toBeLessThanOrEqual(132);
+  expect(skillPanelBounds!.y).toBeLessThan(234);
+  const skillMapBounds = await page.locator('.skill-constellation-panel .constellation-overview-grid').boundingBox();
+  expect(skillMapBounds).not.toBeNull();
+  expect(skillMapBounds!.y).toBeLessThan(340);
   await page.screenshot({ path: '/tmp/constellation-visual/mobile-main-quest-compact.png', fullPage: true });
 
   const currentQuest = page.locator('.main-constellation-panel [data-skill-id="410000000000000000000001"]');

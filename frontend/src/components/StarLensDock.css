@@ -108,7 +108,7 @@
 
 .star-lens-dock__footer { position: sticky; bottom: 0; min-height: 62px; padding: 9px 12px 9px 16px; display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--star-line); background: var(--star-space); }
 .star-lens-dock__footer > span { color: var(--star-muted); font-size: 12px; font-weight: 700; }
-.star-lens-dock__action { min-height: 40px; margin-left: auto; padding: 8px 14px; display: inline-flex; align-items: center; gap: 7px; color: var(--star-space); background: var(--star-gold); border: 1px solid color-mix(in srgb, var(--star-gold) 72%, var(--star-line)); border-radius: 5px; box-shadow: 0 4px 14px color-mix(in srgb, var(--star-gold) 20%, transparent); cursor: pointer; font: inherit; font-size: 13px; font-weight: 900; }
+.star-lens-dock__action { min-height: 40px; margin-left: auto; padding: 8px 14px; display: inline-flex; align-items: center; gap: 7px; color: var(--star-space); background: var(--star-gold); border: 1px solid color-mix(in srgb, var(--star-gold) 72%, var(--star-line)); border-radius: 5px; box-shadow: 0 4px 14px color-mix(in srgb, var(--star-gold) 20%, transparent); cursor: pointer; font: inherit; font-size: 13px; font-weight: 900; white-space: nowrap; }
 .star-lens-dock__action:hover, .star-lens-dock__action:focus-visible { filter: brightness(1.08); outline: 2px solid var(--star-cyan); outline-offset: 2px; }
 .star-lens-dock__action:disabled { color: var(--star-muted); background: var(--star-panel-raised); border-color: var(--star-line); box-shadow: none; cursor: default; }
 .star-lens-dock__action svg { width: 15px; height: 15px; }

@@ -792,6 +792,7 @@ body {
 .main-constellation-panel .constellation-load-state { min-height: 112px; }
 
 .topbar {
+  z-index: 60;
   min-height: 68px;
   padding: 8px 18px;
   gap: 20px;
@@ -889,6 +890,58 @@ body {
 
 .topbar-hud strong { color: #14263a; }
 .topbar-player { color: #087f9b; }
+
+.player-account-menu { position: relative; color: #087f9b; }
+.player-account-menu summary {
+  min-height: 32px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  list-style: none;
+}
+.player-account-menu summary::-webkit-details-marker { display: none; }
+.player-account-menu summary svg { width: 14px; height: 14px; }
+.player-account-menu summary .player-account-menu__icon { width: 16px; height: 16px; }
+.player-account-menu summary .player-account-menu__chevron { transition: transform 160ms ease; }
+.player-account-menu[open] summary .player-account-menu__chevron { transform: rotate(180deg); }
+.player-account-menu summary:hover,
+.player-account-menu summary:focus-visible { color: #06677e; border-color: #087f9b; outline: 2px solid #087f9b; outline-offset: 2px; }
+.player-account-menu__menu {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 6px);
+  right: 0;
+  width: max-content;
+  min-width: 154px;
+  padding: 5px;
+  display: grid;
+  gap: 3px;
+  color: #14263a;
+  background: #ffffff;
+  border: 1px solid #bdcbd7;
+  border-radius: 4px;
+  box-shadow: 0 14px 34px rgba(43, 65, 84, .18);
+}
+.player-account-menu__menu button {
+  min-height: 38px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+  font: 700 11px/1 Arial, "Noto Sans Thai", sans-serif;
+  text-align: left;
+}
+.player-account-menu__menu button:hover,
+.player-account-menu__menu button:focus-visible { color: #087f9b; background: #e8f6f9; outline: 2px solid #087f9b; outline-offset: -2px; }
+.player-account-menu__menu button svg { width: 15px; height: 15px; }
 
 .content-grid {
   min-height: 76px;
@@ -2624,7 +2677,11 @@ body {
   .inventory-section { border-right: 0; border-left: 0; border-radius: 0; }
   .content-grid { padding: 8px; }
   .user-stats { display: none; }
-  .topbar-hud span:not(.topbar-player) { display: none; }
+  .topbar-hud > span { display: none; }
+  .topbar-hud { font-size: 10px; }
+  .topbar { padding: 6px 62px 6px 12px; }
+  .player-account-menu summary { min-width: 44px; min-height: 44px; padding-inline: 6px; justify-content: center; }
+  .player-account-menu summary span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
 
 .player-dock {
@@ -2784,13 +2841,27 @@ body {
   .topbar-sigil::before,
   .topbar-sigil::after { top: 14px; left: 6px; width: 16px; }
   .topbar-title { font-size: 22px; }
-  .topbar-kicker { margin-top: 3px; font-size: 8px; }
-  .topbar-hud { gap: 10px; font-size: 10px; }
-  .panel-header { min-height: 36px; padding: 0 10px 0 14px; }
-  .panel-title { font-size: 10px; }
+  .topbar-kicker { margin-top: 3px; font-size: 9px; }
+  .topbar-hud { gap: 10px; font-size: 11px; }
+  .panel-header { min-height: 34px; padding: 0 10px 0 14px; }
+  .panel-title { font-size: 11px; }
   .admin-panel-btn,
   .logout-btn { min-height: 28px; padding-inline: 10px; font-size: 10px; }
   .player-dock { bottom: 6px; width: min(560px, calc(100% - 24px)); min-height: 48px; padding: 4px; }
-  .player-dock button { min-height: 38px; padding: 3px 14px; font-size: 10px; }
+  .player-dock button { min-height: 38px; padding: 3px 14px; font-size: 11px; }
   .player-dock button svg { width: 15px; height: 15px; }
+}
+
+:root[data-theme="dark"] .player-account-menu { color: var(--star-cyan); }
+:root[data-theme="dark"] .player-account-menu__menu {
+  color: var(--star-ink);
+  background: var(--star-panel-raised);
+  border-color: var(--star-line);
+}
+:root[data-theme="dark"] .player-account-menu__menu button:hover,
+:root[data-theme="dark"] .player-account-menu__menu button:focus-visible { color: var(--star-cyan); background: rgb(77 231 255 / 10%); }
+
+@media (max-width: 520px) {
+  .panel-header { min-height: 42px; padding: 0 8px; }
+  .panel-title { font-size: 11px; }
 }

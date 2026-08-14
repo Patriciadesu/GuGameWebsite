@@ -175,7 +175,7 @@ export default function StarLensDock({
     ? mainQuestStatus === 'completed' ? `Level ${questLevel} completed`
       : mainQuestStatus === 'pending' ? 'Pending level-up review'
         : mainQuestStatus === 'future' ? `Unlocks at Level ${questLevel}`
-          : canUnlock ? `Submit to reach Level ${questLevel + 1}` : 'Submission unavailable'
+          : canUnlock ? `Submit for Level ${questLevel + 1}` : 'Submission unavailable'
     : completed ? 'Completed' : pending ? 'Pending review' : unlocked ? 'Continue journey' : canUnlock ? (skill.nodePreview?.actionLabel || 'Start journey') : 'Requirements locked';
   const actionDisabled = isMainQuest
     ? mainQuestStatus !== 'current' || !canUnlock
@@ -255,7 +255,7 @@ export default function StarLensDock({
         </section>}
 
         <footer className="star-lens-dock__footer">
-          <span>{isMainQuest ? `Level-up quest for Level ${questLevel}` : skill.cost > 0 ? `${skill.cost} ${assetPointName}` : 'Main journey'}</span>
+          <span>{isMainQuest ? 'Admin review required after submission' : skill.cost > 0 ? `${skill.cost} ${assetPointName}` : 'Main journey'}</span>
           <button type="button" className="star-lens-dock__action" onClick={handleAction} disabled={actionDisabled}>
             {(isMainQuest ? mainQuestStatus === 'completed' : completed) ? <Check aria-hidden="true" /> : <Play aria-hidden="true" />}{actionLabel}
           </button>

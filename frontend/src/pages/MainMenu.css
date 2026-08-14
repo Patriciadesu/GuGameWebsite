@@ -783,15 +783,13 @@ body {
   z-index: 1;
 }
 
-/* Player context comes first, followed by the main and skill journeys. */
+/* Keep the level-up summary compact so the skill map is visible immediately. */
 .main-container > .topbar { order: 0; }
-.main-container > .profile-section { order: 1; }
-.main-container > .main-constellation-panel { order: 2; }
-.main-container > .skill-constellation-panel { order: 3; }
-.main-container > .progression-leaderboard { order: 4; }
-.main-container > .player-dock { order: 5; }
+.main-container > .main-constellation-panel { order: 1; }
+.main-container > .skill-constellation-panel { order: 2; }
+.main-container > .player-dock { order: 3; }
 
-.main-constellation-panel .constellation-load-state { min-height: 220px; }
+.main-constellation-panel .constellation-load-state { min-height: 112px; }
 
 .topbar {
   min-height: 68px;
@@ -881,6 +879,7 @@ body {
 }
 
 .topbar-hud {
+  margin-left: auto;
   justify-content: flex-end;
   gap: 14px;
   color: #52677b;
@@ -1032,7 +1031,8 @@ body {
   .panel-header { min-height: 42px; }
 }
 
-.main-constellation-panel { position: relative; }
+.main-constellation-panel { position: relative; overflow: hidden; }
+.main-constellation-panel > .panel-content { padding: 0; }
 
 .main-quest-feedback {
   position: absolute;

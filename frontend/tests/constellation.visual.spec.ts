@@ -488,24 +488,23 @@ test('theme switch persists dark and light preference across reloads', async ({ 
   await expect.poll(() => page.evaluate(() => localStorage.getItem('gugame-theme'))).toBe('light');
 });
 
-test('main menu keeps profile before Main and Skill constellations without changing the dock target', async ({ page }) => {
+test('main menu keeps Main Quest compact and exposes the Skill Constellation above the fold', async ({ page }) => {
   await installApiFixtures(page);
   await page.goto('mainmenu');
 
   const layout = await page.locator('.main-container').evaluate(container => {
-    const profile = container.querySelector('.profile-section');
+    const topbar = container.querySelector('.topbar');
     const main = container.querySelector('.main-constellation-panel');
     const skill = container.querySelector('.skill-constellation-panel');
-    const progression = container.querySelector('.progression-leaderboard');
     const dock = container.querySelector('.player-dock');
-    if (!profile || !main || !skill || !progression || !dock) return null;
+    if (!topbar || !main || !skill || !dock) return null;
     const children = [...container.children];
     return {
-      dom: [children.indexOf(profile), children.indexOf(main), children.indexOf(skill)],
-      top: [profile, main, skill].map(element => element.getBoundingClientRect().top),
+      dom: [children.indexOf(topbar), children.indexOf(main), children.indexOf(skill)],
+      top: [topbar, main, skill].map(element => element.getBoundingClientRect().top),
       documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-      progressionTop: progression.getBoundingClientRect().top,
-      dockTop: dock.getBoundingClientRect().top
+      viewportHeight: window.innerHeight,
+      skillBottom: skill.getBoundingClientRect().bottom
     };
   });
   expect(layout).not.toBeNull();
@@ -513,38 +512,34 @@ test('main menu keeps profile before Main and Skill constellations without chang
   expect(layout!.dom[1]).toBeLessThan(layout!.dom[2]);
   expect(layout!.top[0]).toBeLessThan(layout!.top[1]);
   expect(layout!.top[1]).toBeLessThan(layout!.top[2]);
-  expect(layout!.dockTop).toBeGreaterThan(layout!.progressionTop);
+  expect(layout!.top[2]).toBeLessThan(320);
+  expect(layout!.top[2]).toBeLessThan(layout!.viewportHeight);
+  expect(layout!.skillBottom).toBeGreaterThan(layout!.viewportHeight * 0.5);
   expect(layout!.documentOverflow).toBeLessThanOrEqual(1);
-  await expect(page.locator('.profile-section .nav-cards')).toHaveCount(0);
+  await expect(page.locator('.profile-section')).toHaveCount(0);
+  await expect(page.locator('.progression-leaderboard')).toHaveCount(0);
+  await expect(page.locator('.topbar-center')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Admin Panel' })).toBeVisible();
-  await expect(page.locator('.main-constellation-panel .is-main-quest-rail')).toHaveCount(1);
-  const mainConstellationBox = await page.locator('.main-constellation-panel .constellation-shell').boundingBox();
+  await expect(page.locator('.main-constellation-panel .main-quest-strip')).toHaveCount(1);
+  await expect(page.locator('.main-constellation-panel svg.constellation-canvas')).toHaveCount(0);
+  const mainConstellationBox = await page.locator('.main-constellation-panel .main-quest-strip').boundingBox();
   expect(mainConstellationBox).not.toBeNull();
-  expect(mainConstellationBox!.height).toBeLessThan(330);
-  const mainTopicTransforms = await page.locator('.main-constellation-panel .constellation-node')
-    .evaluateAll(nodes => nodes.map(node => node.getAttribute('transform') || ''));
-  expect(mainTopicTransforms).toHaveLength(4);
-  const mainTopicY = mainTopicTransforms.map(transform => Number(transform.match(/translate\([^ ]+ ([^)]+)\)/)?.[1]));
-  expect(new Set(mainTopicY).size).toBe(1);
-  const mainLineFit = await page.locator('.main-constellation-panel .constellation-canvas').evaluate(canvas => {
-    const nodes = [...canvas.querySelectorAll('.constellation-node')].map(node => node.getBoundingClientRect());
-    const bounds = canvas.getBoundingClientRect();
-    return (Math.max(...nodes.map(node => node.right)) - Math.min(...nodes.map(node => node.left))) / bounds.width;
-  });
-  expect(mainLineFit).toBeGreaterThan(0.4);
-  expect(mainLineFit).toBeLessThan(0.9);
+  expect(mainConstellationBox!.height).toBeLessThan(180);
+  await expect(page.locator('.main-quest-strip__step')).toHaveCount(4);
+  await expect(page.locator('.main-quest-strip__step-copy strong')).toHaveText(['Level 1', 'Level 2', 'Level 3', 'Level 4']);
+  await expect(page.locator('.main-quest-strip__summary').getByText('Arrival', { exact: true })).toHaveCount(1);
   const currentMainQuest = page.locator('.main-constellation-panel [data-skill-id="410000000000000000000001"]');
-  await expect(currentMainQuest).toHaveClass(/is-available/);
+  await expect(currentMainQuest).toHaveClass(/is-current/);
   await expect(currentMainQuest).toHaveAttribute('aria-expanded', 'false');
   const mainPanelBefore = await page.locator('.main-constellation-panel').boundingBox();
-  await currentMainQuest.locator('.constellation-node-hit-target').click();
+  await currentMainQuest.click();
   const starLens = page.getByLabel('Arrival quest details');
   await expect(starLens).toBeVisible();
   await expect(starLens).toHaveCSS('position', 'fixed');
   await expect(starLens.getByRole('heading', { name: 'Arrival' })).toBeVisible();
   await expect(page.getByRole('application')).toHaveCount(0);
-  await expect(page.getByRole('group', { name: 'Main Journey level-up quest path' })).toBeVisible();
-  await expect(currentMainQuest).toHaveClass(/is-star-lens-selected/);
+  await expect(page.getByRole('list', { name: 'Main Journey level-up path' })).toBeVisible();
+  await expect(currentMainQuest).toHaveClass(/is-selected/);
   await expect(currentMainQuest).toHaveAttribute('aria-controls', 'star-lens-dock');
   await expect(currentMainQuest).toHaveAttribute('aria-expanded', 'true');
   await page.waitForTimeout(220);
@@ -559,27 +554,27 @@ test('main menu keeps profile before Main and Skill constellations without chang
   expect(lensZIndex).toBeLessThan(1000);
   await page.getByRole('button', { name: /Switch to .* theme/ }).click();
   await expect(starLens).toBeVisible();
-  await currentMainQuest.locator('.constellation-node-hit-target').click();
+  await currentMainQuest.click();
   await expect(starLens).toBeVisible();
   await starLens.evaluate(element => { element.setAttribute('data-test-shell', 'stable'); });
-  await page.locator('.main-constellation-panel [data-skill-id="410000000000000000000002"] .constellation-node-hit-target').click();
+  await page.locator('.main-constellation-panel [data-skill-id="410000000000000000000002"]').click();
   const replacementLens = page.getByLabel('First Trial quest details');
   await expect(replacementLens).toBeVisible();
   await expect(replacementLens).toHaveAttribute('data-test-shell', 'stable');
   await replacementLens.getByRole('button', { name: 'Minimize quest dock' }).click();
   await expect(replacementLens).toHaveClass(/is-minimized/);
   await replacementLens.getByRole('button', { name: 'Expand quest dock' }).click();
-  await page.locator('.main-constellation-panel [data-skill-id="410000000000000000000003"] .constellation-node-hit-target').click();
+  const thirdMainQuest = page.locator('.main-constellation-panel [data-skill-id="410000000000000000000003"]');
+  await thirdMainQuest.click();
   await expect(page.getByLabel('Guild Path quest details')).toBeVisible();
   await page.locator('.topbar-brand').click({ position: { x: 3, y: 3 } });
   await expect(page.locator('#star-lens-dock')).toHaveCount(0);
-  await page.locator('.main-constellation-panel [data-skill-id="410000000000000000000003"] .constellation-node-hit-target').click();
+  await thirdMainQuest.click();
   await page.keyboard.press('Escape');
   await expect(page.locator('#star-lens-dock')).toHaveCount(0);
-  await expect(currentMainQuest).not.toHaveClass(/is-star-lens-selected/);
+  await expect(thirdMainQuest).not.toHaveClass(/is-selected/);
   await expect(page.locator('.player-dock button span')).toHaveText([
     'Constellations',
-    'Guild',
     'Inventory',
     'Shop'
   ]);
@@ -592,8 +587,10 @@ test('main menu keeps profile before Main and Skill constellations without chang
   await page.getByRole('button', { name: 'Constellations' }).click();
   await expect.poll(() => page.evaluate(() => {
     const target = document.getElementById('constellations');
-    return target ? Math.abs(target.getBoundingClientRect().top - 12) : 9999;
-  })).toBeLessThan(40);
+    if (!target) return false;
+    const bounds = target.getBoundingClientRect();
+    return bounds.top < window.innerHeight && bounds.bottom > 0;
+  })).toBe(true);
 });
 
 test('mobile Main Quest opens Star Lens as a focus-contained bottom sheet', async ({ page }) => {
@@ -601,8 +598,16 @@ test('mobile Main Quest opens Star Lens as a focus-contained bottom sheet', asyn
   await installApiFixtures(page);
   await page.goto('mainmenu');
 
+  const compactStrip = page.locator('.main-quest-strip');
+  await expect(compactStrip).toBeVisible();
+  const compactStripBounds = await compactStrip.boundingBox();
+  const skillPanelBounds = await page.locator('.skill-constellation-panel').boundingBox();
+  expect(compactStripBounds!.height).toBeLessThan(230);
+  expect(skillPanelBounds!.y).toBeLessThan(500);
+  await page.screenshot({ path: '/tmp/constellation-visual/mobile-main-quest-compact.png', fullPage: true });
+
   const currentQuest = page.locator('.main-constellation-panel [data-skill-id="410000000000000000000001"]');
-  await currentQuest.locator('.constellation-node-hit-target').click();
+  await currentQuest.click();
   const sheet = page.getByRole('dialog', { name: 'Arrival quest details' });
   await expect(sheet).toBeVisible();
   await expect(sheet.getByRole('button', { name: 'Close quest dock' })).toBeFocused();
@@ -640,7 +645,7 @@ test('dark theme keeps player and editor surfaces consistently dark', async ({ p
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await page.screenshot({ path: '/tmp/constellation-visual/dark-player-overview.png', fullPage: true });
 
-  await page.locator('.main-constellation-panel [data-skill-id="410000000000000000000001"] .constellation-node-hit-target').click();
+  await page.locator('.main-constellation-panel [data-skill-id="410000000000000000000001"]').click();
   await expect(page.getByLabel('Arrival quest details')).toBeVisible();
   await page.waitForTimeout(220);
   await expect(page.getByLabel('Arrival quest details')).toHaveCSS('opacity', '1');

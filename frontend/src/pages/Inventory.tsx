@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Backpack, Boxes, Link2, RefreshCw, ShoppingCart, Sparkles, UsersRound, X } from 'lucide-react';
+import { ArrowLeft, Backpack, Boxes, Link2, RefreshCw, ShoppingCart, Sparkles, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import axios from '../config/axios';
 import './Inventory.css';
@@ -152,7 +152,6 @@ function Inventory() {
 
       <nav className="inventory-dock" aria-label="Player navigation">
         <button type="button" onClick={() => navigate('/mainmenu')}><Sparkles aria-hidden="true" /><span>Constellations</span></button>
-        <button type="button" onClick={() => navigate('/mainmenu#guild-progress')}><UsersRound aria-hidden="true" /><span>Guild</span></button>
         <button type="button" className="is-active"><Backpack aria-hidden="true" /><span>Inventory</span></button>
         <button type="button" onClick={() => navigate('/shop')}><ShoppingCart aria-hidden="true" /><span>Shop</span></button>
       </nav>

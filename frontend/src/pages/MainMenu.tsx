@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Backpack, ShieldCheck, ShoppingCart, Sparkles, UsersRound } from 'lucide-react';
+import { Backpack, ShieldCheck, ShoppingCart, Sparkles } from 'lucide-react';
 import axios from '../config/axios';
 import ConstellationTree from '../components/ConstellationTree';
+import MainQuestStrip from '../components/MainQuestStrip';
 import StarLensDock from '../components/StarLensDock';
 import type { ConstellationMap, ConstellationSkill } from '../components/constellationTypes';
 import { renderInlineMarkdown } from '../components/inlineMarkdown';
@@ -87,30 +88,6 @@ interface QuestTreeEdge {
   hasArrowhead: boolean;
 }
 
-interface GuildMemberProgress {
-  userId: string;
-  name: string;
-  avatar: string | null;
-  progress: number;
-  isCurrentUser: boolean;
-  rank: number;
-}
-
-interface GuildProgress {
-  guildId: string;
-  name: string;
-  memberCount: number;
-  progress: number;
-  rank: number;
-}
-
-interface ProgressionLeaderboard {
-  totalSkills: number;
-  currentGuild: { id: string; name: string } | null;
-  guildMembers: GuildMemberProgress[];
-  guilds: GuildProgress[];
-}
-
 const useAccessibleDialog = (isOpen: boolean, onClose?: () => void) => {
   const dialogRef = useRef<HTMLElement | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
@@ -163,7 +140,6 @@ function MainMenu() {
   const navigate = useNavigate();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [customPhrase] = useState<string>('"The only way to do great work is to love what you do. If you haven\'t found it yet, keep looking. Don\'t settle."');
   const [showGuildSelection, setShowGuildSelection] = useState(false);
   const [guilds, setGuilds] = useState<Guild[]>([]);
   const [selectedGuildId, setSelectedGuildId] = useState('');
@@ -172,7 +148,6 @@ function MainMenu() {
   const [assetPoints, setAssetPoints] = useState(0);
   const [assetPointName, setAssetPointName] = useState('Asset Point'); // Custom name from guild
   const [voiceMinutesToday, setVoiceMinutesToday] = useState(0);
-  const [totalVoiceMinutes, setTotalVoiceMinutes] = useState(0);
 
   // Skill Tree states
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -209,8 +184,6 @@ function MainMenu() {
   const [expandedImage, setExpandedImage] = useState<{ src: string; alt: string } | null>(null);
   const [showApprovalRequestModal, setShowApprovalRequestModal] = useState(false);
   const [approvalMessage, setApprovalMessage] = useState('');
-  const [progressionLeaderboard, setProgressionLeaderboard] = useState<ProgressionLeaderboard | null>(null);
-  const [loadingProgression, setLoadingProgression] = useState(true);
   const imageDialogRef = useAccessibleDialog(Boolean(expandedImage), () => setExpandedImage(null));
   const approvalDialogRef = useAccessibleDialog(showApprovalRequestModal, () => {
     setShowApprovalRequestModal(false);
@@ -248,7 +221,7 @@ function MainMenu() {
     if (!starLensSkill) return;
     const handleOutsidePointer = (event: PointerEvent) => {
       const target = event.target as Element | null;
-      if (!target || target.closest('.star-lens-dock, .star-lens-scrim, .is-main-quest-rail .constellation-node, .theme-toggle')) return;
+      if (!target || target.closest('.star-lens-dock, .star-lens-scrim, .main-quest-strip button, .theme-toggle')) return;
       closeStarLens();
     };
     document.addEventListener('pointerdown', handleOutsidePointer);
@@ -309,7 +282,6 @@ function MainMenu() {
       setAssetPoints(stats.assetPoints || 0);
       setAssetPointName(stats.assetPointName || 'Asset Point');
       setVoiceMinutesToday(stats.voiceMinutesToday || 0);
-      setTotalVoiceMinutes(stats.totalVoiceMinutes || 0);
     }
     setUnlockedSkills(data.unlockedSkills || []);
     const questProgress = data.questProgress || {};
@@ -318,20 +290,16 @@ function MainMenu() {
     ));
     setCompletedQuests(questProgress.completedQuests || []);
     setPendingApprovalSkills(questProgress.pendingApprovalSkillIds || []);
-    setProgressionLeaderboard(data.progressionLeaderboard || null);
   };
 
   const loadMainMenu = async () => {
     try {
-      setLoadingProgression(true);
       const response = await axios.get('/api/mainmenu/bootstrap');
       if (!response.data.success) return;
       setSkills(response.data.skills || []);
       applyMainMenuStatus(response.data);
     } catch (error) {
       console.error('Error loading Main Menu:', error);
-    } finally {
-      setLoadingProgression(false);
     }
   };
 
@@ -377,7 +345,7 @@ function MainMenu() {
     setShowSkillModal(true);
   };
 
-  const handleMainTopicClick = (skill: Skill, interaction: 'pointer' | 'keyboard' = 'pointer', trigger?: SVGElement) => {
+  const handleMainTopicClick = (skill: Skill, interaction: 'pointer' | 'keyboard' = 'pointer', trigger?: HTMLElement | SVGElement) => {
     if (starLensCloseTimerRef.current !== null) window.clearTimeout(starLensCloseTimerRef.current);
     starLensCloseTimerRef.current = null;
     setStarLensClosing(false);
@@ -1015,19 +983,6 @@ function MainMenu() {
     document.getElementById(sectionId)?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' });
   };
 
-  const getAvatarUrl = (userId = user?.id || '0', avatar: string | null = user?.avatar || null) => {
-    if (avatar) {
-      return `https://cdn.discordapp.com/avatars/${userId}/${avatar}.png`;
-    }
-    return `https://cdn.discordapp.com/embed/avatars/${Math.abs(parseInt(userId, 10)) % 5}.png`;
-  };
-
-  const getProgressPercent = (progress: number) =>
-    progressionLeaderboard?.totalSkills ? Math.min(100, Math.round((progress / progressionLeaderboard.totalSkills) * 100)) : 0;
-
-  const formatGuildProgress = (progress: number) =>
-    Number.isInteger(progress) ? String(progress) : progress.toFixed(1);
-
   // Skill Tree helper functions
   const getNodeColor = (color: string): string => {
     const colors: { [key: string]: string } = {
@@ -1194,52 +1149,12 @@ function MainMenu() {
             <span className="topbar-kicker">Starbound Learning Guild</span>
           </div>
         </div>
-        <div className="topbar-center">
-          <strong>Skill Constellations</strong>
-          <p className="topbar-phrase">{customPhrase}</p>
-        </div>
         <div className="topbar-hud" aria-label="Player status">
           <span><strong>Lv. {user?.level || 1}</strong></span>
           <span><strong>{assetPoints}</strong> {assetPointName}</span>
           <span><strong>{voiceMinutesToday}m</strong> today</span>
           <span className="topbar-player">{user?.username || 'Player'}</span>
         </div>
-      </div>
-
-      {/* Middle Section */}
-      <div className="content-grid profile-section">
-        {/* User Profile Card */}
-        <div className="user-card">
-          <div className="user-header">
-            <div className="user-avatar">
-              <img src={getAvatarUrl()} alt={user?.username || 'User'} />
-            </div>
-            <div className="user-info">
-              <h2 className="user-name">{user?.username || 'Username'}</h2>
-              <p className="user-details">
-                Level {user?.level || 1} Starbound explorer
-                {user?.role && <span className="user-role">{user.role}</span>}
-              </p>
-            </div>
-          </div>
-
-          <div className="user-stats">
-            <div className="stat-item">
-              <span className="stat-label">{assetPointName} :</span>
-              <span className="stat-value">{assetPoints}</span>
-            </div>
-            <div className="stat-item">
-              <span className="stat-label">Voice Today :</span>
-              <span className="stat-value">{voiceMinutesToday}m</span>
-            </div>
-            <div className="stat-item">
-              <span className="stat-label">Total Voice :</span>
-              <span className="stat-value">{totalVoiceMinutes}m</span>
-            </div>
-          </div>
-          
-        </div>
-
       </div>
 
       <section className="main-panel main-constellation-panel" id="main-constellation" aria-label="Main Quest level-up path">
@@ -1254,19 +1169,13 @@ function MainMenu() {
               <button type="button" onClick={() => { void loadConstellationMaps(); }}>Retry</button>
             </div>
           ) : mainConstellationMaps.length > 0 ? (
-            <ConstellationTree
-              disciplineMaps={mainConstellationMaps.slice(0, 1)}
-              heading="Main Quest · Level Up"
-              idPrefix="main-constellation"
+            <MainQuestStrip
+              map={mainConstellationMaps[0]}
               refreshRevision={constellationRevision}
-              unlockedSkillIds={unlockedSkills}
               pendingSkillIds={pendingApprovalSkills}
               userLevel={user?.level || 1}
-              canUnlockSkill={(skill: ConstellationSkill) => canUnlockSkill(skill as Skill)}
               onOpenSkill={(skill: ConstellationSkill, interaction, trigger) => handleMainTopicClick(skill as Skill, interaction, trigger)}
               selectedSkillId={starLensSkill?._id}
-              compactOverview
-              directMap
             />
           ) : (
             <div className="constellation-load-state" role="status">
@@ -1538,98 +1447,10 @@ function MainMenu() {
         </div>
       </div>
 
-      <section className="progression-leaderboard" id="guild-progress" aria-labelledby="progression-title">
-        <div className="progression-header">
-          <div>
-            <h2 id="progression-title" className="panel-title">Progression Leaderboard</h2>
-            <p className="progression-subtitle">Unlocked quests across the active tree</p>
-          </div>
-          {progressionLeaderboard && (
-            <span className="progression-total">{progressionLeaderboard.totalSkills} quests available</span>
-          )}
-        </div>
-
-        <div className="progression-grid">
-          <div className="progression-column">
-            <div className="progression-column-heading">
-              <div>
-                <h3>Your Guild</h3>
-                <p>{progressionLeaderboard?.currentGuild?.name || 'Guild progress'}</p>
-              </div>
-            </div>
-
-            <div className="progression-list">
-              {loadingProgression ? (
-                <div className="progression-empty">Loading progression...</div>
-              ) : !progressionLeaderboard?.currentGuild ? (
-                <div className="progression-empty">Join a guild to see member progression.</div>
-              ) : progressionLeaderboard.guildMembers.length === 0 ? (
-                <div className="progression-empty">No members found.</div>
-              ) : (
-                progressionLeaderboard.guildMembers.map((entry) => (
-                  <div key={entry.userId} className={`progression-entry ${entry.isCurrentUser ? 'is-current-user' : ''}`}>
-                    <span className="progression-rank">{entry.rank}</span>
-                    <img
-                      className="progression-avatar"
-                      src={getAvatarUrl(entry.userId, entry.avatar)}
-                      alt=""
-                      onError={(event) => {
-                        event.currentTarget.src = `https://cdn.discordapp.com/embed/avatars/${Math.abs(parseInt(entry.userId, 10)) % 5}.png`;
-                      }}
-                    />
-                    <div className="progression-entry-main">
-                      <div className="progression-entry-name">
-                        <span>{entry.name}</span>
-                        {entry.isCurrentUser && <span className="current-user-badge">You</span>}
-                      </div>
-                      <div className="progression-meter"><span style={{ width: `${getProgressPercent(entry.progress)}%` }} /></div>
-                    </div>
-                    <strong className="progression-value">{entry.progress}<span>/{progressionLeaderboard.totalSkills}</span></strong>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="progression-column">
-            <div className="progression-column-heading">
-              <div>
-                <h3>Guilds</h3>
-                <p>Average quest progress per member</p>
-              </div>
-            </div>
-
-            <div className="progression-list">
-              {loadingProgression ? (
-                <div className="progression-empty">Loading progression...</div>
-              ) : !progressionLeaderboard?.guilds.length ? (
-                <div className="progression-empty">No guild progress yet.</div>
-              ) : (
-                progressionLeaderboard.guilds.map((entry) => (
-                  <div key={entry.guildId} className="progression-entry guild-progression-entry">
-                    <span className="progression-rank">{entry.rank}</span>
-                    <span className="guild-progress-mark">G</span>
-                    <div className="progression-entry-main">
-                      <div className="progression-entry-name"><span>{entry.name}</span></div>
-                      <span className="guild-member-count">{entry.memberCount} member{entry.memberCount === 1 ? '' : 's'}</span>
-                    </div>
-                    <strong className="progression-value">{formatGuildProgress(entry.progress)}<span> avg unlocks</span></strong>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
-
       <nav className="player-dock" aria-label="Player navigation">
         <button type="button" className="is-active" onClick={() => scrollToMainSection('constellations')}>
           <Sparkles aria-hidden="true" />
           <span>Constellations</span>
-        </button>
-        <button type="button" onClick={() => scrollToMainSection('guild-progress')}>
-          <UsersRound aria-hidden="true" />
-          <span>Guild</span>
         </button>
         <button type="button" onClick={() => { closeStarLens(true, false); navigate('/inventory'); }}>
           <Backpack aria-hidden="true" />

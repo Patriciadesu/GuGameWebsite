@@ -41,11 +41,13 @@ interface Skill {
   contentGoogleDrive?: string[];
   layer: number;
   position: number;
+  constellationMapId?: string;
   treePosition?: {
     x: number;
     y: number;
   };
   constellationLabel?: string;
+  mainQuestLevel?: number;
   mapNodeRole?: 'topic-gateway' | 'lesson' | 'boss' | 'capstone';
   topicLevel?: number;
   nodePreview?: {
@@ -189,6 +191,7 @@ function MainMenu() {
   const [highlightedSkillId, setHighlightedSkillId] = useState<string | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [starLensSkill, setStarLensSkill] = useState<Skill | null>(null);
+  const [starLensWorkflow, setStarLensWorkflow] = useState<'main' | 'skill'>('skill');
   const [showSkillModal, setShowSkillModal] = useState(false);
   const skillModalRef = useRef<HTMLDivElement | null>(null);
   const skillModalOpenerRef = useRef<HTMLElement | null>(null);
@@ -242,6 +245,9 @@ function MainMenu() {
   const applyMainMenuStatus = (data: any) => {
     const stats = data.userStats;
     if (stats) {
+      setUser(current => current && current.level !== (stats.level || 1)
+        ? { ...current, level: stats.level || 1 }
+        : current);
       setAssetPoints(stats.assetPoints || 0);
       setAssetPointName(stats.assetPointName || 'Asset Point');
       setVoiceMinutesToday(stats.voiceMinutesToday || 0);
@@ -306,12 +312,14 @@ function MainMenu() {
       alert('อันนี้เป็นเนื้อหา Advance สอนแค่ใน Starway/Starlight น้าาา');
       return;
     }
+    setStarLensWorkflow('skill');
     skillModalOpenerRef.current = document.activeElement as HTMLElement | null;
     setSelectedSkill(skill);
     setShowSkillModal(true);
   };
 
   const handleMainTopicClick = (skill: Skill) => {
+    setStarLensWorkflow('main');
     setStarLensSkill(current => current?._id === skill._id ? null : skill);
   };
 
@@ -374,6 +382,9 @@ function MainMenu() {
   const isQuestSkill = (skill: Skill): boolean =>
     skill.nodeType === 'quest' || skill.nodeColor === 'green';
 
+  const isMainConstellationSkill = (skill: Skill): boolean =>
+    Boolean(skill.constellationMapId && mainConstellationMaps.some(map => map._id === skill.constellationMapId));
+
   const hasCompletedAllQuestSteps = (skill: Skill): boolean => {
     const steps = skill.subQuests || [];
     return steps.length > 0 && steps.every((step, index) =>
@@ -385,6 +396,10 @@ function MainMenu() {
     // Check if already unlocked
     if (unlockedSkills.includes(skill._id)) {
       return false;
+    }
+
+    if (isMainConstellationSkill(skill)) {
+      return Boolean(skill.mainQuestLevel && skill.mainQuestLevel === (user?.level || 1));
     }
 
     // Check prerequisites from prerequisites array
@@ -414,7 +429,7 @@ function MainMenu() {
     // Check asset points (skip for Adventure and Marker nodes)
     const isAdventure = skill.nodeType === 'adventure' || skill.nodeColor === 'white';
     const isMarker = skill.nodeType === 'marker' || skill.nodeColor === 'yellow';
-    if (!isAdventure && !isMarker && assetPoints < skill.cost) {
+    if (!isMainConstellationSkill(skill) && !isAdventure && !isMarker && assetPoints < skill.cost) {
       return false;
     }
 
@@ -424,10 +439,10 @@ function MainMenu() {
   const handleUnlockSkill = async (targetSkill: Skill | null = selectedSkill) => {
     if (!targetSkill) return;
 
-    const isQuest = isQuestSkill(targetSkill);
+    const isQuest = starLensWorkflow === 'main' || isQuestSkill(targetSkill);
     
     if (isQuest) {
-      if (!hasCompletedAllQuestSteps(targetSkill)) {
+      if (starLensWorkflow !== 'main' && !hasCompletedAllQuestSteps(targetSkill)) {
         alert('Complete every quest step before requesting approval.');
         return;
       }
@@ -1160,20 +1175,20 @@ function MainMenu() {
 
       </div>
 
-      <section className="main-panel main-constellation-panel" id="main-constellation" aria-label="Main Constellation">
+      <section className="main-panel main-constellation-panel" id="main-constellation" aria-label="Main Quest level-up path">
         <div className="panel-content">
           {constellationLoadState === 'loading' ? (
-            <div className="constellation-load-state" role="status">Loading main constellation...</div>
+            <div className="constellation-load-state" role="status">Loading Main Quest path...</div>
           ) : constellationLoadState === 'error' ? (
             <div className="constellation-load-state is-error" role="alert">
-              <strong>Main Constellation is temporarily unavailable.</strong>
+              <strong>Main Quest path is temporarily unavailable.</strong>
               <span>Your progress is safe.</span>
               <button type="button" onClick={() => { void loadConstellationMaps(); }}>Retry</button>
             </div>
           ) : mainConstellationMaps.length > 0 ? (
             <ConstellationTree
               disciplineMaps={mainConstellationMaps.slice(0, 1)}
-              heading="Main Constellation"
+              heading="Main Quest · Level Up"
               idPrefix="main-constellation"
               refreshRevision={constellationRevision}
               unlockedSkillIds={unlockedSkills}
@@ -1183,11 +1198,12 @@ function MainMenu() {
               onOpenSkill={(skill: ConstellationSkill) => handleMainTopicClick(skill as Skill)}
               selectedSkillId={starLensSkill?._id}
               compactOverview
+              directMap
             />
           ) : (
             <div className="constellation-load-state" role="status">
-              <strong>No Main Constellation published yet.</strong>
-              <span>The main journey will appear here when it is ready.</span>
+              <strong>No Main Quest path published yet.</strong>
+              <span>Your level-up quests will appear here when they are ready.</span>
             </div>
           )}
         </div>
@@ -1559,6 +1575,8 @@ function MainMenu() {
 
       {starLensSkill && <StarLensDock
         skill={starLensSkill as ConstellationSkill}
+        workflow={starLensWorkflow}
+        userLevel={user?.level || 1}
         assetPointName={assetPointName}
         unlocked={unlockedSkills.includes(starLensSkill._id)}
         pending={pendingApprovalSkills.includes(starLensSkill._id)}
@@ -1894,13 +1912,15 @@ function MainMenu() {
         <div className="guild-selection-modal-overlay" onClick={() => setShowApprovalRequestModal(false)}>
           <div ref={approvalDialogRef as React.RefObject<HTMLDivElement>} className="guild-selection-modal" role="dialog" aria-modal="true" aria-labelledby="approval-dialog-title" tabIndex={-1} onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px' }}>
             <div className="guild-selection-header">
-              <h2 id="approval-dialog-title">Send Approval Request</h2>
+              <h2 id="approval-dialog-title">{starLensWorkflow === 'main' ? 'Submit Main Quest for Level Up' : 'Send Approval Request'}</h2>
               <p style={{ fontSize: '1.4rem', color: '#6b7280', marginTop: '8px' }}>
-                Request approval for: <strong>{selectedSkill.title}</strong>
+                {starLensWorkflow === 'main' ? `Complete Level ${selectedSkill.mainQuestLevel || user?.level || 1} Main Quest: ` : 'Request approval for: '}<strong>{selectedSkill.title}</strong>
               </p>
-              <p style={{ fontSize: '1.25rem', color: '#b45309', marginTop: '8px' }}>
+              {starLensWorkflow === 'main' ? <p style={{ fontSize: '1.25rem', color: '#047857', marginTop: '8px' }}>
+                เมื่อ Admin อนุมัติ Level ของคุณจะเพิ่มเป็น {(selectedSkill.mainQuestLevel || user?.level || 1) + 1} โดยไม่เสีย {assetPointName}
+              </p> : <p style={{ fontSize: '1.25rem', color: '#b45309', marginTop: '8px' }}>
                 {selectedSkill.nextQuestCost ?? 25} {assetPointName} will be charged after approval to continue to the next quest.
-              </p>
+              </p>}
             </div>
             
             <div className="guild-selection-content">
@@ -1947,7 +1967,7 @@ function MainMenu() {
                   cursor: 'pointer'
                 }}
               >
-                📤 Send Request
+                {starLensWorkflow === 'main' ? '📤 Submit for Level Up' : '📤 Send Request'}
               </button>
               <button
                 className="cancel-btn"

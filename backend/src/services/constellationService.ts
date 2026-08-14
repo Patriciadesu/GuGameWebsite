@@ -28,6 +28,7 @@ export interface SkillMapAssignment {
   skillId?: string;
   constellationMapId?: unknown;
   mapNodeRole: MapNodeRole;
+  mainQuestLevel?: unknown;
 }
 
 export interface ConstellationLayoutNode {
@@ -91,8 +92,15 @@ export const normalizeConstellationLayout = (
 
 export const assertRoleAllowedForScope = (
   scope: ConstellationScope,
-  role: MapNodeRole
+  role: MapNodeRole,
+  constellationType: ConstellationType = 'skill'
 ): void => {
+  if (constellationType === 'main') {
+    if (role === 'topic-gateway') {
+      throw new ConstellationOperationError('Main quest maps cannot contain topic-gateway nodes');
+    }
+    return;
+  }
   if (scope === 'discipline' && role !== 'topic-gateway') {
     throw new ConstellationOperationError('Discipline maps only accept topic-gateway nodes');
   }
@@ -105,17 +113,20 @@ export const assertConstellationHierarchyIntegrity = (
   parent: ConstellationHierarchyNode,
   child: ConstellationHierarchyNode
 ): void => {
-  if (parent.scope !== 'discipline') {
-    throw new ConstellationOperationError('Topic maps must belong to a discipline map');
-  }
-  if (child.scope !== 'topic') {
-    throw new ConstellationOperationError('Only topic maps can belong to a parent map');
-  }
   if (parent.constellationType !== child.constellationType) {
     throw new ConstellationOperationError(
       'Topic and parent map must use the same constellation type',
       409
     );
+  }
+  if (parent.constellationType === 'main') {
+    throw new ConstellationOperationError('Main Quest paths do not use topic maps');
+  }
+  if (parent.scope !== 'discipline') {
+    throw new ConstellationOperationError('Topic maps must belong to a discipline map');
+  }
+  if (child.scope !== 'topic') {
+    throw new ConstellationOperationError('Only topic maps can belong to a parent map');
   }
 };
 
@@ -123,6 +134,9 @@ export const validateConstellationMapLinkage = async (
   linkage: ConstellationMapLinkage,
   mapId?: string
 ): Promise<void> => {
+  if (linkage.constellationType === 'main' && linkage.scope !== 'discipline') {
+    throw new ConstellationOperationError('Main Quest maps do not use topic maps');
+  }
   if (linkage.scope === 'discipline') {
     if (linkage.parentMapId || linkage.gatewaySkillId) {
       throw new ConstellationOperationError('Discipline maps cannot have a parent map or gateway skill');
@@ -169,6 +183,9 @@ export const validateSkillMapAssignment = async (
   assignment: SkillMapAssignment
 ): Promise<void> => {
   if (!assignment.constellationMapId) {
+    if (assignment.mainQuestLevel !== undefined && assignment.mainQuestLevel !== null) {
+      throw new ConstellationOperationError('Only Main Quest stars can have a Main Quest level');
+    }
     if (assignment.mapNodeRole !== 'lesson') {
       throw new ConstellationOperationError('Unassigned skills must use the lesson role');
     }
@@ -184,11 +201,28 @@ export const validateSkillMapAssignment = async (
   }
 
   const constellationMapId = objectIdString(assignment.constellationMapId, 'constellationMapId');
-  const map = await ConstellationMap.findById(constellationMapId).select('_id scope').lean();
+  const map = await ConstellationMap.findById(constellationMapId).select('_id scope constellationType').lean();
   if (!map) {
     throw new ConstellationOperationError('Constellation map not found', 404);
   }
-  assertRoleAllowedForScope(map.scope, assignment.mapNodeRole);
+  assertRoleAllowedForScope(map.scope, assignment.mapNodeRole, map.constellationType || 'skill');
+
+  if (map.constellationType === 'main') {
+    const mainQuestLevel = Number(assignment.mainQuestLevel);
+    if (!Number.isInteger(mainQuestLevel) || mainQuestLevel < 1) {
+      throw new ConstellationOperationError('Main Quest level must be a positive integer');
+    }
+    const duplicate = await Skill.exists({
+      constellationMapId,
+      mainQuestLevel,
+      ...(assignment.skillId ? { _id: { $ne: assignment.skillId } } : {})
+    });
+    if (duplicate) {
+      throw new ConstellationOperationError(`Level ${mainQuestLevel} already has a Main Quest`, 409);
+    }
+  } else if (assignment.mainQuestLevel !== undefined && assignment.mainQuestLevel !== null) {
+    throw new ConstellationOperationError('Skill Constellation stars cannot have a Main Quest level');
+  }
 
   if (!assignment.skillId) return;
   const dependentTopic = await ConstellationMap.findOne({ gatewaySkillId: assignment.skillId })
@@ -207,11 +241,14 @@ export const validateSkillMapAssignment = async (
 
 export const validateConstellationMapContents = async (
   mapId: string,
-  scope: ConstellationScope
+  scope: ConstellationScope,
+  constellationType: ConstellationType = 'skill'
 ): Promise<void> => {
   const incompatibleSkill = await Skill.exists({
     constellationMapId: mapId,
-    mapNodeRole: scope === 'discipline' ? { $ne: 'topic-gateway' } : 'topic-gateway'
+    mapNodeRole: constellationType === 'main'
+      ? 'topic-gateway'
+      : scope === 'discipline' ? { $ne: 'topic-gateway' } : 'topic-gateway'
   });
   if (incompatibleSkill) {
     throw new ConstellationOperationError(

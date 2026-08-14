@@ -67,6 +67,8 @@ interface Skill {
   };
   constellationMapId?: string;
   mapNodeRole?: 'topic-gateway' | 'lesson' | 'boss' | 'capstone';
+  mainQuestLevel?: number;
+  isMainQuest?: boolean;
   nodePreview?: {
     imageUrl?: string;
     summary?: string;
@@ -136,6 +138,8 @@ interface ApprovalRequest {
     minAP?: number;
     maxAP?: number;
     nextQuestCost?: number;
+    mainQuestLevel?: number;
+    isMainQuest?: boolean;
   };
 }
 
@@ -1440,7 +1444,7 @@ function AdminPage() {
   };
 
   const handleApproveRequest = async (request: ApprovalRequest) => {
-    const skill = skills.find(s => s._id === request.skillId);
+    const skill = request.skill || skills.find(s => s._id === request.skillId);
     setSelectedApprovalRequest(request);
     setApproveAPAmount(skill?.minAP ?? 35);
     setShowApproveModal(true);
@@ -1760,7 +1764,9 @@ function AdminPage() {
         rewardAP: approveAPAmount
       });
       if (response.data.success) {
-        alert('Request approved successfully!');
+        alert(response.data.leveledUp
+          ? `Main Quest approved — player advanced to Level ${response.data.level}.`
+          : 'Request approved successfully!');
         setShowApproveModal(false);
         setSelectedApprovalRequest(null);
         setApproveAPAmount(0);
@@ -2103,7 +2109,7 @@ function AdminPage() {
           <option value="dashboard">Dashboard</option>
           <option value="guilds">Guilds</option>
           <option value="users">Users</option>
-          <option value="mainconstellation">Main Constellation</option>
+          <option value="mainconstellation">Main Quest</option>
           <option value="skilltree">Constellation Editor</option>
           <option value="approvals">Approvals</option>
           {user?.role === 'super-admin' && <option value="images">Images</option>}
@@ -2138,7 +2144,7 @@ function AdminPage() {
           data-group="world"
           onClick={() => requestActiveSection('mainconstellation')}
         >
-          <Orbit aria-hidden="true" /> Main Constellation
+          <Orbit aria-hidden="true" /> Main Quest
         </button>
         <button
           className={`nav-tab ${activeSection === 'skilltree' ? 'active' : ''}`}
@@ -3273,7 +3279,9 @@ function AdminPage() {
                             border: '2px solid #3b82f6',
                             flex: 1
                           }}>
-                            📋 Quest: {skill?.title || 'Unknown Skill'}
+                            {skill?.isMainQuest
+                              ? `⬆ Main Quest · Level ${skill.mainQuestLevel} → ${(skill.mainQuestLevel || 0) + 1}: ${skill.title}`
+                              : `📋 Quest: ${skill?.title || 'Unknown Skill'}`}
                           </div>
                           <button
                             onClick={() => handleApproveRequest(request)}
@@ -6144,7 +6152,7 @@ function AdminPage() {
                 Enter the Asset Points to reward for completing this quest:
               </p>
               {(() => {
-                const skill = skills.find(s => s._id === selectedApprovalRequest.skillId);
+                const skill = selectedApprovalRequest.skill || skills.find(s => s._id === selectedApprovalRequest.skillId);
                 return skill && (
                   <div style={{ 
                     padding: '12px', 
@@ -6154,9 +6162,9 @@ function AdminPage() {
                     fontSize: '14px',
                     color: '#92400e'
                   }}>
-                    Recommended reward: {skill.minAP ?? 35}{skill.maxAP !== undefined ? ` - ${skill.maxAP}` : ''} AP
-                    <br />
-                    Next quest cost: {skill.nextQuestCost ?? 25} AP
+                    {skill.isMainQuest
+                      ? <>Main Quest Level {skill.mainQuestLevel} → {(skill.mainQuestLevel || 0) + 1}<br />Approval will level up the player. No AP is charged.</>
+                      : <>Recommended reward: {skill.minAP ?? 35}{skill.maxAP !== undefined ? ` - ${skill.maxAP}` : ''} AP<br />Next quest cost: {skill.nextQuestCost ?? 25} AP</>}
                   </div>
                 );
               })()}
@@ -6196,7 +6204,7 @@ function AdminPage() {
                     background: 'linear-gradient(135deg, #22c55e, #16a34a)'
                   }}
                 >
-                  Approve & Reward
+                  {selectedApprovalRequest.skill?.isMainQuest ? 'Approve & Level Up' : 'Approve & Reward'}
                 </button>
               </div>
             </div>

@@ -22,6 +22,7 @@ interface ConstellationTreeProps {
   userLevel?: number;
   compactOverview?: boolean;
   selectedSkillId?: string | null;
+  directMap?: boolean;
 }
 
 interface MapDetail {
@@ -81,7 +82,8 @@ function ConstellationTree({
   onOpenSkill,
   userLevel = 1,
   compactOverview = false,
-  selectedSkillId = null
+  selectedSkillId = null,
+  directMap = false
 }: ConstellationTreeProps) {
   const labelForSkill = (skill: ConstellationSkill) => skill.constellationLabel || skill.title;
   const [disciplineDetails, setDisciplineDetails] = useState<Record<string, MapDetail>>({});
@@ -118,6 +120,10 @@ function ConstellationTree({
           response.data.map._id,
           { map: response.data.map, skills: response.data.skills || [] }
         ])));
+        if (directMap && responses[0]?.data?.map?._id) {
+          setSelectedDisciplineId(responses[0].data.map._id);
+          originDisciplineIdRef.current = responses[0].data.map._id;
+        }
       })
       .catch(() => {
         if (!cancelled) setError('Constellation data is temporarily unavailable.');
@@ -216,7 +222,7 @@ function ConstellationTree({
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || directMap) return;
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
       if (loadingTopic) return;
@@ -241,7 +247,7 @@ function ConstellationTree({
     };
     canvas.addEventListener('wheel', handleWheel, { passive: false });
     return () => canvas.removeEventListener('wheel', handleWheel);
-  }, [activeMap?.viewport.maxZoom, activeMap?.viewport.minZoom, loadingTopic, topicDetail?.map.viewport.maxZoom, topicDetail?.map.viewport.minZoom]);
+  }, [activeMap?.viewport.maxZoom, activeMap?.viewport.minZoom, directMap, loadingTopic, topicDetail?.map.viewport.maxZoom, topicDetail?.map.viewport.minZoom]);
 
   const resetCamera = () => setCamera({ zoom: 1, x: 0, y: 0 });
 
@@ -345,9 +351,15 @@ function ConstellationTree({
     }
   };
 
-  const statusForSkill = (skill: ConstellationSkill) => (skill.topicLevel || userLevel) > userLevel
-    ? 'locked'
-    : unlockedSet.has(skill._id)
+  const statusForSkill = (skill: ConstellationSkill) => directMap
+    ? (skill.mainQuestLevel || 1) < userLevel || unlockedSet.has(skill._id)
+      ? 'unlocked'
+      : pendingSet.has(skill._id)
+        ? 'pending'
+        : (skill.mainQuestLevel || 1) === userLevel && canUnlockSkill(skill) ? 'available' : 'locked'
+    : (skill.topicLevel || userLevel) > userLevel
+      ? 'locked'
+      : unlockedSet.has(skill._id)
     ? 'unlocked'
     : pendingSet.has(skill._id)
       ? 'pending'
@@ -451,14 +463,32 @@ function ConstellationTree({
       } : pointForSkill(skill, index, skills.length, detail.map)
     ]));
     const skillIds = new Set(skills.map(skill => skill._id));
-    const connections = skills.flatMap(source => source.connections?.flatMap(connection => {
-      if (!skillIds.has(connection.targetSkillId)) return [];
-      const sourcePoint = points.get(source._id);
-      const targetPoint = points.get(connection.targetSkillId);
-      const targetSkill = skills.find(skill => skill._id === connection.targetSkillId);
-      if (!sourcePoint || !targetPoint || !targetSkill) return [];
-      return [{ source, targetSkill, connection, sourcePoint, targetPoint }];
-    }) || []);
+    const connections = options.straightLineFit
+      ? skills.slice(0, -1).flatMap((source, index) => {
+        const targetSkill = skills[index + 1];
+        const sourcePoint = points.get(source._id);
+        const targetPoint = points.get(targetSkill._id);
+        if (!sourcePoint || !targetPoint) return [];
+        return [{
+          source,
+          targetSkill,
+          connection: {
+            targetSkillId: targetSkill._id,
+            connectionType: 'normal' as const,
+            hasArrowhead: true
+          },
+          sourcePoint,
+          targetPoint
+        }];
+      })
+      : skills.flatMap(source => source.connections?.flatMap(connection => {
+        if (!skillIds.has(connection.targetSkillId)) return [];
+        const sourcePoint = points.get(source._id);
+        const targetPoint = points.get(connection.targetSkillId);
+        const targetSkill = skills.find(skill => skill._id === connection.targetSkillId);
+        if (!sourcePoint || !targetPoint || !targetSkill) return [];
+        return [{ source, targetSkill, connection, sourcePoint, targetPoint }];
+      }) || []);
 
     return (
       <g transform={`translate(${options.offsetX || 0} ${options.offsetY || 0}) scale(${options.scale || 1})`}>
@@ -489,7 +519,9 @@ function ConstellationTree({
         {skills.map((skill, index) => {
           const point = points.get(skill._id)!;
           const status = statusForSkill(skill);
-          const isLevelGated = skill.mapNodeRole === 'topic-gateway' && (skill.topicLevel || userLevel) > userLevel;
+          const isLevelGated = directMap
+            ? (skill.mainQuestLevel || 1) > userLevel
+            : skill.mapNodeRole === 'topic-gateway' && (skill.topicLevel || userLevel) > userLevel;
           const labelOnLeft = point.x > detail.map.viewport.width * 0.74;
           const hasCloseHorizontalNeighbor = skills.some(candidate => {
             if (candidate._id === skill._id) return false;
@@ -535,11 +567,6 @@ function ConstellationTree({
                 labelY={labelY}
                 isStart={index === 0 && detail.map.scope === 'topic'}
               />
-              {isLevelGated && <g className="constellation-level-fog" filter={`url(#${idPrefix}-level-fog)`} aria-hidden="true">
-                <path className="constellation-fog-back" d="M -190 8 C -158 -70 -86 -82 -30 -50 C 22 -104 126 -78 142 -22 C 202 -9 204 66 141 78 C 72 111 -18 86 -51 70 C -118 101 -205 76 -190 8 Z" />
-                <path className="constellation-fog-front" d="M -174 36 C -142 -18 -88 -34 -35 -7 C 6 -61 83 -54 116 -10 C 177 -15 206 47 160 78 C 106 118 28 92 -8 75 C -68 112 -159 91 -174 36 Z" />
-                <ellipse className="constellation-fog-veil" cx="0" cy="8" rx="156" ry="74" />
-              </g>}
             </g>
           );
         })}
@@ -548,7 +575,7 @@ function ConstellationTree({
     );
   };
 
-  if (!selectedDiscipline) {
+  if (!selectedDiscipline && !directMap) {
     return (
       <section className={`constellation-shell constellation-overview ${compactOverview ? 'is-compact-overview' : ''}`} aria-labelledby={`${idPrefix}-title`}>
         <header className="constellation-heading">
@@ -590,14 +617,6 @@ function ConstellationTree({
                   aria-hidden={compactOverview ? undefined : true}
                   aria-label={compactOverview ? `${map.name} topics` : undefined}
                 >
-                  <defs>
-                    <filter id={`${idPrefix}-level-fog`} x="-70%" y="-100%" width="240%" height="300%" colorInterpolationFilters="sRGB">
-                      <feTurbulence type="fractalNoise" baseFrequency="0.018 0.045" numOctaves="3" seed="17" result="noise" />
-                      <feDisplacementMap in="SourceGraphic" in2="noise" scale="34" xChannelSelector="R" yChannelSelector="B" result="warped" />
-                      <feGaussianBlur in="warped" stdDeviation="8" result="soft" />
-                      <feMerge><feMergeNode in="soft" /><feMergeNode in="warped" /></feMerge>
-                    </filter>
-                  </defs>
                   <g className="constellation-star-field">
                     {backgroundStarsFor(map).map((star, index) => (
                       <circle
@@ -646,7 +665,26 @@ function ConstellationTree({
     );
   }
 
-  const canvasMap = topicDetail?.map || activeMap;
+  if (!selectedDiscipline) {
+    return <section className="constellation-shell constellation-focus" aria-label={heading}>
+      <div className="constellation-load-state" role="status">Loading {heading.toLowerCase()}...</div>
+    </section>;
+  }
+
+  const mainQuestDetail = directMap ? {
+    map: {
+      ...selectedDiscipline.map,
+      viewport: {
+        ...selectedDiscipline.map.viewport,
+        width: Math.max(760, selectedDiscipline.skills.length * 240 + 220),
+        height: 360
+      }
+    },
+    skills: [...selectedDiscipline.skills].sort((left, right) =>
+      (left.mainQuestLevel || Number.MAX_SAFE_INTEGER) - (right.mainQuestLevel || Number.MAX_SAFE_INTEGER)
+    )
+  } : null;
+  const canvasMap = mainQuestDetail?.map || topicDetail?.map || activeMap;
   const mapWidth = canvasMap?.viewport.width || 1600;
   const mapHeight = canvasMap?.viewport.height || 900;
 
@@ -666,7 +704,7 @@ function ConstellationTree({
 
   return (
     <section
-      className={`constellation-shell constellation-focus ${topicDetail ? 'is-topic-active' : ''} ${previewSkill && !topicDetail ? 'has-preview' : ''}`}
+      className={`constellation-shell constellation-focus ${directMap ? 'is-main-quest-rail' : ''} ${topicDetail ? 'is-topic-active' : ''} ${previewSkill && !topicDetail ? 'has-preview' : ''}`}
       style={{
         '--constellation-bg': activeTheme.backgroundColor,
         '--constellation-surface': activeTheme.surfaceColor,
@@ -682,7 +720,7 @@ function ConstellationTree({
       } as CSSProperties}
     >
       <header className="constellation-focus-header">
-        <button
+        {!directMap && <button
           type="button"
           className="constellation-back"
           onClick={() => {
@@ -694,16 +732,21 @@ function ConstellationTree({
           aria-label="Back"
         >
           <ChevronLeft aria-hidden="true" />
-        </button>
+        </button>}
         <div>
-          <p>Constellations / {activeMap?.name}{topicDetail ? ` / ${topicDetail.map.name}` : ''}</p>
+          <p>{directMap ? `Your level-up path · Current Level ${userLevel}` : `Constellations / ${activeMap?.name}${topicDetail ? ` / ${topicDetail.map.name}` : ''}`}</p>
           <h2>{topicDetail?.map.name || activeMap?.name}</h2>
         </div>
-        <div className="constellation-legend" aria-label="Node status">
-          <span><i className="is-unlocked" />Unlocked</span>
-          <span><i className="is-available" />Available</span>
-          <span><i className="is-pending" />Pending</span>
-          <span><i className="is-locked" />Locked</span>
+        {directMap && <div className="main-quest-level-progress" aria-label={`Current Level ${userLevel}; next Level ${userLevel + 1}`}>
+          <span>CURRENT</span>
+          <strong>Level {userLevel}</strong>
+          <small>Next · Level {userLevel + 1}</small>
+        </div>}
+        <div className="constellation-legend" aria-label="Quest status">
+          <span><i className="is-unlocked" />{directMap ? 'Completed' : 'Unlocked'}</span>
+          <span><i className="is-available" />{directMap ? 'Current quest' : 'Available'}</span>
+          <span><i className="is-pending" />Pending review</span>
+          <span><i className="is-locked" />{directMap ? 'Future level' : 'Locked'}</span>
         </div>
       </header>
 
@@ -719,17 +762,19 @@ function ConstellationTree({
         <svg
           ref={canvasRef}
           className="constellation-canvas"
+          style={directMap ? { minWidth: `${Math.max(760, mapWidth * 0.8)}px` } : undefined}
           viewBox={`0 0 ${mapWidth} ${mapHeight}`}
           role="application"
           aria-busy={loadingTopic}
-          aria-label={`${topicDetail?.map.name || activeMap?.name} constellation map`}
+          aria-label={directMap ? `${activeMap?.name} level-up quest path` : `${topicDetail?.map.name || activeMap?.name} constellation map`}
           onPointerDown={(event) => {
-            if (loadingTopic || (event.target as Element).closest('.constellation-node')) return;
+            if (directMap || loadingTopic || (event.target as Element).closest('.constellation-node')) return;
             dragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
             setIsDirectManipulating(true);
             event.currentTarget.setPointerCapture(event.pointerId);
           }}
           onPointerMove={(event) => {
+            if (directMap) return;
             if (!(event.target as Element).closest('.constellation-node') && previewSkill) {
               schedulePreviewClose();
             }
@@ -756,12 +801,6 @@ function ConstellationTree({
               <feGaussianBlur stdDeviation="6" result="blur" />
               <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
             </filter>
-            <filter id={`${idPrefix}-level-fog`} x="-70%" y="-100%" width="240%" height="300%" colorInterpolationFilters="sRGB">
-              <feTurbulence type="fractalNoise" baseFrequency="0.018 0.045" numOctaves="3" seed="17" result="noise" />
-              <feDisplacementMap in="SourceGraphic" in2="noise" scale="34" xChannelSelector="R" yChannelSelector="B" result="warped" />
-              <feGaussianBlur in="warped" stdDeviation="8" result="soft" />
-              <feMerge><feMergeNode in="soft" /><feMergeNode in="warped" /></feMerge>
-            </filter>
             <marker id={`${idPrefix}-arrow`} className="constellation-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
               <path d="M 0 0 L 10 5 L 0 10 Z" />
             </marker>
@@ -772,13 +811,14 @@ function ConstellationTree({
             className={`constellation-camera ${isDirectManipulating ? 'is-direct-manipulation' : ''}`}
             transform={`translate(${camera.x} ${camera.y}) scale(${camera.zoom})`}
           >
-            {renderMapLayer(selectedDiscipline, {
+            {selectedDiscipline && renderMapLayer(mainQuestDetail || selectedDiscipline, {
               className: 'constellation-discipline-layer',
               offsetX: disciplineContextOffset.x,
               offsetY: disciplineContextOffset.y,
-              gatewayOnly: true,
+              gatewayOnly: !directMap,
+              straightLineFit: directMap,
               focusedGatewayId: topicGateway?._id,
-              onNodeClick: skill => showPreview(skill)
+              onNodeClick: skill => directMap ? onOpenSkill(skill) : showPreview(skill)
             })}
             {topicDetail && renderMapLayer(topicDetail, {
               className: 'constellation-topic-layer',
@@ -793,10 +833,10 @@ function ConstellationTree({
           </g>
         </svg>
 
-        {topicDetail && topicDetail.skills.length === 0 && (
+        {((topicDetail && topicDetail.skills.length === 0) || (directMap && selectedDiscipline?.skills.length === 0)) && (
           <div className="constellation-empty-state" role="status">
             <strong>No quests here yet</strong>
-            <span>This topic is ready for its first quest.</span>
+            <span>{directMap ? 'Add the first level-up quest in Main Quest Editor.' : 'This topic is ready for its first quest.'}</span>
           </div>
         )}
 
@@ -809,7 +849,7 @@ function ConstellationTree({
           >
             <button type="button" className="constellation-info-close" onClick={() => setPreviewSkill(null)} aria-label="Close preview"><X aria-hidden="true" /></button>
             <div className="constellation-info-heading">
-              <span>Topic path</span>
+              <span>{directMap ? 'Main quest star' : 'Topic path'}</span>
               <h3>{labelForSkill(previewSkill)}</h3>
             </div>
             <p>{previewSkill.nodePreview?.summary || previewSkill.description}</p>
@@ -851,7 +891,7 @@ function ConstellationTree({
               )}
               <button
                 type="button"
-                onClick={() => openTopic(previewSkill)}
+                onClick={() => directMap ? onOpenSkill(previewSkill) : openTopic(previewSkill)}
                 disabled={loadingTopic || ['locked', 'pending'].includes(statusForSkill(previewSkill))}
               >
                 {loadingTopic
@@ -860,7 +900,7 @@ function ConstellationTree({
                     ? (previewSkill.topicLevel || userLevel) > userLevel ? `Unlocks at Level ${previewSkill.topicLevel}` : 'Prerequisites required'
                     : statusForSkill(previewSkill) === 'pending'
                       ? 'Approval pending'
-                      : previewSkill.nodePreview?.actionLabel || 'View Path'}
+                      : directMap ? 'View quest requirements' : previewSkill.nodePreview?.actionLabel || 'View Path'}
               </button>
             </div>
           </aside>

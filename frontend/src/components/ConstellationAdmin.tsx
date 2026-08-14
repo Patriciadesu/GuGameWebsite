@@ -101,8 +101,9 @@ function ConstellationAdmin({
   onDirtyChange,
   constellationType = 'skill'
 }: ConstellationAdminProps) {
-  const rootLabel = constellationType === 'main' ? 'Main constellation' : 'Discipline';
-  const rootLabelLower = constellationType === 'main' ? 'main constellation' : 'discipline';
+  const rootLabel = constellationType === 'main' ? 'Main Quest Path' : 'Discipline';
+  const rootLabelLower = constellationType === 'main' ? 'main quest path' : 'discipline';
+  const isMainConstellation = constellationType === 'main';
   const [maps, setMaps] = useState<ConstellationMap[]>([]);
   const [selectedMapId, setSelectedMapId] = useState('');
   const [selectedSkillId, setSelectedSkillId] = useState('');
@@ -120,6 +121,7 @@ function ConstellationAdmin({
   const [starRole, setStarRole] = useState<Exclude<MapNodeRole, 'topic-gateway'>>('lesson');
   const [infoTitle, setInfoTitle] = useState('');
   const [infoRole, setInfoRole] = useState<Exclude<MapNodeRole, 'topic-gateway'>>('lesson');
+  const [infoMainQuestLevel, setInfoMainQuestLevel] = useState(1);
   const [infoTopicLevel, setInfoTopicLevel] = useState(1);
   const [infoDescription, setInfoDescription] = useState('');
   const [infoLabel, setInfoLabel] = useState('');
@@ -200,10 +202,10 @@ function ConstellationAdmin({
   const inspectorActive = sharedValue(selectedSkills.map(skill => skill.isActive));
   const inspectorAdvanced = sharedValue(selectedSkills.map(skill => skill.isAdvancedLocked === true));
   const inspectorLabel = sharedValue(selectedSkills.map(skill => skill.constellationLabel || ''));
-  const selectedTopicMaps = selectedMap?.scope === 'discipline'
+  const selectedTopicMaps = !isMainConstellation && selectedMap?.scope === 'discipline'
     ? selectedSkills.map(skill => maps.find(map => map.scope === 'topic' && map.gatewaySkillId === skill._id)).filter((map): map is ConstellationMap => Boolean(map))
     : [];
-  const inspectorLevel = selectedMap?.scope === 'topic'
+  const inspectorLevel = isMainConstellation ? undefined : selectedMap?.scope === 'topic'
     ? selectedMap.level || 1
     : selectedTopicMaps.length === selectedSkills.length
       ? sharedValue(selectedTopicMaps.map(map => map.level || 1))
@@ -390,6 +392,7 @@ function ConstellationAdmin({
     setSelectedSkillId(skill._id);
     setInfoTitle(skill.title);
     setInfoRole(skill.mapNodeRole === 'boss' || skill.mapNodeRole === 'capstone' ? skill.mapNodeRole : 'lesson');
+    setInfoMainQuestLevel(skill.mainQuestLevel || 1);
     setInfoTopicLevel(maps.find(map => map.scope === 'topic' && map.gatewaySkillId === skill._id)?.level || 1);
     setInfoDescription(skill.description || '');
     setInfoLabel(skill.constellationLabel || '');
@@ -409,7 +412,7 @@ function ConstellationAdmin({
       };
     });
     setInfoSteps(steps);
-    setInfoTab(steps.length > 0 ? 'steps' : 'details');
+    setInfoTab(isMainConstellation || steps.length > 0 ? 'steps' : 'details');
     setSelectedInfoStepIndex(0);
     setShowInfoForm(true);
   };
@@ -424,7 +427,8 @@ function ConstellationAdmin({
       setStarTitle('');
       setStarRole('lesson');
       setShowStarForm(true);
-    } else if (type === 'import' && selectedMap?.scope === 'topic') {
+    } else if (type === 'import' && (selectedMap?.scope === 'topic' || isMainConstellation)) {
+      if (!selectedMap) return;
       setStarMasterItems([]);
       setStarMasterTypes(STAR_MASTER_QUEST_TYPES);
       setStarMasterError('');
@@ -436,7 +440,7 @@ function ConstellationAdmin({
       setStarMasterIncludeNoTags(false);
       setShowStarMasterTagMenu(false);
       setImportQuestIds([]);
-      setImportDisciplineId(selectedMap.parentMapId || '');
+      setImportDisciplineId(selectedMap.parentMapId || selectedMap._id);
       setImportTopicMapId(selectedMap._id);
       setShowImportForm(true);
     } else if (selectedSkill) openSkillInfo(selectedSkill);
@@ -574,7 +578,10 @@ function ConstellationAdmin({
 
   const deleteStar = async (skill: ConstellationSkill) => {
     const starName = skill.constellationLabel || skill.title;
-    if (!confirm(`Delete star "${starName}"? Its connections, dependent topic constellation, child stars, and user progress will also be removed. This cannot be undone.`)) return;
+    const warning = isMainConstellation
+      ? `Delete Main Quest "${starName}"? User progress for this quest will also be removed. This cannot be undone.`
+      : `Delete star "${starName}"? Its connections, dependent topic constellation, child stars, and user progress will also be removed. This cannot be undone.`;
+    if (!confirm(warning)) return;
     try {
       setBusy(true);
       setError('');
@@ -592,7 +599,10 @@ function ConstellationAdmin({
   const deleteSelectedMap = async () => {
     if (!selectedMap) return;
     const parentMapId = selectedMap.parentMapId;
-    if (!confirm(`Delete ${selectedMap.scope} constellation "${selectedMap.name}"? All dependent topic maps, stars, connections, and user progress will also be removed. This cannot be undone.`)) return;
+    const warning = isMainConstellation
+      ? `Delete Main Quest path "${selectedMap.name}"? Every Main Quest and its user progress will also be removed. This cannot be undone.`
+      : `Delete ${selectedMap.scope} constellation "${selectedMap.name}"? All dependent topic maps, stars, connections, and user progress will also be removed. This cannot be undone.`;
+    if (!confirm(warning)) return;
     try {
       setBusy(true);
       setError('');
@@ -657,7 +667,7 @@ function ConstellationAdmin({
   const activateStar = async (skillId: string) => {
     setSelectedSkillId(skillId);
     if (!selectedMap) return;
-    if (selectedMap.scope === 'topic') {
+    if (selectedMap.scope === 'topic' || isMainConstellation) {
       const skill = mapSkills.find(candidate => candidate._id === skillId);
       if (skill) openSkillInfo(skill);
       return;
@@ -770,6 +780,7 @@ function ConstellationAdmin({
       x: Math.round(selectedMap.viewport.width / 2 + ((index % 3) - 1) * 220),
       y: Math.round(selectedMap.viewport.height / 2 + Math.floor(index / 3) * 160)
     };
+    const nextMainQuestLevel = Math.max(0, ...mapSkills.map(skill => skill.mainQuestLevel || 0)) + 1;
     try {
       setBusy(true);
       setError('');
@@ -777,9 +788,12 @@ function ConstellationAdmin({
         title: starTitle.trim(),
         description: starTitle.trim(),
         cost: 0,
+        nextQuestCost: isMainConstellation ? 0 : undefined,
+        nodeColor: isMainConstellation ? 'green' : undefined,
+        mainQuestLevel: isMainConstellation ? nextMainQuestLevel : undefined,
         constellationMapId: selectedMap._id,
         constellationPosition: position,
-        mapNodeRole: selectedMap.scope === 'discipline' ? 'topic-gateway' : starRole
+        mapNodeRole: isMainConstellation ? starRole : selectedMap.scope === 'discipline' ? 'topic-gateway' : starRole
       });
       closeModal();
       await onSkillsChanged();
@@ -894,7 +908,8 @@ function ConstellationAdmin({
       await axios.put(`/api/skills/${selectedSkill._id}`, {
         title: infoTitle.trim(),
         description: infoDescription.trim() || infoTitle.trim(),
-        ...(selectedMap?.scope === 'topic' ? { mapNodeRole: infoRole } : {}),
+        ...(isMainConstellation ? { mainQuestLevel: Math.max(1, Math.floor(infoMainQuestLevel)) } : {}),
+        ...((selectedMap?.scope === 'topic' || isMainConstellation) ? { mapNodeRole: infoRole } : {}),
         constellationLabel: infoLabel.trim() || null,
         nodePreview: {
           imageUrl: infoImageUrl.trim() || undefined,
@@ -913,7 +928,7 @@ function ConstellationAdmin({
           type: step.type.trim() || 'ImageNote'
         }))
       });
-      if (selectedMap?.scope === 'discipline') {
+      if (selectedMap?.scope === 'discipline' && !isMainConstellation) {
         const linkedTopic = maps.find(map => map.scope === 'topic' && map.gatewaySkillId === selectedSkill._id);
         if (linkedTopic) {
           const response = await axios.patch(`/api/constellation-maps/${linkedTopic._id}`, { level: normalizedTopicLevel });
@@ -988,13 +1003,13 @@ function ConstellationAdmin({
         <div className={`constellation-admin-actions ${showMobileActions ? 'is-open' : ''}`}>
           <button type="button" className="constellation-admin-actions-toggle" aria-expanded={showMobileActions} onClick={() => setShowMobileActions(current => !current)}>Actions <ChevronDown size={16} aria-hidden="true" /></button>
           <div className="constellation-admin-actions-menu">
-            <button type="button" className="constellation-admin-primary" disabled={!selectedMap} onClick={() => openModal('star')}><Sparkles size={17} aria-hidden="true" /> Create star</button>
-            {selectedMap?.scope === 'topic' && <button type="button" className="constellation-admin-secondary" onClick={() => openModal('import')}><Download size={16} aria-hidden="true" /> Import quest</button>}
+            <button type="button" className="constellation-admin-primary" disabled={!selectedMap} onClick={() => openModal('star')}><Sparkles size={17} aria-hidden="true" /> {isMainConstellation ? 'Create Level Quest' : 'Create star'}</button>
+            {(selectedMap?.scope === 'topic' || isMainConstellation) && <button type="button" className="constellation-admin-secondary" onClick={() => openModal('import')}><Download size={16} aria-hidden="true" /> Import quest</button>}
             {selectedMap && <div className="constellation-admin-map-menu" ref={mapMenuRef}>
               <button type="button" className="constellation-admin-icon" aria-label="More constellation actions" title="More constellation actions" aria-expanded={showMapMenu} onClick={() => setShowMapMenu(current => !current)}><MoreHorizontal size={18} aria-hidden="true" /></button>
               {showMapMenu && <div className="constellation-admin-dropdown-menu">
                 {selectedMap.scope === 'discipline' && <button type="button" onClick={openRenameDiscipline}><Pencil size={16} aria-hidden="true" /> Rename {rootLabelLower}</button>}
-                <button type="button" className="is-danger" disabled={busy} onClick={() => { setShowMapMenu(false); void deleteSelectedMap(); }}><Trash2 size={16} aria-hidden="true" /> Delete constellation</button>
+                <button type="button" className="is-danger" disabled={busy} onClick={() => { setShowMapMenu(false); void deleteSelectedMap(); }}><Trash2 size={16} aria-hidden="true" /> {isMainConstellation ? 'Delete Main Quest path' : 'Delete constellation'}</button>
               </div>}
             </div>}
           </div>
@@ -1009,6 +1024,29 @@ function ConstellationAdmin({
 
       {selectedMap ? (
         <div className="constellation-editor-workspace">
+          {isMainConstellation ? <div className="main-quest-editor">
+            <header className="main-quest-editor__heading">
+              <div><span>LEVEL-UP FLOW</span><h2>Main Quest Path</h2><p>หนึ่ง Quest ต่อหนึ่ง Level · อนุมัติแล้วผู้เล่นจะขึ้น Level ถัดไป</p></div>
+              <strong>{mapSkills.length} Levels</strong>
+            </header>
+            <div className="main-quest-editor__list">
+              {[...mapSkills]
+                .sort((left, right) => (left.mainQuestLevel || Number.MAX_SAFE_INTEGER) - (right.mainQuestLevel || Number.MAX_SAFE_INTEGER))
+                .map(skill => <article key={skill._id} className={!skill.isActive ? 'is-draft' : ''}>
+                  <div className="main-quest-editor__level"><span>LEVEL</span><strong>{skill.mainQuestLevel || '—'}</strong><small>→ {(skill.mainQuestLevel || 0) + 1}</small></div>
+                  <div className="main-quest-editor__quest">
+                    <span>{starRoleLabel(skill.mapNodeRole)} · {skill.isActive ? 'Published' : 'Hidden'}</span>
+                    <h3>{skill.constellationLabel || skill.title}</h3>
+                    <p>{skill.subQuests?.length || 0} requirements</p>
+                  </div>
+                  <div className="main-quest-editor__actions">
+                    <button type="button" className="constellation-admin-secondary" onClick={() => { setSelectedSkillId(skill._id); openSkillInfo(skill); }}><Pencil size={15} aria-hidden="true" /> Edit Quest</button>
+                    <button type="button" className="constellation-admin-icon is-danger" aria-label={`Delete ${skill.title}`} onClick={() => void deleteStar(skill)}><Trash2 size={15} aria-hidden="true" /></button>
+                  </div>
+                </article>)}
+              {mapSkills.length === 0 && <div className="main-quest-editor__empty"><strong>No Main Quests yet</strong><span>Create Level 1 Quest to start the level-up path.</span></div>}
+            </div>
+          </div> : <>
           <ConstellationLayoutEditor
             map={selectedMap}
             parentMapName={selectedMap.parentMapId ? maps.find(map => map._id === selectedMap.parentMapId)?.name : undefined}
@@ -1032,16 +1070,16 @@ function ConstellationAdmin({
               <button type="button" onClick={() => setInspectorCollapsed(current => !current)} aria-label={inspectorCollapsed ? 'Expand Inspector' : 'Collapse Inspector'}><ChevronDown size={17} aria-hidden="true" /></button>
             </header>
             {!inspectorCollapsed && (selectedSkills.length > 0 ? <div className="constellation-inspector-content">
-              <div className="constellation-inspector-selection"><strong>{selectedSkills.length === 1 ? selectedSkills[0].constellationLabel || selectedSkills[0].title : `${selectedSkills.length} stars selected`}</strong><span>{selectedSkills.length === 1 ? selectedMap.scope === 'discipline' ? 'Topic star' : starRoleLabel(selectedSkills[0].mapNodeRole) : 'Multi-edit selection'}</span></div>
+              <div className="constellation-inspector-selection"><strong>{selectedSkills.length === 1 ? selectedSkills[0].constellationLabel || selectedSkills[0].title : `${selectedSkills.length} stars selected`}</strong><span>{selectedSkills.length === 1 ? isMainConstellation ? starRoleLabel(selectedSkills[0].mapNodeRole) : selectedMap.scope === 'discipline' ? 'Topic star' : starRoleLabel(selectedSkills[0].mapNodeRole) : 'Multi-edit selection'}</span></div>
               <fieldset>
                 <legend>Identity</legend>
                 <label>Label<input key={`${selectedSkillIds.join(':')}:${inspectorLabel ?? 'mixed'}`} defaultValue={inspectorLabel ?? ''} placeholder={inspectorLabel === undefined ? '-' : 'Uses star name when empty'} disabled={busy} onBlur={event => { if (event.currentTarget.value !== (inspectorLabel ?? '')) void updateSelectedStars({ constellationLabel: event.currentTarget.value }); }} /></label>
-                {selectedMap.scope === 'topic' && <label>Star type<select aria-label="Inspector star type" value={inspectorRole ?? ''} disabled={busy} onChange={event => { if (event.target.value) void updateSelectedStars({ mapNodeRole: event.target.value }); }}><option value="" disabled>-</option>{TOPIC_STAR_ROLES.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>}
+                {(selectedMap.scope === 'topic' || isMainConstellation) && <label>Star type<select aria-label="Inspector star type" value={inspectorRole ?? ''} disabled={busy} onChange={event => { if (event.target.value) void updateSelectedStars({ mapNodeRole: event.target.value }); }}><option value="" disabled>-</option>{TOPIC_STAR_ROLES.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>}
               </fieldset>
               <fieldset>
                 <legend>Progression</legend>
-                <label>Topic level<div className="constellation-inspector-stepper"><button type="button" disabled={busy || inspectorLevel === undefined || inspectorLevel <= 1} onClick={() => void updateSelectedTopicLevels((inspectorLevel || 1) - 1)}>−</button><input key={`${selectedSkillIds.join(':')}:${inspectorLevel ?? 'mixed'}`} aria-label="Inspector topic level" type="number" min="1" defaultValue={inspectorLevel ?? ''} placeholder="-" disabled={busy || (selectedMap.scope === 'discipline' && selectedTopicMaps.length !== selectedSkills.length)} onBlur={event => { if (event.currentTarget.value && Number(event.currentTarget.value) !== inspectorLevel) void updateSelectedTopicLevels(Number(event.currentTarget.value)); }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} /><button type="button" disabled={busy || inspectorLevel === undefined} onClick={() => void updateSelectedTopicLevels((inspectorLevel || 1) + 1)}>+</button></div></label>
-                {selectedMap.scope === 'discipline' && selectedTopicMaps.length !== selectedSkills.length && <p className="constellation-inspector-note">{selectedSkills.length - selectedTopicMaps.length} selected star{selectedSkills.length - selectedTopicMaps.length === 1 ? '' : 's'} have no topic constellation.</p>}
+                {!isMainConstellation && <label>Topic level<div className="constellation-inspector-stepper"><button type="button" disabled={busy || inspectorLevel === undefined || inspectorLevel <= 1} onClick={() => void updateSelectedTopicLevels((inspectorLevel || 1) - 1)}>−</button><input key={`${selectedSkillIds.join(':')}:${inspectorLevel ?? 'mixed'}`} aria-label="Inspector topic level" type="number" min="1" defaultValue={inspectorLevel ?? ''} placeholder="-" disabled={busy || (selectedMap.scope === 'discipline' && selectedTopicMaps.length !== selectedSkills.length)} onBlur={event => { if (event.currentTarget.value && Number(event.currentTarget.value) !== inspectorLevel) void updateSelectedTopicLevels(Number(event.currentTarget.value)); }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} /><button type="button" disabled={busy || inspectorLevel === undefined} onClick={() => void updateSelectedTopicLevels((inspectorLevel || 1) + 1)}>+</button></div></label>}
+                {!isMainConstellation && selectedMap.scope === 'discipline' && selectedTopicMaps.length !== selectedSkills.length && <p className="constellation-inspector-note">{selectedSkills.length - selectedTopicMaps.length} selected star{selectedSkills.length - selectedTopicMaps.length === 1 ? '' : 's'} have no topic constellation.</p>}
                 <label className="constellation-inspector-check"><input ref={element => { if (element) element.indeterminate = inspectorActive === undefined; }} type="checkbox" checked={inspectorActive ?? false} disabled={busy} onChange={event => void updateSelectedStars({ isActive: event.target.checked })} /><span>Visible to players</span></label>
                 <label className="constellation-inspector-check"><input ref={element => { if (element) element.indeterminate = inspectorAdvanced === undefined; }} type="checkbox" checked={inspectorAdvanced ?? false} disabled={busy} onChange={event => void updateSelectedStars({ isAdvancedLocked: event.target.checked })} /><span>Advanced locked</span></label>
               </fieldset>
@@ -1053,6 +1091,7 @@ function ConstellationAdmin({
               {selectedSkills.length === 1 && <button type="button" className="constellation-admin-secondary constellation-inspector-edit" onClick={() => openSkillInfo(selectedSkills[0])}><Pencil size={15} aria-hidden="true" /> Edit full details</button>}
             </div> : <div className="constellation-inspector-empty"><strong>No star selected</strong><span>Click a star or drag over several stars to inspect them.</span></div>)}
           </aside>
+          </>}
         </div>
       ) : <div className="constellation-admin-simple-empty"><div><strong>No {rootLabelLower}s yet</strong><span>Create the first top-level constellation to begin.</span><button type="button" className="constellation-admin-primary" onClick={() => openModal('map')}><Plus size={17} aria-hidden="true" /> Create first {rootLabelLower}</button></div></div>}
 
@@ -1081,22 +1120,22 @@ function ConstellationAdmin({
           <div className="constellation-star-context-heading"><strong>{skill.constellationLabel || skill.title}</strong><span>{starRoleLabel(skill.mapNodeRole)}</span></div>
           <button type="button" role="menuitem" onClick={() => { const opener = document.querySelector<SVGGElement>(`[data-skill-id="${skill._id}"]`); setStarContextMenu(null); openSkillInfo(skill, opener); }}><Pencil size={16} aria-hidden="true" /> {skill.nodeType === 'quest' || skill.externalQuestId || (skill.subQuests?.length || 0) > 0 ? 'Edit quest' : 'Edit star'}</button>
           <button type="button" role="menuitem" onClick={() => beginConnectingFrom(skill._id)}><Link2 size={16} aria-hidden="true" /> Connect from here</button>
-          {selectedMap?.scope === 'discipline' && <button type="button" role="menuitem" onClick={() => { setStarContextMenu(null); void activateStar(skill._id); }}><ExternalLink size={16} aria-hidden="true" /> Open topic</button>}
+          {!isMainConstellation && selectedMap?.scope === 'discipline' && <button type="button" role="menuitem" onClick={() => { setStarContextMenu(null); void activateStar(skill._id); }}><ExternalLink size={16} aria-hidden="true" /> Open topic</button>}
           <button type="button" role="menuitem" className="is-danger" onClick={() => { setStarContextMenu(null); void deleteStar(skill); }}><Trash2 size={16} aria-hidden="true" /> Delete star</button>
         </div>;
       })()}
 
       {(showMapForm || showRenameMapForm || showStarForm || showInfoForm || showImportForm) && (
         <div className="constellation-admin-modal-backdrop" role="presentation" onMouseDown={closeModal}>
-          <div ref={modalRef} className={`constellation-admin-modal constellation-admin-simple-modal ${showImportForm ? 'is-import' : ''} ${showInfoForm && (selectedSkill?.nodeType === 'quest' || selectedSkill?.externalQuestId || infoSteps.length > 0) ? 'has-steps' : ''}`} role="dialog" aria-modal="true" aria-labelledby="simple-modal-title" onMouseDown={event => event.stopPropagation()}>
+          <div ref={modalRef} className={`constellation-admin-modal constellation-admin-simple-modal ${showImportForm ? 'is-import' : ''} ${showInfoForm && (isMainConstellation || selectedSkill?.nodeType === 'quest' || selectedSkill?.externalQuestId || infoSteps.length > 0) ? 'has-steps' : ''}`} role="dialog" aria-modal="true" aria-labelledby="simple-modal-title" onMouseDown={event => event.stopPropagation()}>
             <header>
-              <h3 id="simple-modal-title">{showImportForm ? 'Import quest from StarMaster' : showInfoForm ? selectedSkill?.nodeType === 'quest' || selectedSkill?.externalQuestId || infoSteps.length > 0 ? 'Edit quest' : 'Edit star' : showStarForm ? 'Create star' : showRenameMapForm ? `Rename ${rootLabelLower}` : mapForm.scope === 'topic' ? `Create ${mapForm.name} topic` : `Create ${rootLabelLower}`}</h3>
+              <h3 id="simple-modal-title">{showImportForm ? 'Import quest from StarMaster' : showInfoForm ? isMainConstellation || selectedSkill?.nodeType === 'quest' || selectedSkill?.externalQuestId || infoSteps.length > 0 ? 'Edit quest' : 'Edit star' : showStarForm ? isMainConstellation ? 'Create Main Quest' : 'Create star' : showRenameMapForm ? `Rename ${rootLabelLower}` : mapForm.scope === 'topic' ? `Create ${mapForm.name} topic` : `Create ${rootLabelLower}`}</h3>
               <button type="button" className="constellation-admin-modal-close" aria-label="Close editor" onClick={closeModal}><X size={18} aria-hidden="true" /></button>
             </header>
             {showImportForm ? (
               <div className="constellation-import-quest">
                 <div className="constellation-import-destination">
-                  <label>Discipline
+                  {!isMainConstellation && <label>Discipline
                     <select value={importDisciplineId} onChange={event => {
                       const disciplineId = event.target.value;
                       setImportDisciplineId(disciplineId);
@@ -1104,13 +1143,14 @@ function ConstellationAdmin({
                     }}>
                       {disciplineMaps.map(map => <option key={map._id} value={map._id}>{map.name}</option>)}
                     </select>
-                  </label>
-                  <label>Topic
+                  </label>}
+                  {!isMainConstellation && <label>Topic
                     <select value={importTopicMapId} onChange={event => setImportTopicMapId(event.target.value)}>
                       {importTopics.map(map => <option key={map._id} value={map._id}>{map.name}</option>)}
                       {importTopics.length === 0 && <option value="">No topics in this discipline</option>}
                     </select>
-                  </label>
+                  </label>}
+                  {isMainConstellation && <p className="constellation-import-destination-note">Importing directly into {selectedMap?.name}.</p>}
                 </div>
                 <div className="constellation-import-filters">
                   <label className="constellation-import-search">
@@ -1231,7 +1271,7 @@ function ConstellationAdmin({
               <div className="constellation-info-editor">
                 <div className="constellation-info-tabs" role="tablist" aria-label="Quest editor sections">
                   <button type="button" role="tab" aria-selected={infoTab === 'details'} onClick={() => setInfoTab('details')}>Details</button>
-                  {(selectedSkill?.nodeType === 'quest' || selectedSkill?.externalQuestId || infoSteps.length > 0) && <button type="button" role="tab" aria-selected={infoTab === 'steps'} onClick={() => setInfoTab('steps')}>Quest steps <span>{infoSteps.length}</span></button>}
+                  {(isMainConstellation || selectedSkill?.nodeType === 'quest' || selectedSkill?.externalQuestId || infoSteps.length > 0) && <button type="button" role="tab" aria-selected={infoTab === 'steps'} onClick={() => setInfoTab('steps')}>Quest steps <span>{infoSteps.length}</span></button>}
                 </div>
                 {infoTab === 'details' ? (
                   <div className="constellation-info-details" role="tabpanel">
@@ -1240,11 +1280,15 @@ function ConstellationAdmin({
                       <div className="constellation-info-field-grid">
                         <label>Name<input value={infoTitle} onChange={event => setInfoTitle(event.target.value)} /></label>
                         <label>Short label <input value={infoLabel} onChange={event => setInfoLabel(event.target.value)} placeholder="Optional" /></label>
-                        {selectedMap?.scope === 'discipline' && <label className="constellation-info-level-field is-full">Topic level
+                        {isMainConstellation && <label className="constellation-info-level-field is-full">Main Quest level
+                          <input aria-label="Main Quest level" type="number" min="1" step="1" value={infoMainQuestLevel} onChange={event => setInfoMainQuestLevel(Number(event.target.value))} />
+                          <small>ผู้เล่นทำ Quest นี้ได้เมื่อ Level ปัจจุบันตรงกัน และจะขึ้น Level หลังได้รับอนุมัติ</small>
+                        </label>}
+                        {!isMainConstellation && selectedMap?.scope === 'discipline' && <label className="constellation-info-level-field is-full">Topic level
                           <input aria-label="Topic level" type="number" min="1" step="1" value={infoTopicLevel} onChange={event => setInfoTopicLevel(Number(event.target.value))} />
                           <small>Players can enter this topic when their level matches.</small>
                         </label>}
-                        {selectedMap?.scope === 'topic' && <fieldset className="constellation-star-role-field is-full">
+                        {(selectedMap?.scope === 'topic' || isMainConstellation) && <fieldset className="constellation-star-role-field is-full">
                           <legend>Star type</legend>
                           <div className="constellation-star-role-options">
                             {TOPIC_STAR_ROLES.map(option => <label key={option.value} className={`is-${option.value}`}>
@@ -1317,9 +1361,9 @@ function ConstellationAdmin({
               </div>
             ) : showStarForm ? (
               <div className="constellation-admin-form-grid is-single">
-                <label>Star name<input value={starTitle} onChange={event => setStarTitle(event.target.value)} autoComplete="off" /></label>
-                {selectedMap?.scope === 'topic' && <fieldset className="constellation-star-role-field">
-                  <legend>Star type</legend>
+                <label>{isMainConstellation ? 'Main Quest name' : 'Star name'}<input value={starTitle} onChange={event => setStarTitle(event.target.value)} autoComplete="off" /></label>
+                {(selectedMap?.scope === 'topic' || isMainConstellation) && <fieldset className="constellation-star-role-field">
+                  <legend>{isMainConstellation ? 'Quest type' : 'Star type'}</legend>
                   <div className="constellation-star-role-options">
                     {TOPIC_STAR_ROLES.map(option => <label key={option.value} className={`is-${option.value}`}>
                       <input type="radio" name="new-star-role" value={option.value} checked={starRole === option.value} onChange={() => setStarRole(option.value)} />
@@ -1334,8 +1378,8 @@ function ConstellationAdmin({
               </div>
             ) : (
               <div className="constellation-create-discipline-form">
-                <p>{constellationType === 'main' ? 'A main constellation is a top-level journey that guides the player through the core experience.' : 'A discipline is a top-level constellation, such as Programming, Unity Development, or Game Art.'}</p>
-                <label>{rootLabel} name<input value={mapForm.name} onChange={event => setMapForm(current => ({ ...current, name: event.target.value }))} placeholder={constellationType === 'main' ? 'e.g. Starbound Journey' : 'e.g. Game Design'} autoComplete="off" /></label>
+                <p>{constellationType === 'main' ? 'A Main Quest path contains one level-up quest for each player Level.' : 'A discipline is a top-level constellation, such as Programming, Unity Development, or Game Art.'}</p>
+                <label>{rootLabel} name<input value={mapForm.name} onChange={event => setMapForm(current => ({ ...current, name: event.target.value }))} placeholder={constellationType === 'main' ? 'e.g. Main Quest' : 'e.g. Game Design'} autoComplete="off" /></label>
               </div>
             )}
             <footer>

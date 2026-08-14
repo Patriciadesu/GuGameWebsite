@@ -30,6 +30,7 @@ export interface ISkill extends Document {
   }; // Coordinates inside the owning Constellation Map
   constellationMapId?: Types.ObjectId;
   constellationLabel?: string;
+  mainQuestLevel?: number;
   mapNodeRole: MapNodeRole;
   nodePreview?: INodePreview;
   externalSource?: 'office-quest' | 'hamquest' | 'star-master';
@@ -81,6 +82,7 @@ const SkillSchema = new Schema<ISkill>(
     },
     constellationMapId: { type: Schema.Types.ObjectId, ref: 'ConstellationMap' },
     constellationLabel: { type: String, trim: true, maxlength: 80 },
+    mainQuestLevel: { type: Number, min: 1, validate: Number.isInteger },
     mapNodeRole: {
       type: String,
       enum: ['topic-gateway', 'lesson', 'boss', 'capstone'],
@@ -149,6 +151,14 @@ SkillSchema.pre('validate', function(next) {
 // Index for efficient queries
 SkillSchema.index({ layer: 1, position: 1 });
 SkillSchema.index({ constellationMapId: 1, layer: 1, position: 1 });
+SkillSchema.index(
+  { constellationMapId: 1, mainQuestLevel: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { mainQuestLevel: { $exists: true } },
+    name: 'unique_main_quest_level_per_map'
+  }
+);
 SkillSchema.index({ externalSource: 1, externalQuestId: 1 }, { sparse: true });
 SkillSchema.index({ isActive: 1 });
 SkillSchema.index({ 'connections.targetSkillId': 1 });

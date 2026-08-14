@@ -12,6 +12,7 @@
     "clear:quest-imports": "tsx scripts/clear-quest-import-data.ts",
     "migrate:repeatable-quest-imports": "tsx scripts/allow-repeatable-star-master-imports.ts",
     "migrate:constellations": "tsx scripts/migrate-constellation-system.ts",
+    "migrate:main-quest-levels": "tsx scripts/migrate-main-quest-levels.ts --apply",
     "test:load:seed": "tsx scripts/seed-load-test.ts",
     "test:load": "tsx scripts/load-test.ts",
     "start": "node dist/server.js"

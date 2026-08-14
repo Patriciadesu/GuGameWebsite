@@ -51,6 +51,7 @@ export interface ConstellationSkill {
   constellationPosition?: { x: number; y: number };
   constellationMapId?: string;
   constellationLabel?: string;
+  mainQuestLevel?: number;
   mapNodeRole?: MapNodeRole;
   topicLevel?: number;
   nodePreview?: {

@@ -2,12 +2,14 @@ import mongoose from 'mongoose';
 import ApprovalRequest from '../models/ApprovalRequest';
 import Skill from '../models/Skill';
 import User from '../models/User';
+import ConstellationMap from '../models/ConstellationMap';
 
 type ApprovalErrorCode =
   | 'REQUEST_NOT_FOUND'
   | 'ALREADY_PROCESSED'
   | 'USER_NOT_FOUND'
   | 'SKILL_NOT_FOUND'
+  | 'MAIN_QUEST_LEVEL_MISMATCH'
   | 'INSUFFICIENT_AP';
 
 export class ApprovalOperationError extends Error {
@@ -27,6 +29,9 @@ export interface ApprovalResult {
   skillId: string;
   remainingAssetPoints: number;
   nextQuestCost: number;
+  level: number;
+  leveledUp: boolean;
+  completedLevel?: number;
 }
 
 export const approveQuestRequest = async (
@@ -56,7 +61,19 @@ export const approveQuestRequest = async (
         throw new ApprovalOperationError('SKILL_NOT_FOUND', 'Quest not found', 404);
       }
 
-      const nextQuestCost = skill.nextQuestCost ?? 25;
+      const mainMap = skill.constellationMapId
+        ? await ConstellationMap.findById(skill.constellationMapId).select('constellationType').session(session).lean()
+        : null;
+      const isMainQuest = mainMap?.constellationType === 'main';
+      if (isMainQuest && (!Number.isInteger(skill.mainQuestLevel) || skill.mainQuestLevel !== user.level)) {
+        throw new ApprovalOperationError(
+          'MAIN_QUEST_LEVEL_MISMATCH',
+          `This Main Quest is for Level ${skill.mainQuestLevel || '?'}, but the user is Level ${user.level}`,
+          409,
+          { requiredLevel: skill.mainQuestLevel || 0, userLevel: user.level }
+        );
+      }
+      const nextQuestCost = isMainQuest ? 0 : (skill.nextQuestCost ?? 25);
       if ((user.assetPoints || 0) < nextQuestCost) {
         throw new ApprovalOperationError(
           'INSUFFICIENT_AP',
@@ -70,14 +87,18 @@ export const approveQuestRequest = async (
         {
           _id: user._id,
           assetPoints: { $gte: nextQuestCost },
-          completedQuestRewards: { $ne: approvalRequest.skillId }
+          completedQuestRewards: { $ne: approvalRequest.skillId },
+          ...(isMainQuest ? { level: skill.mainQuestLevel } : {})
         },
         {
           $addToSet: {
             unlockedSkills: approvalRequest.skillId,
             completedQuestRewards: approvalRequest.skillId
           },
-          $inc: { assetPoints: rewardAP - nextQuestCost }
+          $inc: {
+            assetPoints: rewardAP - nextQuestCost,
+            ...(isMainQuest ? { level: 1 } : {})
+          }
         },
         { new: true, session }
       );
@@ -99,7 +120,10 @@ export const approveQuestRequest = async (
         userId: approvalRequest.userId,
         skillId: approvalRequest.skillId,
         remainingAssetPoints: updatedUser.assetPoints,
-        nextQuestCost
+        nextQuestCost,
+        level: updatedUser.level,
+        leveledUp: isMainQuest,
+        ...(isMainQuest ? { completedLevel: skill.mainQuestLevel } : {})
       };
     });
   } finally {

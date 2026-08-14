@@ -8,6 +8,8 @@ interface DockPoint { x: number; y: number }
 
 interface StarLensDockProps {
   skill: ConstellationSkill;
+  workflow?: 'main' | 'skill';
+  userLevel?: number;
   assetPointName: string;
   unlocked: boolean;
   pending: boolean;
@@ -41,6 +43,8 @@ const loadPosition = (): DockPoint => {
 
 export default function StarLensDock({
   skill,
+  workflow = 'skill',
+  userLevel = 1,
   assetPointName,
   unlocked,
   pending,
@@ -62,6 +66,8 @@ export default function StarLensDock({
   const imageUrl = skill.nodePreview?.imageUrl;
   const summary = skill.nodePreview?.summary || skill.description;
   const outcomes = skill.nodePreview?.outcomes || [];
+  const isMainQuest = workflow === 'main';
+  const questLevel = skill.mainQuestLevel || 1;
 
   useEffect(() => {
     setShowSteps(false);
@@ -101,10 +107,15 @@ export default function StarLensDock({
   };
 
   const status = completed ? 'Completed' : pending ? 'Pending review' : unlocked ? 'In progress' : canUnlock ? 'Available' : 'Locked';
-  const actionLabel = completed ? 'Journey complete' : pending ? 'Pending review' : unlocked ? 'Continue journey' : canUnlock ? (skill.nodePreview?.actionLabel || 'Start journey') : 'Requirements locked';
-  const actionDisabled = completed || pending || (!unlocked && !canUnlock) || (unlocked && steps.length === 0);
+  const actionLabel = isMainQuest
+    ? completed ? `Level ${questLevel} completed`
+      : pending ? 'Pending level-up review'
+        : canUnlock ? `Submit to reach Level ${questLevel + 1}`
+          : questLevel > userLevel ? `Unlocks at Level ${questLevel}` : 'Quest unavailable'
+    : completed ? 'Completed' : pending ? 'Pending review' : unlocked ? 'Continue journey' : canUnlock ? (skill.nodePreview?.actionLabel || 'Start journey') : 'Requirements locked';
+  const actionDisabled = completed || pending || (!unlocked && !canUnlock) || (!isMainQuest && unlocked && steps.length === 0);
   const handleAction = () => {
-    if (steps.length > 0 && (unlocked || completedSteps < steps.length)) {
+    if (!isMainQuest && steps.length > 0 && (unlocked || completedSteps < steps.length)) {
       setShowSteps(true);
       return;
     }
@@ -132,7 +143,7 @@ export default function StarLensDock({
         <div className="star-lens-dock__content">
           {imageUrl && <div className="star-lens-dock__art"><img src={imageUrl} alt="" onError={event => { event.currentTarget.parentElement!.hidden = true; }} /></div>}
           <div className="star-lens-dock__summary">
-            <div className="star-lens-dock__eyebrow">Main quest topic{skill.topicLevel ? ` · Level ${skill.topicLevel}` : ''}</div>
+            <div className="star-lens-dock__eyebrow">{isMainQuest ? `Main Quest · Level ${questLevel} → ${questLevel + 1}` : `Main quest topic${skill.topicLevel ? ` · Level ${skill.topicLevel}` : ''}`}</div>
             <h2>{skill.constellationLabel || skill.title}</h2>
             <p>{renderInlineMarkdown(summary, `star-lens-${skill._id}`)}</p>
             {outcomes.length > 0 && <div className="star-lens-dock__outcomes" aria-label="Quest outcomes">
@@ -141,13 +152,23 @@ export default function StarLensDock({
           </div>
         </div>
 
-        <div className="star-lens-dock__progress">
+        {isMainQuest ? (
+          steps.length > 0 && <section className="star-lens-dock__steps is-requirements">
+            <div className="star-lens-dock__steps-toggle"><span>Requirements</span></div>
+            <div className="star-lens-dock__step-list">
+              {steps.map((step, index) => <article key={step.externalId || `step-${index}`}>
+                <span>{index + 1}</span>
+                <div><strong>{step.title}</strong><p>{renderInlineMarkdown(step.description || '', `star-lens-requirement-${step.externalId || index}`)}</p></div>
+              </article>)}
+            </div>
+          </section>
+        ) : <div className="star-lens-dock__progress">
           <span>{steps.length > 0 ? `${completedSteps} of ${steps.length} steps` : status}</span>
           <span>{progress}%</span>
           <i><b style={{ width: `${progress}%` }} /></i>
-        </div>
+        </div>}
 
-        {steps.length > 0 && <section className="star-lens-dock__steps">
+        {!isMainQuest && steps.length > 0 && <section className="star-lens-dock__steps">
           <button type="button" className="star-lens-dock__steps-toggle" onClick={() => setShowSteps(value => !value)} aria-expanded={showSteps}>
             <span>Quest steps</span>{showSteps ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
           </button>
@@ -165,7 +186,7 @@ export default function StarLensDock({
         </section>}
 
         <footer className="star-lens-dock__footer">
-          <span>{skill.cost > 0 ? `${skill.cost} ${assetPointName}` : 'Main journey'}</span>
+          <span>{isMainQuest ? `Level-up quest for Level ${questLevel}` : skill.cost > 0 ? `${skill.cost} ${assetPointName}` : 'Main journey'}</span>
           <button type="button" className="star-lens-dock__action" onClick={handleAction} disabled={actionDisabled}>
             {completed ? <Check aria-hidden="true" /> : <Play aria-hidden="true" />}{actionLabel}
           </button>

@@ -50,6 +50,7 @@ function ConstellationNodeGlyph({
         </>
       ) : <circle className="constellation-node-core" r="7" />}
       <circle className="constellation-node-hit-target" r={role === 'capstone' ? 44 : 38} />
+      {skill.mainQuestLevel && <text className="constellation-main-level" x="0" y="-48" textAnchor="middle">LEVEL {skill.mainQuestLevel}</text>}
       <text className="constellation-node-label" x={labelX} y={labelY} textAnchor={textAnchor}>{label}</text>
       {skill.mapNodeRole === 'boss' && <text className="constellation-node-kicker" x={labelX} y="25" textAnchor={textAnchor}>BOSS QUEST</text>}
       {skill.mapNodeRole === 'capstone' && <text className="constellation-node-kicker" x={labelOnLeft ? -40 : 40} y="28" textAnchor={textAnchor}>SUPER BOSS</text>}

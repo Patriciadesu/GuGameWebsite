@@ -498,7 +498,7 @@ const filterSkillsForUserLevel = async (skills: any[], userLevel: number) => {
   const mapIds = [...new Set(skills.map(skill => skill.constellationMapId?.toString()).filter(Boolean))];
   if (mapIds.length === 0) return skills;
   const maps = await ConstellationMap.find({ _id: { $in: mapIds } })
-    .select('_id scope level')
+    .select('_id scope level constellationType')
     .lean();
   const mapsById = new Map(maps.map(map => [map._id.toString(), map]));
   const allowedTopicMaps = await ConstellationMap.find({
@@ -513,6 +513,7 @@ const filterSkillsForUserLevel = async (skills: any[], userLevel: number) => {
     if (!skill.constellationMapId) return [skill];
     const map = mapsById.get(skill.constellationMapId.toString());
     if (!map) return [];
+    if (map.constellationType === 'main') return [skill];
     if (map.scope === 'discipline') {
       const topic = topicByGatewayId.get(skill._id.toString());
       return topic ? [{ ...skill, topicLevel: topic.level || 1 }] : [];
@@ -672,7 +673,7 @@ const sendConstellationError = (res: Response, error: unknown, fallbackMessage: 
     return res.status(400).json({ error: error.message });
   }
   if ((error as { code?: number })?.code === 11000) {
-    return res.status(409).json({ error: 'Constellation map slug or gateway skill is already in use' });
+    return res.status(409).json({ error: 'That map slug, gateway skill, or Main Quest Level is already in use' });
   }
   console.error(fallbackMessage, error);
   return res.status(500).json({ error: fallbackMessage });
@@ -682,14 +683,17 @@ const getPlayerEligibleSkill = async (skillId: string, userLevel: number) => {
   const skill = await Skill.findOne({ _id: skillId, isActive: true });
   if (!skill?.constellationMapId) return null;
 
-  const map = await ConstellationMap.exists({
+  const map = await ConstellationMap.findOne({
     _id: skill.constellationMapId,
-    constellationType: 'skill',
-    scope: 'topic',
     isActive: true,
-    level: userLevel
-  });
-  return map ? skill : null;
+    $or: [
+      { constellationType: 'main', scope: 'discipline' },
+      { constellationType: 'skill', scope: 'topic', level: userLevel }
+    ]
+  }).select('constellationType').lean();
+  if (!map) return null;
+  if (map.constellationType === 'main' && skill.mainQuestLevel !== userLevel) return null;
+  return skill;
 };
 
 const assertValidConnectionTargets = async (
@@ -1957,6 +1961,7 @@ const starMasterSkillPayload = (
       y: Math.min(map.viewport.height - 80, 180 + row * 180)
     },
     constellationMapId,
+    mainQuestLevel: map.constellationType === 'main' ? mapSkillIndex + 1 : undefined,
     mapNodeRole: 'lesson',
     nodePreview: {
       imageUrl,
@@ -1981,12 +1986,14 @@ const starMasterSkillPayload = (
 
 const getStarMasterImportMap = async (constellationMapId: string) => {
   if (!mongoose.Types.ObjectId.isValid(constellationMapId)) {
-    throw Object.assign(new Error('Select a Topic Constellation before importing'), { status: 400 });
+    throw Object.assign(new Error('Select a quest destination before importing'), { status: 400 });
   }
   const map = await ConstellationMap.findById(constellationMapId).lean();
-  if (!map) throw Object.assign(new Error('Topic Constellation not found'), { status: 404 });
-  if (map.scope !== 'topic') {
-    throw Object.assign(new Error('StarMaster quests can only be imported into a Topic Constellation'), { status: 400 });
+  if (!map) throw Object.assign(new Error('Quest destination not found'), { status: 404 });
+  const isSkillTopic = map.constellationType !== 'main' && map.scope === 'topic';
+  const isMainQuestPath = map.constellationType === 'main' && map.scope === 'discipline';
+  if (!isSkillTopic && !isMainQuestPath) {
+    throw Object.assign(new Error('Select a Skill Topic or Main Quest path before importing'), { status: 400 });
   }
   return map;
 };
@@ -2400,7 +2407,7 @@ app.get('/api/constellation-maps/:id', requireAuth, async (req: Request, res: Re
       ...(isAdmin ? {} : { isActive: true })
     }).sort({ layer: 1, position: 1 }).lean();
     let visibleSkills = skills;
-    if (!isAdmin && map.scope === 'discipline') {
+    if (!isAdmin && map.constellationType !== 'main' && map.scope === 'discipline') {
       const visibleTopicMaps = await ConstellationMap.find({
         parentMapId: map._id,
         scope: 'topic',
@@ -2464,7 +2471,7 @@ app.patch('/api/constellation-maps/:id', requireAdmin, async (req: Request, res:
     applyConstellationMapFields(map, req.body);
     if (map.scope === 'topic') assertValidLevel(map.level || 1, 'Topic level');
     else map.level = 1;
-    await validateConstellationMapContents(map._id.toString(), map.scope);
+    await validateConstellationMapContents(map._id.toString(), map.scope, map.constellationType);
     await validateConstellationMapLinkage({
       constellationType: map.constellationType,
       scope: map.scope,
@@ -2609,7 +2616,7 @@ app.get('/api/skills/:id', requireAuth, async (req: Request, res: Response) => {
 // Constellation star editing is available to admins and super-admins.
 app.post('/api/skills', requireConstellationSkillEditor, async (req: Request, res: Response) => {
   try {
-    const { title, description, cost, nextQuestCost, previewClip, contentYouTube, contentGoogleDrive, layer, position, treePosition, constellationPosition, prerequisites, nodeColor, subQuests, minAP, maxAP, isAdvancedLocked, constellationMapId, constellationLabel, mapNodeRole, nodePreview } = req.body;
+    const { title, description, cost, nextQuestCost, previewClip, contentYouTube, contentGoogleDrive, layer, position, treePosition, constellationPosition, prerequisites, nodeColor, subQuests, minAP, maxAP, isAdvancedLocked, constellationMapId, constellationLabel, mainQuestLevel, mapNodeRole, nodePreview } = req.body;
 
     if (!title || !description || cost === undefined) {
       return res.status(400).json({ error: 'Missing required fields: title, description, cost' });
@@ -2620,6 +2627,9 @@ app.post('/api/skills', requireConstellationSkillEditor, async (req: Request, re
     if (nextQuestCost !== undefined &&
       (typeof nextQuestCost !== 'number' || !Number.isFinite(nextQuestCost) || nextQuestCost < 0)) {
       return res.status(400).json({ error: 'Next quest cost must be a non-negative number' });
+    }
+    if (mainQuestLevel !== undefined && (!Number.isInteger(mainQuestLevel) || mainQuestLevel < 1)) {
+      return res.status(400).json({ error: 'Main Quest level must be a positive integer' });
     }
 
     if (treePosition !== undefined &&
@@ -2652,6 +2662,7 @@ app.post('/api/skills', requireConstellationSkillEditor, async (req: Request, re
       nodeColor: nodeColor || 'blue',
       constellationMapId: constellationMapId || undefined,
       constellationLabel: constellationLabel?.trim() || undefined,
+      mainQuestLevel: mainQuestLevel ?? undefined,
       mapNodeRole: mapNodeRole || 'lesson',
       nodePreview,
       isAdvancedLocked: isAdvancedLocked === true,
@@ -2666,7 +2677,8 @@ app.post('/api/skills', requireConstellationSkillEditor, async (req: Request, re
 
     await validateSkillMapAssignment({
       constellationMapId: skill.constellationMapId,
-      mapNodeRole: skill.mapNodeRole
+      mapNodeRole: skill.mapNodeRole,
+      mainQuestLevel: skill.mainQuestLevel
     });
     await skill.save();
     invalidateSkillCaches();
@@ -2678,7 +2690,7 @@ app.post('/api/skills', requireConstellationSkillEditor, async (req: Request, re
 
 app.put('/api/skills/:id', requireConstellationSkillEditor, async (req: Request, res: Response) => {
   try {
-    const { title, description, cost, nextQuestCost, previewClip, contentYouTube, contentGoogleDrive, layer, position, treePosition, constellationPosition, prerequisites, isActive, isAdvancedLocked, nodeColor, connections, subQuests, minAP, maxAP, constellationMapId, constellationLabel, mapNodeRole, nodePreview } = req.body;
+    const { title, description, cost, nextQuestCost, previewClip, contentYouTube, contentGoogleDrive, layer, position, treePosition, constellationPosition, prerequisites, isActive, isAdvancedLocked, nodeColor, connections, subQuests, minAP, maxAP, constellationMapId, constellationLabel, mainQuestLevel, mapNodeRole, nodePreview } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: 'Invalid quest ID' });
@@ -2706,6 +2718,9 @@ app.put('/api/skills/:id', requireConstellationSkillEditor, async (req: Request,
     if (nextQuestCost !== undefined &&
       (typeof nextQuestCost !== 'number' || !Number.isFinite(nextQuestCost) || nextQuestCost < 0)) {
       return res.status(400).json({ error: 'Next quest cost must be a non-negative number' });
+    }
+    if (mainQuestLevel !== undefined && mainQuestLevel !== null && (!Number.isInteger(mainQuestLevel) || mainQuestLevel < 1)) {
+      return res.status(400).json({ error: 'Main Quest level must be a positive integer' });
     }
 
     // Update fields
@@ -2737,6 +2752,9 @@ app.put('/api/skills/:id', requireConstellationSkillEditor, async (req: Request,
     if (constellationLabel !== undefined) {
       skill.set('constellationLabel', constellationLabel?.trim() || undefined);
     }
+    if (mainQuestLevel !== undefined) {
+      skill.set('mainQuestLevel', mainQuestLevel === null ? undefined : mainQuestLevel);
+    }
     if (mapNodeRole !== undefined) skill.mapNodeRole = mapNodeRole;
     if (nodePreview !== undefined) {
       skill.set('nodePreview', nodePreview === null ? undefined : nodePreview);
@@ -2764,7 +2782,8 @@ app.put('/api/skills/:id', requireConstellationSkillEditor, async (req: Request,
     await validateSkillMapAssignment({
       skillId: skill._id.toString(),
       constellationMapId: skill.constellationMapId,
-      mapNodeRole: skill.mapNodeRole
+      mapNodeRole: skill.mapNodeRole,
+      mainQuestLevel: skill.mainQuestLevel
     });
     if (connections !== undefined || constellationMapId !== undefined) {
       await assertValidConnectionTargets(
@@ -2809,7 +2828,7 @@ app.patch('/api/constellation-maps/:id/skills/batch', requireConstellationSkillE
       return res.status(400).json({ error: 'Batch updates must change exactly one supported field' });
     }
 
-    const map = await ConstellationMap.findById(req.params.id).select('_id scope').lean();
+    const map = await ConstellationMap.findById(req.params.id).select('_id scope constellationType').lean();
     if (!map) return res.status(404).json({ error: 'Constellation map not found' });
     const matchingCount = await Skill.countDocuments({
       _id: { $in: skillIds },
@@ -2825,7 +2844,7 @@ app.patch('/api/constellation-maps/:id/skills/batch', requireConstellationSkillE
       if (!['topic-gateway', 'lesson', 'boss', 'capstone'].includes(value)) {
         throw new ConstellationOperationError('Invalid star type');
       }
-      assertRoleAllowedForScope(map.scope, value);
+      assertRoleAllowedForScope(map.scope, value, map.constellationType || 'skill');
     } else if (field === 'constellationLabel') {
       if (typeof value !== 'string' || value.length > 80) {
         throw new ConstellationOperationError('Star label must be at most 80 characters');
@@ -3343,6 +3362,14 @@ const getMissingQuestPrerequisites = async (skill: any, unlockedSkills: string[]
   return [...missing];
 };
 
+const isMainConstellationQuest = async (skill: any) => {
+  if (!skill.constellationMapId) return false;
+  const map = await ConstellationMap.findById(skill.constellationMapId)
+    .select('constellationType')
+    .lean();
+  return map?.constellationType === 'main';
+};
+
 app.get('/api/user/quest-progress', requireAuth, async (req: Request, res: Response) => {
   try {
     const [user, pendingRequests] = await Promise.all([
@@ -3378,6 +3405,9 @@ app.post('/api/skills/:id/steps/:stepId/complete', requireAuth, async (req: Requ
     }
 
     const steps = skill.subQuests || [];
+    if (await isMainConstellationQuest(skill)) {
+      return res.status(400).json({ error: 'Main quests do not use quest step completion' });
+    }
     const stepIndex = steps.findIndex((step, index) => (step.externalId || `step-${index}`) === req.params.stepId);
     if (stepIndex < 0) return res.status(404).json({ error: 'Quest step not found' });
 
@@ -3434,14 +3464,17 @@ app.post('/api/skills/:id/approval-request', requireAuth, async (req: Request, r
       return res.status(404).json({ error: 'Skill not found' });
     }
 
-    // Check if skill is a quest node
-    const isQuest = skill.nodeType === 'quest' || skill.nodeColor === 'green';
+    const isMainQuest = await isMainConstellationQuest(skill);
+    // Main Quest stars are reviewable regardless of their legacy node colour.
+    const isQuest = isMainQuest || skill.nodeType === 'quest' || skill.nodeColor === 'green';
     if (!isQuest) {
       return res.status(400).json({ error: 'Approval requests are only for quest nodes' });
     }
 
     const unlockedSkills = user.unlockedSkills || [];
-    const missingPrerequisites = await getMissingQuestPrerequisites(skill, unlockedSkills);
+    const missingPrerequisites = isMainQuest
+      ? []
+      : await getMissingQuestPrerequisites(skill, unlockedSkills);
     if (missingPrerequisites.length > 0) {
       return res.status(400).json({ error: 'Complete the previous quest first', missingPrerequisites });
     }
@@ -3452,7 +3485,7 @@ app.post('/api/skills/:id/approval-request', requireAuth, async (req: Request, r
         .filter(step => step.skillId === skillId)
         .map(step => step.stepId)
     );
-    const allStepsCompleted = areQuestStepsComplete(steps, completedStepIds);
+    const allStepsCompleted = isMainQuest || areQuestStepsComplete(steps, completedStepIds);
     if (!allStepsCompleted) {
       return res.status(400).json({
         error: steps.length === 0
@@ -3461,7 +3494,7 @@ app.post('/api/skills/:id/approval-request', requireAuth, async (req: Request, r
       });
     }
     const nextQuestCost = skill.nextQuestCost ?? 25;
-    if ((user.assetPoints || 0) < nextQuestCost) {
+    if (!isMainQuest && (user.assetPoints || 0) < nextQuestCost) {
       return res.status(400).json({
         error: `You need ${nextQuestCost} AP before requesting approval`,
         required: nextQuestCost,
@@ -3545,9 +3578,14 @@ app.get('/api/approval-requests', requireAdmin, async (req: Request, res: Respon
             .map(request => request.skillId)
             .filter(skillId => mongoose.Types.ObjectId.isValid(skillId))
         }
-      }).select('title description minAP maxAP nextQuestCost').lean()
+      }).select('title description minAP maxAP nextQuestCost mainQuestLevel constellationMapId').lean()
     ]);
     const skillsById = new Map(skills.map(skill => [skill._id.toString(), skill]));
+    const approvalMapIds = [...new Set(skills.map(skill => skill.constellationMapId?.toString()).filter(Boolean))];
+    const approvalMaps = approvalMapIds.length > 0
+      ? await ConstellationMap.find({ _id: { $in: approvalMapIds } }).select('_id constellationType').lean()
+      : [];
+    const approvalMapTypeById = new Map(approvalMaps.map(map => [map._id.toString(), map.constellationType || 'skill']));
     const guildIds = [...new Set(
       [...usersById.values()]
         .map(user => user.guildId)
@@ -3572,7 +3610,11 @@ app.get('/api/approval-requests', requireAdmin, async (req: Request, res: Respon
           description: skill.description,
           minAP: skill.minAP,
           maxAP: skill.maxAP,
-          nextQuestCost: skill.nextQuestCost
+          nextQuestCost: skill.nextQuestCost,
+          mainQuestLevel: skill.mainQuestLevel,
+          isMainQuest: skill.constellationMapId
+            ? approvalMapTypeById.get(skill.constellationMapId.toString()) === 'main'
+            : false
         } : null
       };
     });
@@ -3631,7 +3673,10 @@ app.post('/api/approval-requests/:id/approve', requireAdmin, async (req: Request
       success: true, 
       message: 'Approval request approved successfully',
       remainingAssetPoints: approvalResult.remainingAssetPoints,
-      nextQuestCost: approvalResult.nextQuestCost
+      nextQuestCost: approvalResult.nextQuestCost,
+      level: approvalResult.level,
+      leveledUp: approvalResult.leveledUp,
+      completedLevel: approvalResult.completedLevel
     });
   } catch (error: any) {
     console.error('Error approving request:', error);

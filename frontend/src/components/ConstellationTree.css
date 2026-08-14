@@ -288,6 +288,53 @@
 
 .constellation-canvas:active { cursor: grabbing; }
 
+/* Main Quest is a compact, single-lane level path rather than a freeform constellation. */
+.constellation-shell.is-main-quest-rail { min-height: 0; }
+.is-main-quest-rail .constellation-focus-header { min-height: 66px; padding: 10px 20px; }
+.is-main-quest-rail .constellation-focus-header h2 { font-size: 22px; }
+.main-quest-level-progress {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  gap: 0 8px;
+  margin-left: 12px;
+  padding: 6px 12px;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+}
+.main-quest-level-progress span {
+  grid-row: 1 / 3;
+  align-self: center;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .12em;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+.main-quest-level-progress strong { font-size: 14px; line-height: 1.1; }
+.main-quest-level-progress small { color: #64748b; font-size: 10px; font-weight: 700; }
+.is-main-quest-rail .constellation-canvas-wrap {
+  height: 280px;
+  min-height: 280px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.is-main-quest-rail .constellation-canvas { min-width: 760px; cursor: default; touch-action: pan-x; }
+.is-main-quest-rail .constellation-camera-controls { display: none; }
+.is-main-quest-rail .constellation-node-label { font-size: 17px; }
+.is-main-quest-rail .constellation-node-kicker { display: none; }
+.is-main-quest-rail .constellation-main-level {
+  fill: var(--constellation-text);
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  paint-order: stroke;
+  stroke: var(--constellation-bg);
+  stroke-width: 4px;
+}
+
 .constellation-camera {
   transition: transform 380ms cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -323,50 +370,6 @@
 .constellation-node.is-level-gated .constellation-node-kicker {
   opacity: 0.42;
   filter: grayscale(0.7);
-}
-
-.constellation-level-fog {
-  pointer-events: none;
-  opacity: 0.94;
-  transform-origin: center;
-}
-
-.constellation-level-fog path,
-.constellation-level-fog ellipse {
-  stroke: color-mix(in srgb, var(--constellation-muted) 38%, transparent);
-  stroke-width: 2.5;
-}
-
-.constellation-fog-back {
-  fill: color-mix(in srgb, var(--constellation-muted) 48%, var(--constellation-bg));
-  opacity: 0.76;
-  animation: constellation-fog-drift-back 9s ease-in-out infinite alternate;
-}
-
-.constellation-fog-front {
-  fill: color-mix(in srgb, var(--constellation-surface) 72%, var(--constellation-muted));
-  opacity: 0.88;
-  animation: constellation-fog-drift-front 7s ease-in-out infinite alternate;
-}
-
-.constellation-fog-veil {
-  fill: var(--constellation-bg);
-  opacity: 0.46;
-}
-
-@keyframes constellation-fog-drift-back {
-  from { opacity: 0.62; }
-  to { opacity: 0.9; }
-}
-
-@keyframes constellation-fog-drift-front {
-  from { opacity: 0.92; }
-  to { opacity: 0.68; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .constellation-fog-back,
-  .constellation-fog-front { animation: none; }
 }
 
 .constellation-node-aura {

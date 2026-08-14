@@ -1058,6 +1058,35 @@
 .constellation-step-stage .constellation-step-item > label,
 .constellation-step-editor > header span { color: var(--editor-muted); }
 .constellation-info-level-field small { color: var(--editor-muted); }
+
+/* Main Quest editor: ordered level-up workflow, not a freeform constellation canvas. */
+.main-quest-editor { width: 100%; min-height: 560px; padding: 28px; overflow: auto; background: #f4f7fb; }
+.main-quest-editor__heading { display: flex; max-width: 980px; margin: 0 auto 18px; align-items: flex-end; justify-content: space-between; gap: 20px; }
+.main-quest-editor__heading span { color: #0b7b8d; font-size: 11px; font-weight: 900; letter-spacing: 0.12em; }
+.main-quest-editor__heading h2 { margin: 3px 0; color: #17243b; font: 700 27px/1.2 Georgia, "Noto Sans Thai", serif; }
+.main-quest-editor__heading p { margin: 0; color: #667085; font-size: 13px; }
+.main-quest-editor__heading > strong { padding: 7px 11px; color: #075e6d; background: #dff5f7; border: 1px solid #9ddce3; border-radius: 5px; font-size: 12px; }
+.main-quest-editor__list { display: grid; max-width: 980px; margin: 0 auto; gap: 10px; }
+.main-quest-editor__list article { display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; min-height: 104px; overflow: hidden; align-items: center; background: #fff; border: 1px solid #cad5e2; border-radius: 7px; box-shadow: 0 4px 14px rgb(23 36 59 / 6%); }
+.main-quest-editor__list article.is-draft { opacity: 0.66; }
+.main-quest-editor__level { height: 100%; display: grid; place-content: center; justify-items: center; color: #fff; background: #15384a; }
+.main-quest-editor__level span { font-size: 9px; font-weight: 900; letter-spacing: 0.14em; }
+.main-quest-editor__level strong { font-size: 30px; line-height: 1; }
+.main-quest-editor__level small { margin-top: 4px; color: #aadfe6; font-size: 10px; font-weight: 800; }
+.main-quest-editor__quest { min-width: 0; padding: 14px 18px; }
+.main-quest-editor__quest > span { color: #0b7b8d; font-size: 10px; font-weight: 900; text-transform: uppercase; }
+.main-quest-editor__quest h3 { margin: 3px 0; overflow-wrap: anywhere; color: #17243b; font-size: 17px; }
+.main-quest-editor__quest p { margin: 0; color: #667085; font-size: 12px; }
+.main-quest-editor__actions { padding: 12px 16px; display: flex; align-items: center; gap: 6px; }
+.main-quest-editor__empty { padding: 50px 20px; display: grid; justify-items: center; gap: 5px; color: #667085; background: #fff; border: 1px dashed #aebdce; border-radius: 7px; text-align: center; }
+.main-quest-editor__empty strong { color: #17243b; }
+
+@media (max-width: 720px) {
+  .main-quest-editor { padding: 16px; }
+  .main-quest-editor__heading { align-items: flex-start; flex-direction: column; }
+  .main-quest-editor__list article { grid-template-columns: 72px minmax(0, 1fr); }
+  .main-quest-editor__actions { grid-column: 1 / -1; padding: 8px; justify-content: flex-end; border-top: 1px solid #e3e9f0; }
+}
 .constellation-info-image-preview,
 .constellation-step-image-preview { color: var(--editor-cyan); background: #e8f6f9; border-color: #7dbdca; border-radius: 4px; }
 

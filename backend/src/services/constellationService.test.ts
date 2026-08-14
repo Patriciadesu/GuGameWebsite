@@ -7,10 +7,17 @@ import {
   normalizeConstellationLayout
 } from './constellationService';
 
-test('hierarchy accepts a topic under a same-type discipline', () => {
-  assert.doesNotThrow(() => assertConstellationHierarchyIntegrity(
+test('main quest hierarchy rejects legacy topic maps', () => {
+  assert.throws(() => assertConstellationHierarchyIntegrity(
     { scope: 'discipline', constellationType: 'main' },
     { scope: 'topic', constellationType: 'main' }
+  ), /Main Quest paths do not use topic maps/);
+});
+
+test('hierarchy accepts a skill topic under a skill discipline', () => {
+  assert.doesNotThrow(() => assertConstellationHierarchyIntegrity(
+    { scope: 'discipline', constellationType: 'skill' },
+    { scope: 'topic', constellationType: 'skill' }
   ));
 });
 
@@ -43,6 +50,16 @@ test('discipline maps reject lesson nodes', () => {
   assert.throws(
     () => assertRoleAllowedForScope('discipline', 'lesson'),
     (error: unknown) => error instanceof ConstellationOperationError && error.statusCode === 400
+  );
+});
+
+test('main quest paths accept direct quest roles and reject topic gateways', () => {
+  assert.doesNotThrow(() => assertRoleAllowedForScope('discipline', 'lesson', 'main'));
+  assert.doesNotThrow(() => assertRoleAllowedForScope('discipline', 'boss', 'main'));
+  assert.doesNotThrow(() => assertRoleAllowedForScope('discipline', 'capstone', 'main'));
+  assert.throws(
+    () => assertRoleAllowedForScope('discipline', 'topic-gateway', 'main'),
+    /Main quest maps cannot contain topic-gateway nodes/
   );
 });
 

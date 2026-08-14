@@ -786,8 +786,12 @@ test('player can explore a constellation with keyboard, camera controls, and bro
   await page.goto('mainmenu');
   const skillFrame = page.locator('.skill-constellation-panel .constellation-shell');
   const overviewFrame = await skillFrame.boundingBox();
+  const desktopViewport = page.viewportSize();
   expect(overviewFrame).not.toBeNull();
+  expect(desktopViewport).not.toBeNull();
   expect(overviewFrame!.width / overviewFrame!.height).toBeCloseTo(16 / 9, 2);
+  expect(overviewFrame!.y + overviewFrame!.height).toBeLessThanOrEqual(desktopViewport!.height);
+  expect(overviewFrame!.height).toBeLessThanOrEqual(desktopViewport!.height - 340);
   await page.getByRole('button', { name: /Game Art/ }).click();
 
   const disciplineFrame = await skillFrame.boundingBox();
@@ -2260,10 +2264,10 @@ test('@audit overview scales from four to six disciplines across viewports', asy
     for (const viewportSize of [{ width: 1440, height: 900 }, { width: 768, height: 1024 }, { width: 320, height: 568 }]) {
       await page.setViewportSize(viewportSize);
       await page.goto('mainmenu');
-      const skillConstellations = page.getByLabel('Skill Constellations');
+      await expect(page.locator('.skill-constellation-panel .constellation-overview-item')).toHaveCount(6);
+      const skillConstellations = page.locator('.skill-constellation-panel .constellation-shell');
       await expect(skillConstellations).toBeVisible();
-      await skillConstellations.scrollIntoViewIfNeeded();
-      await expect(skillConstellations.locator('.constellation-overview-item')).toHaveCount(6);
+      await skillConstellations.evaluate(element => element.scrollIntoView({ block: 'start' }));
       const grid = skillConstellations.locator('.constellation-overview-grid');
       const overflow = await grid.evaluate(element => ({
         clientWidth: element.clientWidth,

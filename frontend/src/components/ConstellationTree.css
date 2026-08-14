@@ -1141,10 +1141,12 @@
 /* Desktop skill maps keep one stable 16:9 stage across overview, discipline, and topic. */
 @media (min-width: 769px) {
   .skill-constellation-panel .constellation-shell {
-    width: 100%;
-    height: auto;
+    width: auto;
+    max-width: 100%;
+    height: min(760px, calc(100dvh - 360px), calc(56.25vw - 21px));
     min-height: 0;
     aspect-ratio: 16 / 9;
+    margin-inline: auto;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
   }

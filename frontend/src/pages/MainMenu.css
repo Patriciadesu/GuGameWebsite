@@ -1032,6 +1032,36 @@ body {
   .panel-header { min-height: 42px; }
 }
 
+.main-constellation-panel { position: relative; }
+
+.main-quest-feedback {
+  position: absolute;
+  z-index: 8;
+  top: 10px;
+  left: 50%;
+  max-width: calc(100% - 32px);
+  padding: 8px 12px;
+  color: var(--star-space);
+  background: var(--star-green);
+  border: 1px solid color-mix(in srgb, var(--star-green) 72%, var(--star-line));
+  border-radius: 5px;
+  box-shadow: 0 8px 24px rgb(20 38 58 / 20%);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+  transform: translateX(-50%);
+  animation: main-quest-feedback-in 180ms ease-out;
+}
+
+@keyframes main-quest-feedback-in {
+  from { opacity: 0; transform: translate(-50%, -5px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main-quest-feedback { animation: none; }
+}
+
 /* Skill Tree Styles */
 .skill-tree-view {
   position: relative;

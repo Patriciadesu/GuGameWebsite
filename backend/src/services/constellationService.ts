@@ -42,6 +42,35 @@ export interface ConstellationViewportBounds {
   height: number;
 }
 
+export interface MainQuestReadinessCandidate {
+  title?: string;
+  mainQuestLevel?: number;
+  isActive?: boolean;
+  subQuests?: Array<{ title?: string }>;
+}
+
+export const mainQuestReadinessIssues = (skills: MainQuestReadinessCandidate[]): string[] => {
+  const published = skills.filter(skill => skill.isActive !== false);
+  if (published.length === 0) return ['Publish at least one Main Quest before publishing this path'];
+
+  const issues: string[] = [];
+  const seenLevels = new Set<number>();
+  for (const skill of published) {
+    const label = skill.title?.trim() || 'Untitled Main Quest';
+    const level = Number(skill.mainQuestLevel);
+    if (!Number.isInteger(level) || level < 1) {
+      issues.push(`${label} needs a valid Level`);
+    } else if (seenLevels.has(level)) {
+      issues.push(`Level ${level} is assigned to more than one published Main Quest`);
+    } else {
+      seenLevels.add(level);
+    }
+    const validRequirements = (skill.subQuests || []).filter(step => step.title?.trim());
+    if (validRequirements.length === 0) issues.push(`${label} needs at least one Requirement before publishing`);
+  }
+  return issues;
+};
+
 const objectIdString = (value: unknown, fieldName: string): string => {
   const normalized = value instanceof Types.ObjectId ? value.toString() : String(value || '');
   if (!Types.ObjectId.isValid(normalized)) {

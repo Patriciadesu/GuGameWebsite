@@ -3,6 +3,7 @@ import axios from '../config/axios';
 import { ChevronLeft, ChevronRight, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { ConstellationMap, ConstellationSkill } from './constellationTypes';
 import ConstellationNodeGlyph from './ConstellationNodeGlyph';
+import { mainQuestVisualStatus, resolveMainQuestStatus } from './mainQuestStatus';
 import {
   backgroundStarsFor,
   pointForConstellationSkill as pointForSkill,
@@ -18,7 +19,7 @@ interface ConstellationTreeProps {
   unlockedSkillIds: string[];
   pendingSkillIds: string[];
   canUnlockSkill: (skill: ConstellationSkill) => boolean;
-  onOpenSkill: (skill: ConstellationSkill) => void;
+  onOpenSkill: (skill: ConstellationSkill, interaction?: 'pointer' | 'keyboard', trigger?: SVGGElement) => void;
   userLevel?: number;
   compactOverview?: boolean;
   selectedSkillId?: string | null;
@@ -99,6 +100,7 @@ function ConstellationTree({
   const [isDirectManipulating, setIsDirectManipulating] = useState(false);
   const dragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const canvasRef = useRef<SVGSVGElement | null>(null);
+  const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const previewTimerRef = useRef<number | null>(null);
   const overviewGridRef = useRef<HTMLDivElement | null>(null);
   const disciplineCameraRef = useRef<Camera>({ zoom: 1, x: 0, y: 0 });
@@ -221,6 +223,23 @@ function ConstellationTree({
   const pendingSet = useMemo(() => new Set(pendingSkillIds), [pendingSkillIds]);
 
   useEffect(() => {
+    if (!directMap || !selectedDiscipline) return;
+    const ordered = [...selectedDiscipline.skills].sort((left, right) =>
+      (left.mainQuestLevel || Number.MAX_SAFE_INTEGER) - (right.mainQuestLevel || Number.MAX_SAFE_INTEGER)
+    );
+    const currentIndex = ordered.findIndex(skill => (skill.mainQuestLevel || 1) === userLevel);
+    const wrap = canvasWrapRef.current;
+    if (!wrap || currentIndex < 0) return;
+    const frame = window.requestAnimationFrame(() => {
+      const maxScroll = Math.max(0, wrap.scrollWidth - wrap.clientWidth);
+      const ratio = ordered.length <= 1 ? 0 : currentIndex / (ordered.length - 1);
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      wrap.scrollTo({ left: maxScroll * ratio, behavior: reducedMotion ? 'auto' : 'smooth' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [directMap, selectedDiscipline, userLevel]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || directMap) return;
     const handleWheel = (event: WheelEvent) => {
@@ -308,7 +327,10 @@ function ConstellationTree({
     const grid = overviewGridRef.current;
     if (!grid) return;
     setOverviewIndex(boundedIndex);
-    grid.scrollTo({ left: boundedIndex * grid.clientWidth, behavior: 'smooth' });
+    grid.scrollTo({
+      left: boundedIndex * grid.clientWidth,
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+    });
   };
 
   const openTopic = async (gateway: ConstellationSkill, sourceDetail: MapDetail | null = selectedDiscipline) => {
@@ -352,11 +374,11 @@ function ConstellationTree({
   };
 
   const statusForSkill = (skill: ConstellationSkill) => directMap
-    ? (skill.mainQuestLevel || 1) < userLevel || unlockedSet.has(skill._id)
-      ? 'unlocked'
-      : pendingSet.has(skill._id)
-        ? 'pending'
-        : (skill.mainQuestLevel || 1) === userLevel && canUnlockSkill(skill) ? 'available' : 'locked'
+    ? mainQuestVisualStatus(resolveMainQuestStatus({
+      questLevel: skill.mainQuestLevel,
+      userLevel,
+      pending: pendingSet.has(skill._id)
+    }))
     : (skill.topicLevel || userLevel) > userLevel
       ? 'locked'
       : unlockedSet.has(skill._id)
@@ -447,7 +469,7 @@ function ConstellationTree({
       gatewayOnly?: boolean;
       straightLineFit?: boolean;
       focusedGatewayId?: string;
-      onNodeClick: (skill: ConstellationSkill) => void;
+      onNodeClick: (skill: ConstellationSkill, interaction: 'pointer' | 'keyboard', trigger: SVGGElement) => void;
     }
   ) => {
     const skills = options.gatewayOnly
@@ -458,7 +480,7 @@ function ConstellationTree({
       options.straightLineFit ? {
         x: skills.length <= 1
           ? detail.map.viewport.width / 2
-          : 180 + index * ((detail.map.viewport.width - 360) / (skills.length - 1)),
+          : 120 + index * ((detail.map.viewport.width - 240) / (skills.length - 1)),
         y: detail.map.viewport.height / 2
       } : pointForSkill(skill, index, skills.length, detail.map)
     ]));
@@ -544,6 +566,8 @@ function ConstellationTree({
               role="button"
               tabIndex={0}
               aria-label={`${labelForSkill(skill)}, ${skill.mapNodeRole || 'lesson'}, ${status}`}
+              aria-controls={directMap && selectedSkillId === skill._id ? 'star-lens-dock' : undefined}
+              aria-expanded={directMap ? selectedSkillId === skill._id : undefined}
               onPointerEnter={event => {
                 if (event.pointerType === 'mouse' && skill.mapNodeRole === 'topic-gateway') schedulePreviewOpen(skill);
               }}
@@ -552,12 +576,12 @@ function ConstellationTree({
               onBlur={() => skill.mapNodeRole === 'topic-gateway' && schedulePreviewClose()}
               onClick={(event) => {
                 event.stopPropagation();
-                options.onNodeClick(skill);
+                options.onNodeClick(skill, 'pointer', event.currentTarget);
               }}
               onKeyDown={(event) => {
                 if (event.key !== 'Enter' && event.key !== ' ') return;
                 event.preventDefault();
-                options.onNodeClick(skill);
+                options.onNodeClick(skill, 'keyboard', event.currentTarget);
               }}
             >
               <ConstellationNodeGlyph
@@ -676,8 +700,8 @@ function ConstellationTree({
       ...selectedDiscipline.map,
       viewport: {
         ...selectedDiscipline.map.viewport,
-        width: Math.max(760, selectedDiscipline.skills.length * 240 + 220),
-        height: 360
+        width: Math.max(760, selectedDiscipline.skills.length * 220 + 120),
+        height: 180
       }
     },
     skills: [...selectedDiscipline.skills].sort((left, right) =>
@@ -752,7 +776,8 @@ function ConstellationTree({
 
       {error && <div className="constellation-notice" role="status">{error}</div>}
 
-      <div className="constellation-canvas-wrap">
+      {directMap && <p className="main-quest-swipe-hint">Swipe horizontally to explore levels · Current Quest is centered automatically</p>}
+      <div className="constellation-canvas-wrap" ref={canvasWrapRef}>
         <div className="constellation-camera-controls" aria-label="Map view controls">
           <button type="button" disabled={loadingTopic} onClick={() => setCamera(current => ({ ...current, zoom: Math.min((canvasMap?.viewport.maxZoom || 3), current.zoom * 1.2) }))} title="Zoom in" aria-label="Zoom in"><ZoomIn aria-hidden="true" /></button>
           <button type="button" disabled={loadingTopic} onClick={resetCamera} title="Reset view" aria-label="Reset view"><RotateCcw aria-hidden="true" /></button>
@@ -764,7 +789,7 @@ function ConstellationTree({
           className="constellation-canvas"
           style={directMap ? { minWidth: `${Math.max(760, mapWidth * 0.8)}px` } : undefined}
           viewBox={`0 0 ${mapWidth} ${mapHeight}`}
-          role="application"
+          role="group"
           aria-busy={loadingTopic}
           aria-label={directMap ? `${activeMap?.name} level-up quest path` : `${topicDetail?.map.name || activeMap?.name} constellation map`}
           onPointerDown={(event) => {
@@ -818,11 +843,11 @@ function ConstellationTree({
               gatewayOnly: !directMap,
               straightLineFit: directMap,
               focusedGatewayId: topicGateway?._id,
-              onNodeClick: skill => directMap ? onOpenSkill(skill) : showPreview(skill)
+              onNodeClick: (skill, interaction, trigger) => directMap ? onOpenSkill(skill, interaction, trigger) : showPreview(skill)
             })}
             {topicDetail && renderMapLayer(topicDetail, {
               className: 'constellation-topic-layer',
-              onNodeClick: onOpenSkill
+              onNodeClick: (skill, interaction, trigger) => onOpenSkill(skill, interaction, trigger)
             })}
             {topicDetail && topicStart && (
               <g className="constellation-anchor" transform={`translate(${topicStart.x} ${topicStart.y})`} aria-hidden="true">

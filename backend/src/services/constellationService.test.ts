@@ -4,6 +4,7 @@ import {
   assertConstellationHierarchyIntegrity,
   assertRoleAllowedForScope,
   ConstellationOperationError,
+  mainQuestReadinessIssues,
   normalizeConstellationLayout
 } from './constellationService';
 
@@ -61,6 +62,30 @@ test('main quest paths accept direct quest roles and reject topic gateways', () 
     () => assertRoleAllowedForScope('discipline', 'topic-gateway', 'main'),
     /Main quest maps cannot contain topic-gateway nodes/
   );
+});
+
+test('main quest readiness requires a published quest with a named requirement', () => {
+  assert.deepEqual(mainQuestReadinessIssues([]), ['Publish at least one Main Quest before publishing this path']);
+  assert.match(mainQuestReadinessIssues([{
+    title: 'First Trial',
+    mainQuestLevel: 1,
+    isActive: true,
+    subQuests: []
+  }])[0], /at least one Requirement/);
+  assert.deepEqual(mainQuestReadinessIssues([{
+    title: 'First Trial',
+    mainQuestLevel: 1,
+    isActive: true,
+    subQuests: [{ title: 'Send your work' }]
+  }]), []);
+});
+
+test('main quest readiness ignores incomplete drafts and detects duplicate published Levels', () => {
+  assert.deepEqual(mainQuestReadinessIssues([
+    { title: 'Draft', mainQuestLevel: 2, isActive: false, subQuests: [] },
+    { title: 'Level one A', mainQuestLevel: 1, isActive: true, subQuests: [{ title: 'A' }] },
+    { title: 'Level one B', mainQuestLevel: 1, isActive: true, subQuests: [{ title: 'B' }] }
+  ]), ['Level 1 is assigned to more than one published Main Quest']);
 });
 
 test('topic maps accept lesson, boss, and capstone nodes', () => {

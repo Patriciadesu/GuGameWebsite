@@ -1060,32 +1060,41 @@
 .constellation-info-level-field small { color: var(--editor-muted); }
 
 /* Main Quest editor: ordered level-up workflow, not a freeform constellation canvas. */
-.main-quest-editor { width: 100%; min-height: 560px; padding: 28px; overflow: auto; background: #f4f7fb; }
+.main-quest-editor { width: 100%; min-height: 560px; padding: 28px; overflow: auto; color: var(--editor-ink); background: var(--editor-void); }
 .main-quest-editor__heading { display: flex; max-width: 980px; margin: 0 auto 18px; align-items: flex-end; justify-content: space-between; gap: 20px; }
-.main-quest-editor__heading span { color: #0b7b8d; font-size: 11px; font-weight: 900; letter-spacing: 0.12em; }
-.main-quest-editor__heading h2 { margin: 3px 0; color: #17243b; font: 700 27px/1.2 Georgia, "Noto Sans Thai", serif; }
-.main-quest-editor__heading p { margin: 0; color: #667085; font-size: 13px; }
-.main-quest-editor__heading > strong { padding: 7px 11px; color: #075e6d; background: #dff5f7; border: 1px solid #9ddce3; border-radius: 5px; font-size: 12px; }
+.main-quest-editor__heading span { color: var(--editor-cyan); font-size: 12px; font-weight: 900; letter-spacing: 0.12em; }
+.main-quest-editor__heading h2 { margin: 3px 0; color: var(--editor-ink); font: 700 27px/1.25 "Noto Sans Thai", sans-serif; }
+.main-quest-editor__heading p { margin: 0; color: var(--editor-muted); font-size: 14px; }
+.main-quest-editor__heading > strong { padding: 7px 11px; color: var(--editor-cyan); background: color-mix(in srgb, var(--editor-cyan) 10%, var(--editor-space)); border: 1px solid color-mix(in srgb, var(--editor-cyan) 50%, var(--editor-line)); border-radius: 5px; font-size: 12px; }
+.main-quest-editor__readiness { display: grid; max-width: 980px; margin: 0 auto 14px; padding: 12px 14px; gap: 4px; color: var(--editor-muted); background: color-mix(in srgb, var(--editor-gold) 8%, var(--editor-space)); border: 1px solid color-mix(in srgb, var(--editor-gold) 42%, var(--editor-line)); border-radius: 6px; font-size: 13px; }
+.main-quest-editor__readiness.is-ready { background: color-mix(in srgb, var(--editor-green) 9%, var(--editor-space)); border-color: color-mix(in srgb, var(--editor-green) 45%, var(--editor-line)); }
+.main-quest-editor__readiness strong { color: var(--editor-ink); }
+.main-quest-editor__readiness ul { margin: 2px 0 0 18px; }
 .main-quest-editor__list { display: grid; max-width: 980px; margin: 0 auto; gap: 10px; }
-.main-quest-editor__list article { display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; min-height: 104px; overflow: hidden; align-items: center; background: #fff; border: 1px solid #cad5e2; border-radius: 7px; box-shadow: 0 4px 14px rgb(23 36 59 / 6%); }
-.main-quest-editor__list article.is-draft { opacity: 0.66; }
-.main-quest-editor__level { height: 100%; display: grid; place-content: center; justify-items: center; color: #fff; background: #15384a; }
+.main-quest-editor__list article { display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; min-height: 104px; overflow: hidden; align-items: center; color: var(--editor-ink); background: var(--editor-space); border: 1px solid var(--editor-line); border-radius: 7px; box-shadow: 0 4px 14px color-mix(in srgb, var(--editor-ink) 7%, transparent); }
+.main-quest-editor__list article.is-draft { border-style: dashed; }
+.main-quest-editor__level { height: 100%; display: grid; place-content: center; justify-items: center; color: var(--editor-space); background: color-mix(in srgb, var(--editor-cyan) 72%, var(--editor-ink)); }
 .main-quest-editor__level span { font-size: 9px; font-weight: 900; letter-spacing: 0.14em; }
 .main-quest-editor__level strong { font-size: 30px; line-height: 1; }
-.main-quest-editor__level small { margin-top: 4px; color: #aadfe6; font-size: 10px; font-weight: 800; }
+.main-quest-editor__level small { margin-top: 4px; color: color-mix(in srgb, var(--editor-space) 78%, var(--editor-cyan)); font-size: 11px; font-weight: 800; }
 .main-quest-editor__quest { min-width: 0; padding: 14px 18px; }
-.main-quest-editor__quest > span { color: #0b7b8d; font-size: 10px; font-weight: 900; text-transform: uppercase; }
-.main-quest-editor__quest h3 { margin: 3px 0; overflow-wrap: anywhere; color: #17243b; font-size: 17px; }
-.main-quest-editor__quest p { margin: 0; color: #667085; font-size: 12px; }
+.main-quest-editor__quest > span { color: var(--editor-cyan); font-size: 12px; font-weight: 900; text-transform: uppercase; }
+.main-quest-editor__quest h3 { margin: 3px 0; overflow-wrap: anywhere; color: var(--editor-ink); font-size: 17px; }
+.main-quest-editor__quest p { margin: 0; color: var(--editor-muted); font-size: 12px; }
+.main-quest-editor__quest p.is-ready { color: var(--editor-green); }
+.main-quest-editor__quest p.is-incomplete { color: var(--editor-red); font-weight: 700; }
 .main-quest-editor__actions { padding: 12px 16px; display: flex; align-items: center; gap: 6px; }
-.main-quest-editor__empty { padding: 50px 20px; display: grid; justify-items: center; gap: 5px; color: #667085; background: #fff; border: 1px dashed #aebdce; border-radius: 7px; text-align: center; }
-.main-quest-editor__empty strong { color: #17243b; }
+.main-quest-editor__empty { padding: 50px 20px; display: grid; justify-items: center; gap: 5px; color: var(--editor-muted); background: var(--editor-space); border: 1px dashed var(--editor-line); border-radius: 7px; text-align: center; }
+.main-quest-editor__empty strong { color: var(--editor-ink); }
+.constellation-info-inline-error { display: block; margin-top: 4px; color: var(--editor-red); font-size: 12px; }
+.constellation-admin-save-state { margin-left: auto; color: var(--editor-gold); font-size: 12px; font-weight: 700; }
+.constellation-admin-notice { padding: 9px 14px; color: var(--editor-green); background: color-mix(in srgb, var(--editor-green) 9%, var(--editor-space)); border-bottom: 1px solid color-mix(in srgb, var(--editor-green) 42%, var(--editor-line)); font-size: 13px; }
 
 @media (max-width: 720px) {
   .main-quest-editor { padding: 16px; }
   .main-quest-editor__heading { align-items: flex-start; flex-direction: column; }
   .main-quest-editor__list article { grid-template-columns: 72px minmax(0, 1fr); }
-  .main-quest-editor__actions { grid-column: 1 / -1; padding: 8px; justify-content: flex-end; border-top: 1px solid #e3e9f0; }
+  .main-quest-editor__actions { grid-column: 1 / -1; padding: 8px; justify-content: flex-end; border-top: 1px solid var(--editor-line); }
 }
 .constellation-info-image-preview,
 .constellation-step-image-preview { color: var(--editor-cyan); background: #e8f6f9; border-color: #7dbdca; border-radius: 4px; }

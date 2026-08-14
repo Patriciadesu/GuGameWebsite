@@ -154,11 +154,14 @@ function ConstellationAdmin({
   const [importDisciplineId, setImportDisciplineId] = useState('');
   const [importTopicMapId, setImportTopicMapId] = useState('');
   const [busy, setBusy] = useState(false);
+  const [infoDirty, setInfoDirty] = useState(false);
+  const [editorNotice, setEditorNotice] = useState('');
   const [topicLevel, setTopicLevel] = useState(1);
   const [error, setError] = useState('');
   const layoutMapId = useRef('');
   const starMasterRequestId = useRef(0);
   const modalRef = useRef<HTMLDivElement | null>(null);
+  const editingSkillRef = useRef<ConstellationSkill | null>(null);
   const modalOpenerRef = useRef<HTMLElement | SVGElement | null>(null);
   const starMasterTagMenuRef = useRef<HTMLDivElement | null>(null);
   const mapMenuRef = useRef<HTMLDivElement | null>(null);
@@ -193,6 +196,19 @@ function ConstellationAdmin({
     .sort((a, b) => a.position - b.position), [skills, selectedMapId]);
   const selectedSkill = mapSkills.find(skill => skill._id === selectedSkillId);
   const selectedSkills = useMemo(() => mapSkills.filter(skill => selectedSkillIds.includes(skill._id)), [mapSkills, selectedSkillIds]);
+  const duplicateInfoLevelSkill = isMainConstellation
+    ? mapSkills.find(skill => skill._id !== selectedSkillId && (skill.mainQuestLevel || 1) === Math.max(1, Math.floor(infoMainQuestLevel)))
+    : undefined;
+  const validInfoRequirementCount = infoSteps.filter(step => step.title.trim()).length;
+  const publishedMainQuests = isMainConstellation ? mapSkills.filter(skill => skill.isActive) : [];
+  const mainQuestReadinessIssues = isMainConstellation
+    ? [
+        ...(publishedMainQuests.length === 0 ? ['Publish at least one Level Quest'] : []),
+        ...publishedMainQuests
+          .filter(skill => !(skill.subQuests || []).some(step => step.title.trim()))
+          .map(skill => `Level ${skill.mainQuestLevel || '—'} needs at least one Requirement`)
+      ]
+    : [];
 
   const sharedValue = <T,>(values: T[]): T | undefined => (
     values.length > 0 && values.every(value => Object.is(value, values[0])) ? values[0] : undefined
@@ -387,6 +403,7 @@ function ConstellationAdmin({
   }, []);
 
   const openSkillInfo = (skill: ConstellationSkill, opener?: HTMLElement | SVGElement | null) => {
+    editingSkillRef.current = skill;
     modalOpenerRef.current = opener ?? document.activeElement as HTMLElement | SVGElement | null;
     setError('');
     setSelectedSkillId(skill._id);
@@ -412,6 +429,7 @@ function ConstellationAdmin({
       };
     });
     setInfoSteps(steps);
+    setInfoDirty(false);
     setInfoTab(isMainConstellation || steps.length > 0 ? 'steps' : 'details');
     setSelectedInfoStepIndex(0);
     setShowInfoForm(true);
@@ -546,6 +564,10 @@ function ConstellationAdmin({
 
   const updateMapVisibility = async () => {
     if (!selectedMap) return;
+    if (isMainConstellation && !selectedMap.isActive && mainQuestReadinessIssues.length > 0) {
+      setError(mainQuestReadinessIssues[0]);
+      return;
+    }
     try {
       setBusy(true);
       setError('');
@@ -553,6 +575,28 @@ function ConstellationAdmin({
       await refreshMaps();
     } catch (requestError: any) {
       setError(requestErrorMessage(requestError, `Unable to ${selectedMap.isActive ? 'unpublish' : 'publish'} this constellation.`));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateMainQuestVisibility = async (skill: ConstellationSkill) => {
+    const publishing = !skill.isActive;
+    if (publishing && !(skill.subQuests || []).some(step => step.title.trim())) {
+      setError(`Level ${skill.mainQuestLevel || '—'} needs at least one Requirement before publishing.`);
+      setSelectedSkillId(skill._id);
+      openSkillInfo(skill);
+      return;
+    }
+    try {
+      setBusy(true);
+      setError('');
+      setEditorNotice('');
+      await axios.put(`/api/skills/${skill._id}`, { isActive: publishing });
+      await onSkillsChanged();
+      setEditorNotice(`${skill.title} ${publishing ? 'published' : 'moved to draft'}.`);
+    } catch (requestError: any) {
+      setError(requestErrorMessage(requestError, `Unable to ${publishing ? 'publish' : 'unpublish'} this Main Quest.`));
     } finally {
       setBusy(false);
     }
@@ -793,11 +837,15 @@ function ConstellationAdmin({
         mainQuestLevel: isMainConstellation ? nextMainQuestLevel : undefined,
         constellationMapId: selectedMap._id,
         constellationPosition: position,
-        mapNodeRole: isMainConstellation ? starRole : selectedMap.scope === 'discipline' ? 'topic-gateway' : starRole
+        mapNodeRole: isMainConstellation ? starRole : selectedMap.scope === 'discipline' ? 'topic-gateway' : starRole,
+        ...(isMainConstellation ? { isActive: false } : {})
       });
       closeModal();
       await onSkillsChanged();
-      if (response.data.skill?._id) setSelectedSkillId(response.data.skill._id);
+      if (response.data.skill?._id) {
+        setSelectedSkillId(response.data.skill._id);
+        if (isMainConstellation) openSkillInfo(response.data.skill);
+      }
     } catch (requestError: any) {
       setError(requestError.response?.data?.error || 'Unable to create star.');
     } finally {
@@ -900,12 +948,23 @@ function ConstellationAdmin({
   };
 
   const saveStarInfo = async () => {
-    if (!selectedSkill || !infoTitle.trim()) return;
+    const editingSkill = selectedSkill || editingSkillRef.current;
+    if (!editingSkill || !infoTitle.trim()) return;
+    if (isMainConstellation && duplicateInfoLevelSkill) {
+      setError(`Level ${Math.max(1, Math.floor(infoMainQuestLevel))} is already used by ${duplicateInfoLevelSkill.title}.`);
+      setInfoTab('details');
+      return;
+    }
+    if (isMainConstellation && editingSkill.isActive && validInfoRequirementCount === 0) {
+      setError('A published Main Quest needs at least one Requirement. Add a Requirement or unpublish the quest first.');
+      setInfoTab('steps');
+      return;
+    }
     const normalizedTopicLevel = Math.max(1, Math.floor(infoTopicLevel));
     try {
       setBusy(true);
       setError('');
-      await axios.put(`/api/skills/${selectedSkill._id}`, {
+      await axios.put(`/api/skills/${editingSkill._id}`, {
         title: infoTitle.trim(),
         description: infoDescription.trim() || infoTitle.trim(),
         ...(isMainConstellation ? { mainQuestLevel: Math.max(1, Math.floor(infoMainQuestLevel)) } : {}),
@@ -915,7 +974,7 @@ function ConstellationAdmin({
           imageUrl: infoImageUrl.trim() || undefined,
           summary: infoSummary.trim() || undefined,
           outcomes: infoOutcomes.split('\n').map(value => value.trim()).filter(Boolean),
-          actionLabel: selectedSkill.nodePreview?.actionLabel || (selectedSkill.mapNodeRole === 'topic-gateway' ? 'View Path' : 'Open Quest')
+          actionLabel: editingSkill.nodePreview?.actionLabel || (editingSkill.mapNodeRole === 'topic-gateway' ? 'View Path' : 'Open Quest')
         },
         subQuests: infoSteps.filter(step => step.title.trim()).map(step => ({
           externalId: step.externalId,
@@ -929,7 +988,7 @@ function ConstellationAdmin({
         }))
       });
       if (selectedMap?.scope === 'discipline' && !isMainConstellation) {
-        const linkedTopic = maps.find(map => map.scope === 'topic' && map.gatewaySkillId === selectedSkill._id);
+        const linkedTopic = maps.find(map => map.scope === 'topic' && map.gatewaySkillId === editingSkill._id);
         if (linkedTopic) {
           const response = await axios.patch(`/api/constellation-maps/${linkedTopic._id}`, { level: normalizedTopicLevel });
           setMaps(current => current.map(map => map._id === linkedTopic._id
@@ -945,13 +1004,15 @@ function ConstellationAdmin({
             displayOrder: maps.filter(map => map.parentMapId === selectedMap._id).length,
             isActive: false,
             parentMapId: selectedMap._id,
-            gatewaySkillId: selectedSkill._id
+            gatewaySkillId: editingSkill._id
           });
           await refreshMaps();
         }
       }
       closeModal();
       await onSkillsChanged();
+      setInfoDirty(false);
+      setEditorNotice(`${infoTitle.trim()} saved.`);
     } catch (requestError: any) {
       setError(requestError.response?.data?.error || 'Unable to update star info.');
     } finally {
@@ -998,7 +1059,7 @@ function ConstellationAdmin({
         {selectedMap && <div className="constellation-admin-map-state" aria-label="Publication status">
           {selectedMap.scope === 'topic' && <label className="constellation-admin-topic-level">Level<input aria-label="Topic level" type="number" min="1" step="1" value={topicLevel} disabled={busy} onChange={event => setTopicLevel(Number(event.target.value))} onBlur={() => void saveTopicLevel()} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} /></label>}
           <span className={selectedMap.isActive ? 'is-published' : 'is-draft'}>{selectedMap.isActive ? 'Published' : 'Draft'}</span>
-          <button type="button" className="constellation-admin-state-action" disabled={busy} onClick={() => void updateMapVisibility()}>{selectedMap.isActive ? 'Unpublish' : 'Publish'}</button>
+          <button type="button" className="constellation-admin-state-action" disabled={busy || (isMainConstellation && !selectedMap.isActive && mainQuestReadinessIssues.length > 0)} title={isMainConstellation && !selectedMap.isActive && mainQuestReadinessIssues.length > 0 ? mainQuestReadinessIssues[0] : undefined} onClick={() => void updateMapVisibility()}>{selectedMap.isActive ? 'Unpublish' : 'Publish'}</button>
         </div>}
         <div className={`constellation-admin-actions ${showMobileActions ? 'is-open' : ''}`}>
           <button type="button" className="constellation-admin-actions-toggle" aria-expanded={showMobileActions} onClick={() => setShowMobileActions(current => !current)}>Actions <ChevronDown size={16} aria-hidden="true" /></button>
@@ -1017,6 +1078,7 @@ function ConstellationAdmin({
       </header>
 
       {error && <div className="constellation-admin-error" role="alert">{error}</div>}
+      {editorNotice && <div className="constellation-admin-notice" role="status">{editorNotice}</div>}
       {connectionSourceId && <div className="constellation-admin-connect-status" role="status">
         <span><Link2 size={15} aria-hidden="true" /> Connect from <strong>{mapSkills.find(skill => skill._id === connectionSourceId)?.constellationLabel || mapSkills.find(skill => skill._id === connectionSourceId)?.title}</strong></span>
         <button type="button" onClick={() => setConnectionSourceId('')}>Done</button>
@@ -1029,18 +1091,25 @@ function ConstellationAdmin({
               <div><span>LEVEL-UP FLOW</span><h2>Main Quest Path</h2><p>หนึ่ง Quest ต่อหนึ่ง Level · อนุมัติแล้วผู้เล่นจะขึ้น Level ถัดไป</p></div>
               <strong>{mapSkills.length} Levels</strong>
             </header>
+            <section className={`main-quest-editor__readiness ${mainQuestReadinessIssues.length === 0 ? 'is-ready' : ''}`} aria-label="Publication readiness">
+              <strong>{mainQuestReadinessIssues.length === 0 ? 'Ready to publish' : 'Before publishing'}</strong>
+              {mainQuestReadinessIssues.length === 0
+                ? <span>Every published Level Quest has at least one Requirement.</span>
+                : <ul>{mainQuestReadinessIssues.map(issue => <li key={issue}>{issue}</li>)}</ul>}
+            </section>
             <div className="main-quest-editor__list">
               {[...mapSkills]
                 .sort((left, right) => (left.mainQuestLevel || Number.MAX_SAFE_INTEGER) - (right.mainQuestLevel || Number.MAX_SAFE_INTEGER))
                 .map(skill => <article key={skill._id} className={!skill.isActive ? 'is-draft' : ''}>
                   <div className="main-quest-editor__level"><span>LEVEL</span><strong>{skill.mainQuestLevel || '—'}</strong><small>→ {(skill.mainQuestLevel || 0) + 1}</small></div>
                   <div className="main-quest-editor__quest">
-                    <span>{starRoleLabel(skill.mapNodeRole)} · {skill.isActive ? 'Published' : 'Hidden'}</span>
+                    <span>{starRoleLabel(skill.mapNodeRole)} · {skill.isActive ? 'Published' : 'Draft'}</span>
                     <h3>{skill.constellationLabel || skill.title}</h3>
-                    <p>{skill.subQuests?.length || 0} requirements</p>
+                    <p className={(skill.subQuests || []).some(step => step.title.trim()) ? 'is-ready' : 'is-incomplete'}>{skill.subQuests?.length || 0} requirements · {(skill.subQuests || []).some(step => step.title.trim()) ? 'Ready' : 'Needs requirement'}</p>
                   </div>
                   <div className="main-quest-editor__actions">
                     <button type="button" className="constellation-admin-secondary" onClick={() => { setSelectedSkillId(skill._id); openSkillInfo(skill); }}><Pencil size={15} aria-hidden="true" /> Edit Quest</button>
+                    <button type="button" className="constellation-admin-secondary" disabled={busy} onClick={() => void updateMainQuestVisibility(skill)}>{skill.isActive ? 'Unpublish' : 'Publish'}</button>
                     <button type="button" className="constellation-admin-icon is-danger" aria-label={`Delete ${skill.title}`} onClick={() => void deleteStar(skill)}><Trash2 size={15} aria-hidden="true" /></button>
                   </div>
                 </article>)}
@@ -1268,7 +1337,7 @@ function ConstellationAdmin({
                 )}
               </div>
             ) : showInfoForm ? (
-              <div className="constellation-info-editor">
+              <div className="constellation-info-editor" onInput={() => setInfoDirty(true)}>
                 <div className="constellation-info-tabs" role="tablist" aria-label="Quest editor sections">
                   <button type="button" role="tab" aria-selected={infoTab === 'details'} onClick={() => setInfoTab('details')}>Details</button>
                   {(isMainConstellation || selectedSkill?.nodeType === 'quest' || selectedSkill?.externalQuestId || infoSteps.length > 0) && <button type="button" role="tab" aria-selected={infoTab === 'steps'} onClick={() => setInfoTab('steps')}>Quest steps <span>{infoSteps.length}</span></button>}
@@ -1283,6 +1352,7 @@ function ConstellationAdmin({
                         {isMainConstellation && <label className="constellation-info-level-field is-full">Main Quest level
                           <input aria-label="Main Quest level" type="number" min="1" step="1" value={infoMainQuestLevel} onChange={event => setInfoMainQuestLevel(Number(event.target.value))} />
                           <small>ผู้เล่นทำ Quest นี้ได้เมื่อ Level ปัจจุบันตรงกัน และจะขึ้น Level หลังได้รับอนุมัติ</small>
+                          {duplicateInfoLevelSkill && <strong className="constellation-info-inline-error" role="alert">Level นี้ถูกใช้โดย {duplicateInfoLevelSkill.title}</strong>}
                         </label>}
                         {!isMainConstellation && selectedMap?.scope === 'discipline' && <label className="constellation-info-level-field is-full">Topic level
                           <input aria-label="Topic level" type="number" min="1" step="1" value={infoTopicLevel} onChange={event => setInfoTopicLevel(Number(event.target.value))} />
@@ -1384,7 +1454,8 @@ function ConstellationAdmin({
             )}
             <footer>
               <button type="button" onClick={closeModal}>Cancel</button>
-              <button type="button" className="constellation-admin-primary" disabled={busy || (showImportForm ? importQuestIds.length === 0 || !importTopicMapId : showInfoForm ? !infoTitle.trim() : showStarForm ? !starTitle.trim() : !mapForm.name.trim())} onClick={showImportForm ? importStarMasterQuests : showInfoForm ? saveStarInfo : showStarForm ? createStar : showRenameMapForm ? renameDiscipline : saveMap}>{showImportForm ? busy ? `Importing ${importQuestIds.length}...` : `Import ${importQuestIds.length} ${importQuestIds.length === 1 ? 'quest' : 'quests'}` : showInfoForm ? 'Save' : showStarForm ? 'Create' : showRenameMapForm ? busy ? 'Saving...' : 'Save' : busy ? 'Creating...' : `Create ${rootLabelLower}`}</button>
+              {showInfoForm && infoDirty && <span className="constellation-admin-save-state" role="status">Unsaved changes</span>}
+              <button type="button" className="constellation-admin-primary" disabled={busy || (showImportForm ? importQuestIds.length === 0 || !importTopicMapId : showInfoForm ? !infoTitle.trim() || Boolean(duplicateInfoLevelSkill) || Boolean(isMainConstellation && selectedSkill?.isActive && validInfoRequirementCount === 0) : showStarForm ? !starTitle.trim() : !mapForm.name.trim())} onClick={showImportForm ? importStarMasterQuests : showInfoForm ? saveStarInfo : showStarForm ? createStar : showRenameMapForm ? renameDiscipline : saveMap}>{showImportForm ? busy ? `Importing ${importQuestIds.length}...` : `Import ${importQuestIds.length} ${importQuestIds.length === 1 ? 'quest' : 'quests'}` : showInfoForm ? busy ? 'Saving...' : isMainConstellation ? 'Save Quest' : 'Save' : showStarForm ? 'Create' : showRenameMapForm ? busy ? 'Saving...' : 'Save' : busy ? 'Creating...' : `Create ${rootLabelLower}`}</button>
             </footer>
           </div>
         </div>

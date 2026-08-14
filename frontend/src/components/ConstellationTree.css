@@ -365,12 +365,13 @@
 .constellation-node.is-pending { color: #7a5af8; }
 
 .constellation-node.is-level-gated .constellation-node-star,
-.constellation-node.is-level-gated .constellation-node-core,
-.constellation-node.is-level-gated .constellation-node-label,
-.constellation-node.is-level-gated .constellation-node-kicker {
+.constellation-node.is-level-gated .constellation-node-core {
   opacity: 0.42;
   filter: grayscale(0.7);
 }
+
+.constellation-node.is-level-gated .constellation-node-label { fill: var(--constellation-muted); opacity: 1; }
+.constellation-node.is-level-gated .constellation-node-kicker { opacity: 0.72; }
 
 .constellation-node-aura {
   fill: currentColor;
@@ -1044,4 +1045,95 @@
 @media (max-width: 600px) {
   .constellation-layout-view-controls { right: 8px; bottom: 8px; grid-template-columns: repeat(3, 44px); }
   .constellation-layout-view-controls button { width: 44px; height: 44px; }
+}
+
+/* Main Quest uses a compact level rail with theme-owned surfaces. */
+.is-main-quest-rail {
+  color: var(--constellation-text);
+  background: var(--constellation-bg);
+}
+
+.is-main-quest-rail .constellation-focus-header {
+  min-height: 66px;
+  padding: 10px 18px;
+  color: var(--constellation-text);
+  background: var(--constellation-surface);
+  border-color: var(--constellation-border);
+}
+
+.is-main-quest-rail .constellation-focus-header h2,
+.is-main-quest-rail .constellation-focus-header p { font-family: "Noto Sans Thai", sans-serif; }
+
+.main-quest-level-progress {
+  color: var(--constellation-text);
+  background: color-mix(in srgb, var(--constellation-available) 12%, var(--constellation-surface));
+  border-color: color-mix(in srgb, var(--constellation-available) 52%, var(--constellation-border));
+}
+
+.main-quest-level-progress span { color: var(--constellation-available); }
+.main-quest-level-progress small { color: var(--constellation-muted); font-size: 12px; }
+
+.main-quest-swipe-hint {
+  display: none;
+  margin: 0;
+  padding: 6px 14px;
+  color: var(--constellation-muted);
+  background: var(--constellation-surface);
+  border-bottom: 1px solid var(--constellation-border);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.is-main-quest-rail .constellation-canvas-wrap {
+  position: relative;
+  display: block;
+  height: 230px;
+  min-height: 230px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--constellation-bg);
+  scroll-snap-type: x proximity;
+  scrollbar-gutter: stable;
+}
+
+.is-main-quest-rail .constellation-canvas {
+  height: 230px;
+  min-width: 760px;
+  background: transparent;
+  cursor: default;
+  touch-action: pan-x;
+}
+
+.is-main-quest-rail .constellation-node { scroll-snap-align: center; }
+.is-main-quest-rail .constellation-node-label {
+  fill: var(--constellation-text);
+  stroke: var(--constellation-bg);
+  font: 700 17px/1.2 "Noto Sans Thai", sans-serif;
+}
+
+.is-main-quest-rail .constellation-node.is-level-gated .constellation-node-star,
+.is-main-quest-rail .constellation-node.is-level-gated .constellation-node-core { opacity: 0.5; filter: grayscale(0.55); }
+.is-main-quest-rail .constellation-node.is-level-gated .constellation-node-label { fill: var(--constellation-muted); opacity: 1; filter: none; }
+.is-main-quest-rail .constellation-node.is-level-gated .constellation-main-level { fill: var(--constellation-muted); opacity: 1; filter: none; }
+.is-main-quest-rail .constellation-node.is-star-lens-selected .constellation-node-aura { opacity: 0.28; }
+.is-main-quest-rail .constellation-node.is-star-lens-selected .constellation-node-star { stroke-width: 5; }
+.is-main-quest-rail .constellation-node:focus-visible .constellation-node-star { stroke-width: 5; }
+.is-main-quest-rail .constellation-node.is-unlocked { color: var(--constellation-unlocked); }
+.is-main-quest-rail .constellation-node.is-available { color: var(--constellation-available); }
+.is-main-quest-rail .constellation-node.is-pending { color: var(--constellation-capstone); }
+.is-main-quest-rail .constellation-node.is-locked { color: var(--constellation-locked); }
+.is-main-quest-rail .constellation-node.is-locked .constellation-role-ring { stroke: var(--constellation-locked); }
+
+@media (max-width: 768px) {
+  .is-main-quest-rail .constellation-focus-header { min-height: 82px; padding: 10px 12px; }
+  .is-main-quest-rail .constellation-focus-header h2 { font-size: 19px; }
+  .main-quest-level-progress { margin-left: auto; padding: 5px 8px; }
+  .main-quest-level-progress span { display: none; }
+  .main-quest-level-progress strong { font-size: 13px; }
+  .main-quest-level-progress small { font-size: 11px; }
+  .main-quest-swipe-hint { display: block; }
+  .is-main-quest-rail .constellation-canvas-wrap,
+  .is-main-quest-rail .constellation-canvas { height: 230px; min-height: 230px; flex-basis: 230px; }
+  .is-main-quest-rail .constellation-node-label { font-size: 20px; }
+  .is-main-quest-rail .constellation-node-hit-target { r: 76px; }
 }

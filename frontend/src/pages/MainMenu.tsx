@@ -192,6 +192,10 @@ function MainMenu() {
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [starLensSkill, setStarLensSkill] = useState<Skill | null>(null);
   const [starLensWorkflow, setStarLensWorkflow] = useState<'main' | 'skill'>('skill');
+  const [starLensClosing, setStarLensClosing] = useState(false);
+  const [starLensFocusOnOpen, setStarLensFocusOnOpen] = useState(false);
+  const starLensCloseTimerRef = useRef<number | null>(null);
+  const starLensOpenerRef = useRef<HTMLElement | SVGElement | null>(null);
   const [showSkillModal, setShowSkillModal] = useState(false);
   const skillModalRef = useRef<HTMLDivElement | null>(null);
   const skillModalOpenerRef = useRef<HTMLElement | null>(null);
@@ -199,6 +203,8 @@ function MainMenu() {
   const [completedQuestSteps, setCompletedQuestSteps] = useState<string[]>([]);
   const [completedQuests, setCompletedQuests] = useState<string[]>([]);
   const [pendingApprovalSkills, setPendingApprovalSkills] = useState<string[]>([]);
+  const [mainQuestFeedback, setMainQuestFeedback] = useState('');
+  const lastKnownLevelRef = useRef<number | null>(null);
   const [expandedQuestSteps, setExpandedQuestSteps] = useState<string[]>([]);
   const [expandedImage, setExpandedImage] = useState<{ src: string; alt: string } | null>(null);
   const [showApprovalRequestModal, setShowApprovalRequestModal] = useState(false);
@@ -212,6 +218,43 @@ function MainMenu() {
   });
   const guildDialogRef = useAccessibleDialog(showGuildSelection);
 
+  const closeStarLens = (immediate = false, restoreFocus = true) => {
+    if (starLensCloseTimerRef.current !== null) window.clearTimeout(starLensCloseTimerRef.current);
+    if (!starLensSkill) return;
+    const shouldRestoreFocus = restoreFocus && starLensFocusOnOpen;
+    const finish = () => {
+      setStarLensSkill(null);
+      setStarLensClosing(false);
+      starLensCloseTimerRef.current = null;
+      if (shouldRestoreFocus) {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => starLensOpenerRef.current?.focus());
+        });
+      }
+    };
+    if (immediate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      finish();
+      return;
+    }
+    setStarLensClosing(true);
+    starLensCloseTimerRef.current = window.setTimeout(finish, 150);
+  };
+
+  useEffect(() => () => {
+    if (starLensCloseTimerRef.current !== null) window.clearTimeout(starLensCloseTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!starLensSkill) return;
+    const handleOutsidePointer = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      if (!target || target.closest('.star-lens-dock, .star-lens-scrim, .is-main-quest-rail .constellation-node, .theme-toggle')) return;
+      closeStarLens();
+    };
+    document.addEventListener('pointerdown', handleOutsidePointer);
+    return () => document.removeEventListener('pointerdown', handleOutsidePointer);
+  }, [starLensSkill, starLensClosing, starLensFocusOnOpen]);
+
   useEffect(() => {
     checkAuth();
   }, []);
@@ -222,6 +265,21 @@ function MainMenu() {
       loadConstellationMaps();
     }
   }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const previousLevel = lastKnownLevelRef.current;
+    lastKnownLevelRef.current = user.level;
+    if (previousLevel !== null && user.level > previousLevel) {
+      setMainQuestFeedback(`Level ${user.level} unlocked · Your next Main Quest is ready.`);
+    }
+  }, [user?.level]);
+
+  useEffect(() => {
+    if (!mainQuestFeedback) return;
+    const timeout = window.setTimeout(() => setMainQuestFeedback(''), 4200);
+    return () => window.clearTimeout(timeout);
+  }, [mainQuestFeedback]);
 
   useEffect(() => {
     if (user) {
@@ -312,15 +370,23 @@ function MainMenu() {
       alert('อันนี้เป็นเนื้อหา Advance สอนแค่ใน Starway/Starlight น้าาา');
       return;
     }
+    closeStarLens(true, false);
     setStarLensWorkflow('skill');
     skillModalOpenerRef.current = document.activeElement as HTMLElement | null;
     setSelectedSkill(skill);
     setShowSkillModal(true);
   };
 
-  const handleMainTopicClick = (skill: Skill) => {
+  const handleMainTopicClick = (skill: Skill, interaction: 'pointer' | 'keyboard' = 'pointer', trigger?: SVGElement) => {
+    if (starLensCloseTimerRef.current !== null) window.clearTimeout(starLensCloseTimerRef.current);
+    starLensCloseTimerRef.current = null;
+    setStarLensClosing(false);
     setStarLensWorkflow('main');
-    setStarLensSkill(current => current?._id === skill._id ? null : skill);
+    if (starLensSkill?._id === skill._id) return;
+    starLensOpenerRef.current = trigger || document.activeElement as HTMLElement | SVGElement | null;
+    const shouldFocus = interaction === 'keyboard' || window.matchMedia('(max-width: 720px)').matches;
+    setStarLensFocusOnOpen(shouldFocus);
+    setStarLensSkill(skill);
   };
 
   const closeSkillModal = () => {
@@ -393,13 +459,12 @@ function MainMenu() {
   };
 
   const canUnlockSkill = (skill: Skill): boolean => {
+    if (isMainConstellationSkill(skill)) {
+      return Boolean(skill.mainQuestLevel && skill.mainQuestLevel === (user?.level || 1) && !pendingApprovalSkills.includes(skill._id));
+    }
     // Check if already unlocked
     if (unlockedSkills.includes(skill._id)) {
       return false;
-    }
-
-    if (isMainConstellationSkill(skill)) {
-      return Boolean(skill.mainQuestLevel && skill.mainQuestLevel === (user?.level || 1));
     }
 
     // Check prerequisites from prerequisites array
@@ -447,7 +512,7 @@ function MainMenu() {
         return;
       }
       setSelectedSkill(targetSkill);
-      setStarLensSkill(null);
+      closeStarLens(true, false);
       setShowApprovalRequestModal(true);
       return;
     }
@@ -481,7 +546,8 @@ function MainMenu() {
         message: approvalMessage.trim() || ''
       });
       if (response.data.success) {
-        alert('Approval request sent successfully!');
+        if (starLensWorkflow === 'main') setMainQuestFeedback('Main Quest submitted · Pending admin review.');
+        else alert('Approval request sent successfully!');
         setPendingApprovalSkills(current => current.includes(selectedSkill._id) ? current : [...current, selectedSkill._id]);
         setShowApprovalRequestModal(false);
         setApprovalMessage('');
@@ -945,7 +1011,8 @@ function MainMenu() {
   };
 
   const scrollToMainSection = (sectionId: string) => {
-    document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    document.getElementById(sectionId)?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' });
   };
 
   const getAvatarUrl = (userId = user?.id || '0', avatar: string | null = user?.avatar || null) => {
@@ -1176,6 +1243,7 @@ function MainMenu() {
       </div>
 
       <section className="main-panel main-constellation-panel" id="main-constellation" aria-label="Main Quest level-up path">
+        {mainQuestFeedback && <div className="main-quest-feedback" role="status" aria-live="polite">{mainQuestFeedback}</div>}
         <div className="panel-content">
           {constellationLoadState === 'loading' ? (
             <div className="constellation-load-state" role="status">Loading Main Quest path...</div>
@@ -1195,7 +1263,7 @@ function MainMenu() {
               pendingSkillIds={pendingApprovalSkills}
               userLevel={user?.level || 1}
               canUnlockSkill={(skill: ConstellationSkill) => canUnlockSkill(skill as Skill)}
-              onOpenSkill={(skill: ConstellationSkill) => handleMainTopicClick(skill as Skill)}
+              onOpenSkill={(skill: ConstellationSkill, interaction, trigger) => handleMainTopicClick(skill as Skill, interaction, trigger)}
               selectedSkillId={starLensSkill?._id}
               compactOverview
               directMap
@@ -1563,11 +1631,11 @@ function MainMenu() {
           <UsersRound aria-hidden="true" />
           <span>Guild</span>
         </button>
-        <button type="button" onClick={() => navigate('/inventory')}>
+        <button type="button" onClick={() => { closeStarLens(true, false); navigate('/inventory'); }}>
           <Backpack aria-hidden="true" />
           <span>Inventory</span>
         </button>
-        <button type="button" onClick={() => navigate('/shop')}>
+        <button type="button" onClick={() => { closeStarLens(true, false); navigate('/shop'); }}>
           <ShoppingCart aria-hidden="true" />
           <span>Shop</span>
         </button>
@@ -1585,7 +1653,9 @@ function MainMenu() {
           .filter(key => key.startsWith(`${starLensSkill._id}:`))
           .map(key => key.slice(starLensSkill._id.length + 1))}
         canUnlock={canUnlockSkill(starLensSkill)}
-        onClose={() => setStarLensSkill(null)}
+        closing={starLensClosing}
+        focusOnOpen={starLensFocusOnOpen}
+        onClose={() => closeStarLens()}
         onPrimaryAction={() => { void handleUnlockSkill(starLensSkill); }}
         onCompleteStep={stepId => { void handleCompleteQuestStep(starLensSkill, stepId); }}
       />}

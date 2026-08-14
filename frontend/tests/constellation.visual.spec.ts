@@ -97,11 +97,19 @@ const gameArtSkills = [
 ];
 
 const mainJourneySkills = [
-  skill('410000000000000000000001', 'Arrival', mainJourneyMap._id, 220, 450, 'topic-gateway', ['410000000000000000000002']),
-  skill('410000000000000000000002', 'First Trial', mainJourneyMap._id, 600, 450, 'topic-gateway', ['410000000000000000000003']),
-  skill('410000000000000000000003', 'Guild Path', mainJourneyMap._id, 980, 450, 'topic-gateway', ['410000000000000000000004']),
-  skill('410000000000000000000004', 'Starbound', mainJourneyMap._id, 1360, 450, 'topic-gateway')
-];
+  skill('410000000000000000000001', 'Arrival', mainJourneyMap._id, 220, 450, 'lesson', ['410000000000000000000002']),
+  skill('410000000000000000000002', 'First Trial', mainJourneyMap._id, 600, 450, 'lesson', ['410000000000000000000003']),
+  skill('410000000000000000000003', 'Guild Path', mainJourneyMap._id, 980, 450, 'lesson', ['410000000000000000000004']),
+  skill('410000000000000000000004', 'Starbound', mainJourneyMap._id, 1360, 450, 'capstone')
+].map((quest, index) => ({
+  ...quest,
+  mainQuestLevel: index + 1,
+  subQuests: [{
+    externalId: `main-requirement-${index + 1}`,
+    title: `Complete Level ${index + 1} evidence`,
+    description: 'Prepare your evidence before submitting for review.'
+  }]
+}));
 
 const mainTrialMap = {
   ...map('510000000000000000000001', 'First Trial Path', 'main-first-trial', 0),
@@ -429,7 +437,7 @@ test('player constellation states render without overflow', async ({ page }) => 
   await page.screenshot({ path: '/tmp/constellation-visual/player-overview.png', fullPage: true });
 
   await page.getByRole('button', { name: /Game Art/ }).click();
-  const disciplineCanvas = page.getByRole('application', { name: 'Game Art constellation map' });
+  const disciplineCanvas = page.getByRole('group', { name: 'Game Art constellation map' });
   await expect(disciplineCanvas.locator('.constellation-discipline-layer .constellation-node')).toHaveCount(5);
   await expect(disciplineCanvas.getByRole('button', { name: /2D Art/ })).toBeVisible();
   await expect(disciplineCanvas.getByRole('button', { name: /3D Modeling/ })).toBeVisible();
@@ -442,7 +450,7 @@ test('player constellation states render without overflow', async ({ page }) => 
   await page.screenshot({ path: '/tmp/constellation-visual/player-gateway-preview.png', fullPage: true });
 
   await page.getByRole('button', { name: 'View Path' }).click();
-  await expect(page.locator('.constellation-focus')).toHaveClass(/is-topic-active/);
+  await expect(page.locator('.skill-constellation-panel .constellation-focus')).toHaveClass(/is-topic-active/);
   await expect(page.locator('.constellation-topic-layer')).toBeVisible();
   await expect(page.locator('.constellation-anchor')).toHaveCSS('pointer-events', 'none');
   await page.waitForTimeout(650);
@@ -509,42 +517,66 @@ test('main menu keeps profile before Main and Skill constellations without chang
   expect(layout!.documentOverflow).toBeLessThanOrEqual(1);
   await expect(page.locator('.profile-section .nav-cards')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Admin Panel' })).toBeVisible();
-  await expect(page.locator('.main-constellation-panel .constellation-overview-item')).toHaveCount(1);
+  await expect(page.locator('.main-constellation-panel .is-main-quest-rail')).toHaveCount(1);
   const mainConstellationBox = await page.locator('.main-constellation-panel .constellation-shell').boundingBox();
   expect(mainConstellationBox).not.toBeNull();
   expect(mainConstellationBox!.height).toBeLessThan(330);
   const mainTopicTransforms = await page.locator('.main-constellation-panel .constellation-node')
     .evaluateAll(nodes => nodes.map(node => node.getAttribute('transform') || ''));
-  expect(mainTopicTransforms).toHaveLength(3);
+  expect(mainTopicTransforms).toHaveLength(4);
   const mainTopicY = mainTopicTransforms.map(transform => Number(transform.match(/translate\([^ ]+ ([^)]+)\)/)?.[1]));
   expect(new Set(mainTopicY).size).toBe(1);
-  const mainLineFit = await page.locator('.main-constellation-panel .constellation-overview-item').evaluate(item => {
-    const nodes = [...item.querySelectorAll('.constellation-node')].map(node => node.getBoundingClientRect());
-    const bounds = item.getBoundingClientRect();
+  const mainLineFit = await page.locator('.main-constellation-panel .constellation-canvas').evaluate(canvas => {
+    const nodes = [...canvas.querySelectorAll('.constellation-node')].map(node => node.getBoundingClientRect());
+    const bounds = canvas.getBoundingClientRect();
     return (Math.max(...nodes.map(node => node.right)) - Math.min(...nodes.map(node => node.left))) / bounds.width;
   });
-  expect(mainLineFit).toBeGreaterThan(0.7);
-  const directMainTopic = page.locator('.main-constellation-panel [data-skill-id="410000000000000000000002"]');
+  expect(mainLineFit).toBeGreaterThan(0.4);
+  expect(mainLineFit).toBeLessThan(0.9);
+  const currentMainQuest = page.locator('.main-constellation-panel [data-skill-id="410000000000000000000001"]');
+  await expect(currentMainQuest).toHaveClass(/is-available/);
+  await expect(currentMainQuest).toHaveAttribute('aria-expanded', 'false');
   const mainPanelBefore = await page.locator('.main-constellation-panel').boundingBox();
-  await directMainTopic.locator('.constellation-node-hit-target').click();
-  const starLens = page.getByLabel('First Trial quest details');
+  await currentMainQuest.locator('.constellation-node-hit-target').click();
+  const starLens = page.getByLabel('Arrival quest details');
   await expect(starLens).toBeVisible();
   await expect(starLens).toHaveCSS('position', 'fixed');
-  await expect(starLens.getByRole('heading', { name: 'First Trial' })).toBeVisible();
-  await expect(page.getByRole('application', { name: 'First Trial Path constellation map' })).toHaveCount(0);
-  await expect(directMainTopic).toHaveClass(/is-star-lens-selected/);
+  await expect(starLens.getByRole('heading', { name: 'Arrival' })).toBeVisible();
+  await expect(page.getByRole('application')).toHaveCount(0);
+  await expect(page.getByRole('group', { name: 'Main Journey level-up quest path' })).toBeVisible();
+  await expect(currentMainQuest).toHaveClass(/is-star-lens-selected/);
+  await expect(currentMainQuest).toHaveAttribute('aria-controls', 'star-lens-dock');
+  await expect(currentMainQuest).toHaveAttribute('aria-expanded', 'true');
+  await page.waitForTimeout(220);
+  const starLensBox = await starLens.boundingBox();
+  expect(starLensBox).not.toBeNull();
+  expect(starLensBox!.x).toBeGreaterThan(700);
   await page.screenshot({ path: '/tmp/constellation-visual/main-star-lens.png', fullPage: true });
   const mainPanelAfter = await page.locator('.main-constellation-panel').boundingBox();
   expect(mainPanelAfter!.height).toBeCloseTo(mainPanelBefore!.height, 0);
-  expect(await starLens.evaluate(element => Number(getComputedStyle(element).zIndex))).toBeGreaterThan(1000);
-  await starLens.getByRole('button', { name: 'Minimize quest dock' }).click();
-  await expect(starLens).toHaveClass(/is-minimized/);
-  await starLens.getByRole('button', { name: 'Expand quest dock' }).click();
+  const lensZIndex = await starLens.evaluate(element => Number(getComputedStyle(element).zIndex));
+  expect(lensZIndex).toBeGreaterThan(900);
+  expect(lensZIndex).toBeLessThan(1000);
+  await page.getByRole('button', { name: /Switch to .* theme/ }).click();
+  await expect(starLens).toBeVisible();
+  await currentMainQuest.locator('.constellation-node-hit-target').click();
+  await expect(starLens).toBeVisible();
+  await starLens.evaluate(element => { element.setAttribute('data-test-shell', 'stable'); });
+  await page.locator('.main-constellation-panel [data-skill-id="410000000000000000000002"] .constellation-node-hit-target').click();
+  const replacementLens = page.getByLabel('First Trial quest details');
+  await expect(replacementLens).toBeVisible();
+  await expect(replacementLens).toHaveAttribute('data-test-shell', 'stable');
+  await replacementLens.getByRole('button', { name: 'Minimize quest dock' }).click();
+  await expect(replacementLens).toHaveClass(/is-minimized/);
+  await replacementLens.getByRole('button', { name: 'Expand quest dock' }).click();
   await page.locator('.main-constellation-panel [data-skill-id="410000000000000000000003"] .constellation-node-hit-target').click();
   await expect(page.getByLabel('Guild Path quest details')).toBeVisible();
+  await page.locator('.topbar-brand').click({ position: { x: 3, y: 3 } });
+  await expect(page.locator('#star-lens-dock')).toHaveCount(0);
+  await page.locator('.main-constellation-panel [data-skill-id="410000000000000000000003"] .constellation-node-hit-target').click();
   await page.keyboard.press('Escape');
-  await expect(starLens).toHaveCount(0);
-  await expect(directMainTopic).not.toHaveClass(/is-star-lens-selected/);
+  await expect(page.locator('#star-lens-dock')).toHaveCount(0);
+  await expect(currentMainQuest).not.toHaveClass(/is-star-lens-selected/);
   await expect(page.locator('.player-dock button span')).toHaveText([
     'Constellations',
     'Guild',
@@ -564,6 +596,35 @@ test('main menu keeps profile before Main and Skill constellations without chang
   })).toBeLessThan(40);
 });
 
+test('mobile Main Quest opens Star Lens as a focus-contained bottom sheet', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installApiFixtures(page);
+  await page.goto('mainmenu');
+
+  const currentQuest = page.locator('.main-constellation-panel [data-skill-id="410000000000000000000001"]');
+  await currentQuest.locator('.constellation-node-hit-target').click();
+  const sheet = page.getByRole('dialog', { name: 'Arrival quest details' });
+  await expect(sheet).toBeVisible();
+  await expect(sheet.getByRole('button', { name: 'Close quest dock' })).toBeFocused();
+
+  await expect.poll(async () => {
+    const box = await sheet.boundingBox();
+    return box ? Math.abs((box.y + box.height) - 844) : 999;
+  }).toBeLessThanOrEqual(1);
+  const bounds = await sheet.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.width).toBeCloseTo(390, 0);
+
+  await page.keyboard.press('Shift+Tab');
+  await expect.poll(() => page.evaluate(() => Boolean(document.activeElement?.closest('#star-lens-dock')))).toBe(true);
+  await page.keyboard.press('Tab');
+  await expect.poll(() => page.evaluate(() => Boolean(document.activeElement?.closest('#star-lens-dock')))).toBe(true);
+
+  await page.locator('.star-lens-scrim').click({ position: { x: 8, y: 8 } });
+  await expect(page.locator('#star-lens-dock')).toHaveCount(0);
+  await expect(currentQuest).toBeFocused();
+});
+
 test('login dark theme preserves gateway contrast', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('gugame-theme', 'dark'));
   await page.goto('login');
@@ -579,12 +640,23 @@ test('dark theme keeps player and editor surfaces consistently dark', async ({ p
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await page.screenshot({ path: '/tmp/constellation-visual/dark-player-overview.png', fullPage: true });
 
+  await page.locator('.main-constellation-panel [data-skill-id="410000000000000000000001"] .constellation-node-hit-target').click();
+  await expect(page.getByLabel('Arrival quest details')).toBeVisible();
+  await page.waitForTimeout(220);
+  await expect(page.getByLabel('Arrival quest details')).toHaveCSS('opacity', '1');
+  await expect(page.getByLabel('Arrival quest details').locator('.star-lens-dock__body')).toHaveCSS('opacity', '1');
+  await page.getByLabel('Arrival quest details').screenshot({ path: '/tmp/constellation-visual/dark-main-quest-star-lens-crop.png' });
+  await page.screenshot({ path: '/tmp/constellation-visual/dark-main-quest-star-lens.png', fullPage: true });
+
   await page.getByRole('button', { name: /Game Art/ }).click();
   await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).hover();
   await expect(page.getByRole('button', { name: 'View Path' })).toBeVisible();
   await page.screenshot({ path: '/tmp/constellation-visual/dark-player-preview.png', fullPage: true });
 
   await page.goto('admin');
+  await page.getByRole('button', { name: 'Main Quest' }).click();
+  await expect(page.getByLabel('Main Quest Path editor')).toBeVisible();
+  await page.screenshot({ path: '/tmp/constellation-visual/dark-main-quest-editor.png', fullPage: true });
   await page.getByRole('button', { name: /Constellation Editor/ }).click();
   await page.getByLabel('Choose discipline').selectOption({ label: 'Game Art' });
   await page.screenshot({ path: '/tmp/constellation-visual/dark-admin-workspace.png', fullPage: true });
@@ -627,7 +699,7 @@ test('player topic refreshes imported quests when the window regains focus', asy
   try {
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await expect(page.locator('.constellation-topic-layer').getByText('Newly Imported Quest', { exact: true })).toBeVisible();
-    await expect(page.locator('.constellation-focus')).toHaveClass(/is-topic-active/);
+    await expect(page.locator('.skill-constellation-panel .constellation-focus')).toHaveClass(/is-topic-active/);
   } finally {
     topicSkills.splice(topicSkills.findIndex(candidate => candidate._id === importedQuest._id), 1);
     allSkills.splice(allSkills.findIndex(candidate => candidate._id === importedQuest._id), 1);
@@ -641,13 +713,12 @@ test('player sees next-level topics but cannot enter them early', async ({ page 
     await installApiFixtures(page);
     await page.goto('mainmenu');
     await page.getByRole('button', { name: /Game Art/ }).click();
-    const canvas = page.getByRole('application', { name: 'Game Art constellation map' });
+    const canvas = page.getByRole('group', { name: 'Game Art constellation map' });
     const gatedTopic = canvas.locator('[data-skill-id="400000000000000000000003"]');
     await expect(gatedTopic).toHaveClass(/is-level-gated/);
-    await expect(gatedTopic.locator('.constellation-level-fog')).toHaveCount(1);
-    await expect(gatedTopic.locator('.constellation-level-fog')).toHaveCSS('pointer-events', 'none');
-    await expect(gatedTopic.locator('.constellation-fog-back')).toHaveCSS('animation-name', 'constellation-fog-drift-back');
-    await page.screenshot({ path: '/tmp/constellation-visual/level-gated-game-fog.png', fullPage: true });
+    await expect(gatedTopic.locator('.constellation-level-fog')).toHaveCount(0);
+    await expect(gatedTopic.locator('.constellation-node-label')).toHaveCSS('opacity', '1');
+    await page.screenshot({ path: '/tmp/constellation-visual/level-gated-without-fog.png', fullPage: true });
     await canvas.getByRole('button', { name: /Materials/ }).click();
     const preview = page.getByLabel('Materials path preview');
     await expect(preview).toContainText('Reach Level 2 to enter this topic.');
@@ -710,7 +781,7 @@ test('player can explore a constellation with keyboard, camera controls, and bro
   await page.goto('mainmenu');
   await page.getByRole('button', { name: /Game Art/ }).click();
 
-  const canvas = page.getByRole('application', { name: 'Game Art constellation map' });
+  const canvas = page.getByRole('group', { name: 'Game Art constellation map' });
   const camera = canvas.locator('.constellation-camera');
   await expect(camera).toHaveAttribute('transform', 'translate(0 0) scale(1)');
 
@@ -744,7 +815,7 @@ test('player can explore a constellation with keyboard, camera controls, and bro
   await expect(page.locator('.constellation-info-panel')).toBeVisible();
   await modelingNode.press('Enter');
   await page.getByRole('button', { name: 'View Path' }).click();
-  await expect(page.locator('.constellation-focus')).toHaveClass(/is-topic-active/);
+  await expect(page.locator('.skill-constellation-panel .constellation-focus')).toHaveClass(/is-topic-active/);
   await expect(page.locator('.constellation-topic-layer')).toHaveCSS('transition-duration', /0\.36s/);
 
   await page.getByRole('button', { name: 'Back' }).click();
@@ -755,7 +826,7 @@ test('player can explore a constellation with keyboard, camera controls, and bro
   await page.goForward();
   await expect(page.getByRole('heading', { name: 'Game Art' })).toBeVisible();
   await page.goForward();
-  await expect(page.locator('.constellation-focus')).toHaveClass(/is-topic-active/);
+  await expect(page.locator('.skill-constellation-panel .constellation-focus')).toHaveClass(/is-topic-active/);
   await expect(page.getByRole('heading', { name: '3D Modeling' })).toBeVisible();
 });
 
@@ -1166,10 +1237,12 @@ test('admin keeps new maps draft and exposes publish and delete actions', async 
   expect(mapDeleteCascades).toBe(true);
 });
 
-test('admin creates Main Constellation data in its separate editor', async ({ page }) => {
+test('admin creates Main Quest data in its separate editor', async ({ page }) => {
   let createdMap: Record<string, unknown> | undefined;
   const mainConstellationType = mainJourneyMap.constellationType;
+  const mainTrialConstellationType = mainTrialMap.constellationType;
   delete (mainJourneyMap as Partial<typeof mainJourneyMap>).constellationType;
+  delete (mainTrialMap as Partial<typeof mainTrialMap>).constellationType;
   try {
   await installApiFixtures(
     page,
@@ -1179,14 +1252,14 @@ test('admin creates Main Constellation data in its separate editor', async ({ pa
     payload => { createdMap = payload; }
   );
   await page.goto('admin');
-  await page.getByRole('button', { name: 'Main Constellation' }).click();
+  await page.getByRole('button', { name: 'Main Quest' }).click();
 
-  await expect(page.getByLabel('Main Constellation editor')).toBeVisible();
-  await expect(page.getByText('No main constellations yet')).toBeVisible();
-  await page.getByRole('button', { name: 'Create first main constellation' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Create main constellation' });
-  await dialog.getByLabel('Main Constellation name').fill('Core Journey');
-  await dialog.getByRole('button', { name: 'Create main constellation' }).click();
+  await expect(page.getByLabel('Main Quest Path editor')).toBeVisible();
+  await expect(page.getByText('No main quest paths yet')).toBeVisible();
+  await page.getByRole('button', { name: 'Create first main quest path' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Create main quest path' });
+  await dialog.getByLabel('Main Quest Path name').fill('Core Journey');
+  await dialog.getByRole('button', { name: 'Create main quest path' }).click();
 
   await expect.poll(() => createdMap?.name).toBe('Core Journey');
   expect(createdMap?.constellationType).toBe('main');
@@ -1194,7 +1267,40 @@ test('admin creates Main Constellation data in its separate editor', async ({ pa
   expect(createdMap?.isActive).toBe(false);
   } finally {
     mainJourneyMap.constellationType = mainConstellationType;
+    mainTrialMap.constellationType = mainTrialConstellationType;
   }
+});
+
+test('admin creates a Main Quest draft and can add its first Requirement immediately', async ({ page }) => {
+  let createdQuest: Record<string, unknown> | undefined;
+  let updatedQuest: Record<string, any> | undefined;
+  await installApiFixtures(
+    page,
+    undefined,
+    payload => { createdQuest = payload; },
+    (_skillId, payload) => { updatedQuest = payload; }
+  );
+  await page.goto('admin');
+  await page.getByRole('button', { name: 'Main Quest' }).click();
+  await page.getByRole('button', { name: 'Create Level Quest' }).click();
+
+  const createDialog = page.getByRole('dialog', { name: 'Create Main Quest' });
+  await createDialog.getByLabel('Main Quest name').fill('Level Five Trial');
+  await createDialog.getByRole('button', { name: 'Create', exact: true }).click();
+  await expect.poll(() => createdQuest?.title).toBe('Level Five Trial');
+  expect(createdQuest?.mainQuestLevel).toBe(5);
+  expect(createdQuest?.isActive).toBe(false);
+
+  const editDialog = page.getByRole('dialog', { name: 'Edit quest' });
+  await expect(editDialog.getByRole('tab', { name: /Quest steps/ })).toHaveAttribute('aria-selected', 'true');
+  await editDialog.getByRole('button', { name: 'Add step' }).click();
+  await editDialog.getByLabel('Step 1 title').fill('Submit Level Five evidence');
+  await editDialog.getByLabel('Step 1 content 1 text').fill('Attach the work for admin review.');
+  await expect(editDialog.getByText('Unsaved changes')).toBeVisible();
+  await editDialog.getByRole('button', { name: 'Save Quest' }).click();
+
+  await expect.poll(() => updatedQuest?.subQuests?.length).toBe(1);
+  expect(updatedQuest?.subQuests[0].title).toBe('Submit Level Five evidence');
 });
 
 test('admin renames a discipline without changing its structure', async ({ page }) => {
@@ -1665,7 +1771,8 @@ test('@audit mobile preview preserves spatial context and touch controls', async
   await page.getByRole('button', { name: /Game Art/ }).click();
 
   const backBox = await page.getByRole('button', { name: 'Back' }).boundingBox();
-  const zoomBoxes = await page.locator('.constellation-camera-controls button').evaluateAll(buttons => (
+  const skillPanel = page.locator('.skill-constellation-panel');
+  const zoomBoxes = await skillPanel.locator('.constellation-camera-controls button').evaluateAll(buttons => (
     buttons.map(button => {
       const bounds = button.getBoundingClientRect();
       return { width: bounds.width, height: bounds.height };
@@ -1690,7 +1797,7 @@ test('@audit mobile preview preserves spatial context and touch controls', async
       * Math.max(0, Math.min(nodeBox.y + nodeBox.height, panelBox.y + panelBox.height) - Math.max(nodeBox.y, panelBox.y))
     : 0;
   const nodeArea = nodeBox ? nodeBox.width * nodeBox.height : 0;
-  const cameraControlsDisplay = await page.locator('.constellation-camera-controls').evaluate(element => getComputedStyle(element).display);
+  const cameraControlsDisplay = await skillPanel.locator('.constellation-camera-controls').evaluate(element => getComputedStyle(element).display);
   const panelButtons = await page.locator('.constellation-info-panel button').evaluateAll(buttons => buttons.map(button => ({
     text: button.textContent?.trim() || '',
     ariaLabel: button.getAttribute('aria-label') || ''
@@ -1732,7 +1839,7 @@ test('@audit locked visuals remain readable and 200 percent zoom keeps navigatio
 
   await page.evaluate(() => { document.body.style.zoom = '1'; });
   await page.getByRole('button', { name: /Game Art/ }).click();
-  const contrast = await page.locator('.constellation-focus').evaluate(shell => {
+  const contrast = await page.locator('.skill-constellation-panel .constellation-focus').evaluate(shell => {
     const parse = (value: string) => (value.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
     const luminance = (rgb: number[]) => rgb
       .map(channel => channel / 255)
@@ -1753,7 +1860,7 @@ test('@audit camera manipulation, restoration, and reduced motion', async ({ pag
   await skillConstellations.scrollIntoViewIfNeeded();
   await skillConstellations.getByRole('button', { name: /Game Art/ }).click();
 
-  const canvas = page.getByRole('application', { name: 'Game Art constellation map' });
+  const canvas = page.getByRole('group', { name: 'Game Art constellation map' });
   const camera = canvas.locator('.constellation-camera');
   const modelingNode = canvas.locator('.constellation-node').filter({ hasText: '3D Modeling' });
   const beforeZoom = await modelingNode.boundingBox();
@@ -1781,7 +1888,7 @@ test('@audit camera manipulation, restoration, and reduced motion', async ({ pag
 
   await modelingNode.focus();
   await page.getByRole('button', { name: 'View Path' }).click();
-  await expect(page.locator('.constellation-focus')).toHaveClass(/is-topic-active/);
+  await expect(page.locator('.skill-constellation-panel .constellation-focus')).toHaveClass(/is-topic-active/);
   await page.getByRole('button', { name: 'Back' }).click();
   await expect(page.getByRole('heading', { name: 'Game Art' })).toBeVisible();
   const disciplineCameraAfterBack = await camera.getAttribute('transform');
@@ -1826,7 +1933,7 @@ test('@audit keyboard semantics, focus restoration, and main navigation', async 
   })));
   const duplicateConstellationHeadings = await page.getByRole('heading', { name: 'Skill Constellations' }).count();
   await page.getByRole('button', { name: /Game Art/ }).click();
-  const modelingNode = page.getByRole('application', { name: 'Game Art constellation map' }).getByRole('button', { name: /3D Modeling/ });
+  const modelingNode = page.getByRole('group', { name: 'Game Art constellation map' }).getByRole('button', { name: /3D Modeling/ });
   const nodeAccessibleName = await modelingNode.getAttribute('aria-label');
   await modelingNode.focus();
   await modelingNode.press('Enter');
@@ -2008,14 +2115,15 @@ test('@audit topic viewport owns its focused map geometry', async ({ page, brows
     await page.getByRole('button', { name: 'View Path' }).click();
     await expect(page.locator('.constellation-topic-layer')).toBeVisible();
 
-    const canvas = page.locator('.constellation-canvas');
-    const topicTransform = await page.locator('.constellation-topic-layer').evaluate(node => node.parentElement?.getAttribute('transform'));
+    const skillPanel = page.locator('.skill-constellation-panel');
+    const canvas = skillPanel.locator('.constellation-canvas');
+    const topicTransform = await skillPanel.locator('.constellation-topic-layer').evaluate(node => node.parentElement?.getAttribute('transform'));
     const viewBox = await canvas.getAttribute('viewBox');
-    const cameraBeforeZoomOut = await page.locator('.constellation-camera').getAttribute('transform');
+    const cameraBeforeZoomOut = await skillPanel.locator('.constellation-camera').getAttribute('transform');
     await page.getByRole('button', { name: 'Zoom out' }).click();
     await page.getByRole('button', { name: 'Zoom out' }).click();
     await page.getByRole('button', { name: 'Zoom out' }).click();
-    const cameraAfterZoomOut = await page.locator('.constellation-camera').getAttribute('transform');
+    const cameraAfterZoomOut = await skillPanel.locator('.constellation-camera').getAttribute('transform');
 
     await recordAudit(browserName, 'topic-viewport-ownership', {
       disciplineViewport: gameArtMap.viewport,
@@ -2213,15 +2321,16 @@ test('@audit topic loading blocks conflicting map manipulation', async ({ page, 
   await page.goto('mainmenu');
   await page.getByRole('button', { name: /Game Art/ }).click();
   await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
-  const camera = page.locator('.constellation-camera');
+  const skillPanel = page.locator('.skill-constellation-panel');
+  const camera = skillPanel.locator('.constellation-camera');
   const before = await camera.getAttribute('transform');
   await page.getByRole('button', { name: 'View Path' }).click();
   await expect(page.getByRole('button', { name: 'Opening...' })).toBeVisible();
-  const controlsVisible = await page.locator('.constellation-camera-controls').isVisible();
-  const controlsDisabled = await page.locator('.constellation-camera-controls button').evaluateAll(buttons => (
+  const controlsVisible = await skillPanel.locator('.constellation-camera-controls').isVisible();
+  const controlsDisabled = await skillPanel.locator('.constellation-camera-controls button').evaluateAll(buttons => (
     buttons.every(button => (button as HTMLButtonElement).disabled)
   ));
-  await page.locator('.constellation-canvas').dispatchEvent('wheel', { deltaY: -360, clientX: 500, clientY: 500 });
+  await skillPanel.locator('.constellation-canvas').dispatchEvent('wheel', { deltaY: -360, clientX: 500, clientY: 500 });
   const during = await camera.getAttribute('transform');
   await expect(page.locator('.constellation-topic-layer')).toBeVisible();
 

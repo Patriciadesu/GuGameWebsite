@@ -45,6 +45,7 @@ import {
   assertSkillCanBeDeleted,
   assertRoleAllowedForScope,
   ConstellationOperationError,
+  mainQuestReadinessIssues,
   normalizeConstellationLayout,
   validateConstellationMapContents,
   validateConstellationMapLinkage,
@@ -2334,6 +2335,29 @@ app.post('/api/admin/quest-tree/import', requireSuperAdmin, async (req: Request,
 });
 
 // List constellation maps. Regular players only receive active maps.
+const assertMainQuestMapReady = async (map: { _id: unknown; constellationType?: string; isActive?: boolean }) => {
+  if (map.constellationType !== 'main' || !map.isActive) return;
+  const quests = await Skill.find({ constellationMapId: map._id, isActive: true })
+    .select('title mainQuestLevel isActive subQuests.title')
+    .lean();
+  const issues = mainQuestReadinessIssues(quests);
+  if (issues.length > 0) throw new ConstellationOperationError(issues[0], 409);
+};
+
+const assertPublishedMainQuestReady = async (skill: {
+  title?: string;
+  constellationMapId?: unknown;
+  mainQuestLevel?: number;
+  isActive?: boolean;
+  subQuests?: Array<{ title?: string }>;
+}) => {
+  if (!skill.constellationMapId || !skill.isActive) return;
+  const map = await ConstellationMap.findById(skill.constellationMapId).select('constellationType').lean();
+  if (map?.constellationType !== 'main') return;
+  const issues = mainQuestReadinessIssues([skill]);
+  if (issues.length > 0) throw new ConstellationOperationError(issues[0], 409);
+};
+
 app.get('/api/constellation-maps', requireAuth, async (req: Request, res: Response) => {
   try {
     const scope = typeof req.query.scope === 'string' ? req.query.scope : undefined;
@@ -2452,6 +2476,7 @@ app.post('/api/constellation-maps', requireAdmin, async (req: Request, res: Resp
       parentMapId: map.parentMapId,
       gatewaySkillId: map.gatewaySkillId
     });
+    await assertMainQuestMapReady(map);
     await map.save();
     invalidateConstellationMapCache();
     res.status(201).json({ success: true, map });
@@ -2478,6 +2503,7 @@ app.patch('/api/constellation-maps/:id', requireAdmin, async (req: Request, res:
       parentMapId: map.parentMapId,
       gatewaySkillId: map.gatewaySkillId
     }, map._id.toString());
+    await assertMainQuestMapReady(map);
     await map.save();
     invalidateConstellationMapCache();
     res.json({ success: true, map });
@@ -2616,7 +2642,7 @@ app.get('/api/skills/:id', requireAuth, async (req: Request, res: Response) => {
 // Constellation star editing is available to admins and super-admins.
 app.post('/api/skills', requireConstellationSkillEditor, async (req: Request, res: Response) => {
   try {
-    const { title, description, cost, nextQuestCost, previewClip, contentYouTube, contentGoogleDrive, layer, position, treePosition, constellationPosition, prerequisites, nodeColor, subQuests, minAP, maxAP, isAdvancedLocked, constellationMapId, constellationLabel, mainQuestLevel, mapNodeRole, nodePreview } = req.body;
+    const { title, description, cost, nextQuestCost, previewClip, contentYouTube, contentGoogleDrive, layer, position, treePosition, constellationPosition, prerequisites, nodeColor, subQuests, minAP, maxAP, isActive, isAdvancedLocked, constellationMapId, constellationLabel, mainQuestLevel, mapNodeRole, nodePreview } = req.body;
 
     if (!title || !description || cost === undefined) {
       return res.status(400).json({ error: 'Missing required fields: title, description, cost' });
@@ -2665,6 +2691,7 @@ app.post('/api/skills', requireConstellationSkillEditor, async (req: Request, re
       mainQuestLevel: mainQuestLevel ?? undefined,
       mapNodeRole: mapNodeRole || 'lesson',
       nodePreview,
+      isActive: isActive !== undefined ? isActive === true : true,
       isAdvancedLocked: isAdvancedLocked === true,
       prerequisites: prerequisites || [],
       connections: [],
@@ -2680,6 +2707,7 @@ app.post('/api/skills', requireConstellationSkillEditor, async (req: Request, re
       mapNodeRole: skill.mapNodeRole,
       mainQuestLevel: skill.mainQuestLevel
     });
+    await assertPublishedMainQuestReady(skill);
     await skill.save();
     invalidateSkillCaches();
     res.json({ success: true, skill });
@@ -2785,6 +2813,7 @@ app.put('/api/skills/:id', requireConstellationSkillEditor, async (req: Request,
       mapNodeRole: skill.mapNodeRole,
       mainQuestLevel: skill.mainQuestLevel
     });
+    await assertPublishedMainQuestReady(skill);
     if (connections !== undefined || constellationMapId !== undefined) {
       await assertValidConnectionTargets(
         skill._id.toString(),
@@ -2852,6 +2881,14 @@ app.patch('/api/constellation-maps/:id/skills/batch', requireConstellationSkillE
       value = value.trim() || undefined;
     } else if (typeof value !== 'boolean') {
       throw new ConstellationOperationError(`${field} must be a boolean`);
+    }
+
+    if (map.constellationType === 'main' && field === 'isActive' && value === true) {
+      const quests = await Skill.find({ _id: { $in: skillIds }, constellationMapId: map._id })
+        .select('title mainQuestLevel isActive subQuests.title')
+        .lean();
+      const issues = mainQuestReadinessIssues(quests.map(quest => ({ ...quest, isActive: true })));
+      if (issues.length > 0) throw new ConstellationOperationError(issues[0], 409);
     }
 
     const update = value === undefined ? { $unset: { [field]: 1 } } : { $set: { [field]: value } };
@@ -3503,7 +3540,7 @@ app.post('/api/skills/:id/approval-request', requireAuth, async (req: Request, r
     }
 
     // Check if already unlocked
-    if (unlockedSkills.includes(skillId)) {
+    if (!isMainQuest && unlockedSkills.includes(skillId)) {
       return res.status(400).json({ error: 'Skill already unlocked' });
     }
 

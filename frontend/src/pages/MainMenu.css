@@ -2774,3 +2774,23 @@ body {
   .guild-selection-modal { width: calc(100% - 16px); max-width: none !important; max-height: calc(100dvh - 16px) !important; padding: 18px !important; border-radius: 4px !important; }
   .guild-selection-actions { position: sticky; bottom: -18px; margin: 0 -18px -18px; padding: 12px 18px; background: #ffffff; border-top: 1px solid #bdcbd7; }
 }
+
+/* Compact desktop chrome reserves the viewport for the learning map. */
+@media (min-width: 901px) {
+  .main-container { padding: 8px 14px 14px; gap: 8px; }
+  .topbar { min-height: 52px; padding: 6px 14px; gap: 14px; }
+  .topbar-brand { min-width: 200px; gap: 10px; }
+  .topbar-sigil { width: 30px; height: 30px; flex-basis: 30px; }
+  .topbar-sigil::before,
+  .topbar-sigil::after { top: 14px; left: 6px; width: 16px; }
+  .topbar-title { font-size: 22px; }
+  .topbar-kicker { margin-top: 3px; font-size: 8px; }
+  .topbar-hud { gap: 10px; font-size: 10px; }
+  .panel-header { min-height: 36px; padding: 0 10px 0 14px; }
+  .panel-title { font-size: 10px; }
+  .admin-panel-btn,
+  .logout-btn { min-height: 28px; padding-inline: 10px; font-size: 10px; }
+  .player-dock { bottom: 6px; width: min(560px, calc(100% - 24px)); min-height: 48px; padding: 4px; }
+  .player-dock button { min-height: 38px; padding: 3px 14px; font-size: 10px; }
+  .player-dock button svg { width: 15px; height: 15px; }
+}

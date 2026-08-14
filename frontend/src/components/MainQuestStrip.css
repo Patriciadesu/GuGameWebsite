@@ -114,6 +114,23 @@
   .main-quest-strip__step { scroll-snap-align: center; }
 }
 
+@media (min-width: 901px) {
+  .main-quest-strip { min-height: 104px; }
+  .main-quest-strip__summary { padding: 10px 14px; gap: 12px; }
+  .main-quest-strip__eyebrow { margin-bottom: 2px; font-size: 10px; }
+  .main-quest-strip__title-row h2 { font-size: 18px; }
+  .main-quest-strip__status { padding: 2px 6px; font-size: 10px; }
+  .main-quest-strip__summary p { margin-top: 3px; font-size: 11px; }
+  .main-quest-strip__open { min-height: 34px; padding: 7px 10px; font-size: 11px; }
+  .main-quest-strip__track { padding: 9px 16px 7px; }
+  .main-quest-strip__marker { width: 40px; height: 40px; }
+  .main-quest-strip__marker svg { width: 15px; height: 15px; }
+  .main-quest-strip__step:not(:last-child)::after { top: 19px; }
+  .main-quest-strip__step-button { gap: 3px; }
+  .main-quest-strip__step-copy strong { font-size: 11px; }
+  .main-quest-strip__step-copy small { font-size: 9px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .main-quest-strip__step-button:hover .main-quest-strip__marker,
   .main-quest-strip__step-button:focus-visible .main-quest-strip__marker { transform: none; }

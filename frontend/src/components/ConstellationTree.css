@@ -1158,3 +1158,22 @@
     min-height: 0;
   }
 }
+
+@media (min-width: 901px) {
+  .skill-constellation-panel .constellation-shell {
+    height: min(760px, calc(100dvh - 300px), calc(56.25vw - 21px));
+  }
+
+  .skill-constellation-panel .constellation-heading,
+  .skill-constellation-panel .constellation-focus-header {
+    min-height: 64px;
+    padding: 10px 16px;
+  }
+
+  .skill-constellation-panel .constellation-heading h2,
+  .skill-constellation-panel .constellation-focus-header h2 { font-size: 24px; }
+  .skill-constellation-panel .constellation-heading p,
+  .skill-constellation-panel .constellation-focus-header p { font-size: 10px; }
+  .skill-constellation-panel .constellation-back { width: 36px; height: 36px; flex-basis: 36px; }
+  .skill-constellation-panel .constellation-legend { gap: 7px 12px; font-size: 11px; }
+}

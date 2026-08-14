@@ -502,6 +502,12 @@ test('main menu keeps Main Quest compact and exposes the Skill Constellation abo
     return {
       dom: [children.indexOf(topbar), children.indexOf(main), children.indexOf(skill)],
       top: [topbar, main, skill].map(element => element.getBoundingClientRect().top),
+      heights: {
+        topbar: topbar.getBoundingClientRect().height,
+        main: main.getBoundingClientRect().height,
+        panelHeader: skill.querySelector('.panel-header')?.getBoundingClientRect().height || 0,
+        dock: dock.getBoundingClientRect().height
+      },
       documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       viewportHeight: window.innerHeight,
       skillBottom: skill.getBoundingClientRect().bottom
@@ -512,9 +518,13 @@ test('main menu keeps Main Quest compact and exposes the Skill Constellation abo
   expect(layout!.dom[1]).toBeLessThan(layout!.dom[2]);
   expect(layout!.top[0]).toBeLessThan(layout!.top[1]);
   expect(layout!.top[1]).toBeLessThan(layout!.top[2]);
-  expect(layout!.top[2]).toBeLessThan(320);
+  expect(layout!.top[2]).toBeLessThan(240);
   expect(layout!.top[2]).toBeLessThan(layout!.viewportHeight);
   expect(layout!.skillBottom).toBeGreaterThan(layout!.viewportHeight * 0.5);
+  expect(layout!.heights.topbar).toBeLessThanOrEqual(56);
+  expect(layout!.heights.main).toBeLessThanOrEqual(110);
+  expect(layout!.heights.panelHeader).toBeLessThanOrEqual(40);
+  expect(layout!.heights.dock).toBeLessThanOrEqual(52);
   expect(layout!.documentOverflow).toBeLessThanOrEqual(1);
   await expect(page.locator('.profile-section')).toHaveCount(0);
   await expect(page.locator('.progression-leaderboard')).toHaveCount(0);
@@ -524,7 +534,7 @@ test('main menu keeps Main Quest compact and exposes the Skill Constellation abo
   await expect(page.locator('.main-constellation-panel svg.constellation-canvas')).toHaveCount(0);
   const mainConstellationBox = await page.locator('.main-constellation-panel .main-quest-strip').boundingBox();
   expect(mainConstellationBox).not.toBeNull();
-  expect(mainConstellationBox!.height).toBeLessThan(180);
+  expect(mainConstellationBox!.height).toBeLessThanOrEqual(106);
   await expect(page.locator('.main-quest-strip__step')).toHaveCount(4);
   await expect(page.locator('.main-quest-strip__step-copy strong')).toHaveText(['Level 1', 'Level 2', 'Level 3', 'Level 4']);
   await expect(page.locator('.main-quest-strip__summary').getByText('Arrival', { exact: true })).toHaveCount(1);
@@ -791,7 +801,7 @@ test('player can explore a constellation with keyboard, camera controls, and bro
   expect(desktopViewport).not.toBeNull();
   expect(overviewFrame!.width / overviewFrame!.height).toBeCloseTo(16 / 9, 2);
   expect(overviewFrame!.y + overviewFrame!.height).toBeLessThanOrEqual(desktopViewport!.height);
-  expect(overviewFrame!.height).toBeLessThanOrEqual(desktopViewport!.height - 340);
+  expect(overviewFrame!.height).toBeLessThanOrEqual(desktopViewport!.height - 280);
   await page.getByRole('button', { name: /Game Art/ }).click();
 
   const disciplineFrame = await skillFrame.boundingBox();

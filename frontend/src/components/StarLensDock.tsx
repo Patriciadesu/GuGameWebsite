@@ -22,6 +22,7 @@ interface StarLensDockProps {
   onClose: () => void;
   onPrimaryAction: () => void;
   onCompleteStep: (stepId: string) => void;
+  onOpenImage?: (src: string, alt: string) => void;
 }
 
 const defaultPosition = (): DockPoint => ({
@@ -58,7 +59,8 @@ export default function StarLensDock({
   focusOnOpen = false,
   onClose,
   onPrimaryAction,
-  onCompleteStep
+  onCompleteStep,
+  onOpenImage
 }: StarLensDockProps) {
   const dockRef = useRef<HTMLElement | null>(null);
   const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
@@ -66,13 +68,17 @@ export default function StarLensDock({
   const [minimized, setMinimized] = useState(false);
   const [showSteps, setShowSteps] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
+  const [failedStepImages, setFailedStepImages] = useState<Set<string>>(new Set());
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 720px)').matches);
   const steps = skill.subQuests || [];
   const completedSteps = useMemo(() => steps.filter((step, index) => completedStepIds.includes(step.externalId || `step-${index}`)).length, [completedStepIds, steps]);
   const allStepsCompleted = steps.length > 0 && completedSteps === steps.length;
   const requiresReview = skill.nodeType === 'quest' || skill.nodeColor === 'green';
   const progress = steps.length > 0 ? Math.round((completedSteps / steps.length) * 100) : (unlocked || completed ? 100 : 0);
-  const imageUrl = skill.nodePreview?.imageUrl;
+  const firstStepImage = steps.flatMap(step => step.descriptionParts || [])
+    .find(part => part.type.toLowerCase() === 'image' && part.content.trim())?.content.trim();
+  const descriptionImage = /!\[[^\]]*\]\((https?:\/\/[^)]+)\)/i.exec(skill.description)?.[1];
+  const imageUrl = skill.nodePreview?.imageUrl || firstStepImage || descriptionImage;
   const summary = skill.nodePreview?.summary || skill.description;
   const outcomes = skill.nodePreview?.outcomes || [];
   const isMainQuest = workflow === 'main';
@@ -84,6 +90,7 @@ export default function StarLensDock({
   useEffect(() => {
     setShowSteps(workflow === 'skill' && steps.length > 0);
     setImageFailed(false);
+    setFailedStepImages(new Set());
   }, [skill._id, steps.length, workflow]);
 
   useEffect(() => {
@@ -193,7 +200,7 @@ export default function StarLensDock({
           : skill.nodePreview?.actionLabel || 'View Path'
     : completed ? 'Completed'
       : pending ? 'Pending review'
-        : steps.length > 0 && !allStepsCompleted ? 'View steps'
+        : steps.length > 0 && !allStepsCompleted ? (showSteps ? 'Hide steps' : 'View steps')
           : allStepsCompleted && requiresReview ? 'Request approval'
             : unlocked ? 'Journey active'
               : canUnlock ? (skill.nodePreview?.actionLabel || 'Start journey') : 'Requirements locked';
@@ -217,7 +224,7 @@ export default function StarLensDock({
       return;
     }
     if (!isMainQuest && steps.length > 0 && !allStepsCompleted) {
-      setShowSteps(true);
+      setShowSteps(value => !value);
       return;
     }
     onPrimaryAction();
@@ -228,7 +235,7 @@ export default function StarLensDock({
     <aside
       id="star-lens-dock"
       ref={dockRef}
-      className={`star-lens-dock ${minimized ? 'is-minimized' : ''} ${closing ? 'is-closing' : ''}`}
+      className={`star-lens-dock is-${workflow}-workflow ${minimized ? 'is-minimized' : ''} ${closing ? 'is-closing' : ''}`}
       style={{ '--dock-x': `${position.x}px`, '--dock-y': `${position.y}px` } as CSSProperties}
       aria-label={isTopicPath ? `${skill.title} topic path info` : `${skill.title} quest details`}
       role={isMobile ? 'dialog' : 'complementary'}
@@ -248,7 +255,9 @@ export default function StarLensDock({
           {imageUrl && <div className="star-lens-dock__art" aria-label={`${skill.constellationLabel || skill.title} preview`}>
             {imageFailed
               ? <span>Preview unavailable</span>
-              : <img src={imageUrl} alt="" onError={() => setImageFailed(true)} />}
+              : <button type="button" onClick={() => onOpenImage?.(imageUrl, skill.constellationLabel || skill.title)} disabled={!onOpenImage} aria-label={`View ${skill.constellationLabel || skill.title} image`}>
+                  <img src={imageUrl} alt="" onError={() => setImageFailed(true)} />
+                </button>}
           </div>}
           <div className="star-lens-dock__summary">
             <div className="star-lens-dock__eyebrow">{isMainQuest
@@ -288,10 +297,23 @@ export default function StarLensDock({
             {steps.map((step, index) => {
               const stepId = step.externalId || `step-${index}`;
               const isDone = completedStepIds.includes(stepId);
+              const parts = (step.descriptionParts || []).filter(part => part.content.trim());
               return <article key={stepId} className={isDone ? 'is-complete' : ''}>
-                <span>{isDone ? <Check aria-hidden="true" /> : index + 1}</span>
-                <div><strong>{step.title}</strong><p>{renderInlineMarkdown(step.description || '', `star-lens-step-${stepId}`)}</p></div>
-                <button type="button" onClick={() => onCompleteStep(stepId)} disabled={isDone || pending || (!unlocked && !canUnlock)}>{isDone ? 'Done' : 'Complete'}</button>
+                <div className="star-lens-dock__step-heading">
+                  <span>{isDone ? <Check aria-hidden="true" /> : index + 1}</span>
+                  <div><small>{isDone ? 'Completed' : `Step ${index + 1}`}</small><strong>{step.title}</strong></div>
+                  <button type="button" onClick={() => onCompleteStep(stepId)} disabled={isDone || pending || (!unlocked && !canUnlock)}>{isDone ? 'Done' : 'Complete'}</button>
+                </div>
+                <div className="star-lens-dock__step-details">
+                  {parts.length > 0 ? parts.map((part, partIndex) => part.type.toLowerCase() === 'image' ? (
+                    <div className="star-lens-dock__step-media" key={`${stepId}-image-${partIndex}`}>
+                      {failedStepImages.has(part.content) ? <span>Image unavailable</span> : <button type="button" onClick={() => onOpenImage?.(part.content, `${step.title} image`)} disabled={!onOpenImage} aria-label={`View ${step.title} image`}>
+                        <img src={part.content} alt="" loading="lazy" onError={() => setFailedStepImages(current => new Set(current).add(part.content))} />
+                      </button>}
+                    </div>
+                  ) : <p key={`${stepId}-text-${partIndex}`}>{renderInlineMarkdown(part.content, `star-lens-step-${stepId}-${partIndex}`)}</p>)
+                    : step.description && <p>{renderInlineMarkdown(step.description, `star-lens-step-${stepId}`)}</p>}
+                </div>
               </article>;
             })}
           </div>}
@@ -306,7 +328,9 @@ export default function StarLensDock({
               ? 'Skill constellation path'
               : skill.cost > 0 ? `${skill.cost} ${assetPointName}` : 'Skill quest'}</span>
           <button type="button" className="star-lens-dock__action" onClick={handleAction} disabled={actionDisabled}>
-            {(!isTopicPath && (isMainQuest ? mainQuestStatus === 'completed' : completed)) ? <Check aria-hidden="true" /> : <Play aria-hidden="true" />}{actionLabel}
+            {!isMainQuest && !isTopicPath && steps.length > 0 && !allStepsCompleted && showSteps
+              ? <ChevronUp aria-hidden="true" />
+              : (!isTopicPath && (isMainQuest ? mainQuestStatus === 'completed' : completed)) ? <Check aria-hidden="true" /> : <Play aria-hidden="true" />}{actionLabel}
           </button>
         </footer>
       </div>}

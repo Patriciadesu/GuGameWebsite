@@ -2251,8 +2251,17 @@ test('@audit topic viewport owns its focused map geometry', async ({ page, brows
 test('@audit topic quest Star Lens exposes steps and restores keyboard focus', async ({ page, browserName }) => {
   const targetSkill = topicSkills[0];
   const originalSteps = targetSkill.subQuests;
+  const questImage = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="960" height="420"%3E%3Crect width="960" height="420" fill="%2308789b"/%3E%3Ccircle cx="480" cy="210" r="100" fill="%23f3b33d"/%3E%3C/svg%3E';
   targetSkill.subQuests = [
-    { externalId: 'setup-01', title: 'Install Blender', description: 'Install the approved Blender version.' },
+    {
+      externalId: 'setup-01',
+      title: 'Install Blender',
+      description: 'Install the approved Blender version.',
+      descriptionParts: [
+        { type: 'Text', content: 'Install the **approved** Blender version.' },
+        { type: 'Image', content: questImage }
+      ]
+    },
     { externalId: 'setup-02', title: 'Configure workspace', description: 'Prepare the modeling workspace.' }
   ];
   try {
@@ -2269,8 +2278,16 @@ test('@audit topic quest Star Lens exposes steps and restores keyboard focus', a
     await expect(starLens).toBeVisible();
     await expect(origin).toHaveAttribute('aria-controls', 'star-lens-dock');
     await expect(origin).toHaveAttribute('aria-expanded', 'true');
+    await expect(starLens.locator('.star-lens-dock__art img')).toHaveAttribute('src', questImage);
     await expect(starLens.getByRole('button', { name: 'Quest steps' })).toHaveAttribute('aria-expanded', 'true');
     await expect(starLens.locator('.star-lens-dock__step-list article')).toHaveCount(2);
+    await expect(starLens.locator('.star-lens-dock__step-media img')).toHaveAttribute('src', questImage);
+    await expect(starLens.locator('.star-lens-dock__step-details strong')).toHaveText('approved');
+    const coverBox = await starLens.locator('.star-lens-dock__art').boundingBox();
+    expect(coverBox?.width).toBeGreaterThan(400);
+    await starLens.getByRole('button', { name: 'View Blender Setup image' }).click();
+    await expect(page.getByRole('dialog', { name: 'Image preview: Blender Setup' })).toBeVisible();
+    await page.getByRole('button', { name: 'Close image' }).click();
     await page.waitForTimeout(220);
     await page.screenshot({ path: '/tmp/constellation-visual/topic-quest-star-lens-steps.png', fullPage: true });
     const initial = await starLens.evaluate(node => ({
@@ -2319,6 +2336,47 @@ test('topic quest Star Lens renders manually entered bold markdown', async ({ pa
     await expect(page.locator('.guild-selection-modal')).toHaveCount(0);
   } finally {
     targetSkill.description = originalDescription;
+  }
+});
+
+test('mobile topic quest Star Lens keeps cover and step cards readable', async ({ page }) => {
+  const targetSkill = topicSkills[0];
+  const originalSteps = targetSkill.subQuests;
+  const questImage = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="960" height="420"%3E%3Crect width="960" height="420" fill="%2308789b"/%3E%3Ccircle cx="480" cy="210" r="100" fill="%23f3b33d"/%3E%3C/svg%3E';
+  targetSkill.subQuests = [{
+    externalId: 'mobile-step',
+    title: 'Create the first model',
+    description: 'Follow the reference and submit the finished model.',
+    descriptionParts: [
+      { type: 'Text', content: 'Follow the reference and submit the finished model.' },
+      { type: 'Image', content: questImage }
+    ]
+  }];
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await installApiFixtures(page);
+    await page.goto('mainmenu');
+    await page.getByRole('button', { name: /Game Art/ }).click();
+    await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
+    await page.getByRole('button', { name: 'View Path' }).click();
+    await page.locator('.constellation-topic-layer .constellation-node').filter({ hasText: 'Blender Setup' }).click();
+
+    const starLens = page.getByRole('dialog', { name: 'Blender Setup quest details' });
+    await expect(starLens.locator('.star-lens-dock__art img')).toBeVisible();
+    await expect(starLens.locator('.star-lens-dock__step-media img')).toBeVisible();
+    await expect(starLens.getByRole('button', { name: 'Complete' })).toBeVisible();
+    const layout = await starLens.evaluate(element => ({
+      width: element.getBoundingClientRect().width,
+      scrollWidth: element.scrollWidth,
+      clientWidth: element.clientWidth
+    }));
+    expect(layout.width).toBeCloseTo(390, 0);
+    expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth + 1);
+    await page.waitForTimeout(240);
+    await page.screenshot({ path: '/tmp/constellation-visual/mobile-topic-quest-star-lens-steps.png', fullPage: true });
+  } finally {
+    if (originalSteps) targetSkill.subQuests = originalSteps;
+    else delete targetSkill.subQuests;
   }
 });
 

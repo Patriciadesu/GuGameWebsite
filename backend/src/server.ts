@@ -1873,6 +1873,19 @@ const normalizeSubQuests = (
   return normalizeQuestStepExternalIds(steps, persistedSteps);
 };
 
+const officeQuestNodePreview = (quest: {
+  title?: string;
+  description?: string;
+  imageUrl?: string;
+  subQuests?: Array<{ title?: string; descriptionParts?: Array<{ type: string; content: string }> }>;
+}) => ({
+  imageUrl: quest.imageUrl || (quest.subQuests || []).flatMap(step => step.descriptionParts || [])
+    .find(part => part.type.toLowerCase() === 'image' && part.content.trim())?.content.trim(),
+  summary: (quest.description || `Learn ${quest.title || 'this quest'}.`).slice(0, 280),
+  outcomes: (quest.subQuests || []).map(step => step.title?.trim()).filter((title): title is string => Boolean(title)).slice(0, 4),
+  actionLabel: 'Open Quest'
+});
+
 const validControlPoints = (value: unknown): value is Array<{ x: number; y: number }> =>
   Array.isArray(value) && value.length === 2 && value.every(point =>
     point && Number.isFinite((point as { x?: number }).x) && Number.isFinite((point as { y?: number }).y)
@@ -2114,6 +2127,7 @@ app.post('/api/admin/office-quest-catalog/sync', requireAdmin, async (_req: Requ
               title: String(quest.title).trim(),
               type: quest.type?.trim() || undefined,
               description: getOfficeQuestDescription(quest.description),
+              imageUrl: getOfficeQuestImageUrl(quest),
               tags,
               subQuestCount: Array.isArray(quest.subQuests) ? quest.subQuests.length : 0,
               subQuests: normalizeSubQuests((quest.subQuests || []).map(subQuest => ({
@@ -2147,12 +2161,24 @@ app.post('/api/admin/office-quest-catalog/sync', requireAdmin, async (_req: Requ
               description: getOfficeQuestDescription(subQuest?.description),
               descriptionParts: getOfficeQuestDescriptionParts(subQuest?.description),
               type: subQuest?.subQuestType
-            })))
+            }))),
+            nodePreview: officeQuestNodePreview({
+              title: quest.title,
+              description: getOfficeQuestDescription(quest.description),
+              imageUrl: getOfficeQuestImageUrl(quest),
+              subQuests: (quest.subQuests || []).map(subQuest => ({
+                title: subQuest?.title,
+                descriptionParts: getOfficeQuestDescriptionParts(subQuest?.description)
+              }))
+            })
           }
         }
       }
     }));
-    if (importedQuestSteps.length > 0) await Skill.bulkWrite(importedQuestSteps);
+    if (importedQuestSteps.length > 0) {
+      await Skill.bulkWrite(importedQuestSteps);
+      invalidateSkillCaches();
+    }
 
     res.json({ success: true, syncedAt, sourceCount: sourceQuests.length, uniqueCount: uniqueQuests.length });
   } catch (error: any) {
@@ -2181,6 +2207,7 @@ app.post('/api/admin/office-quest-catalog/:externalQuestId/import', requireAdmin
       nodeType: 'quest',
       externalSource: 'office-quest',
       externalQuestId: quest.externalId,
+      nodePreview: officeQuestNodePreview(quest),
       subQuests: quest.subQuests || [],
       isActive: true
     });
@@ -2204,6 +2231,7 @@ app.post('/api/admin/office-quest-catalog/:externalQuestId/reimport', requireAdm
 
     skill.title = quest.title;
     skill.description = quest.description || 'Imported from Office.';
+    skill.set('nodePreview', officeQuestNodePreview(quest));
     skill.subQuests = normalizeSubQuests(quest.subQuests || []);
     await skill.save();
     invalidateSkillCaches();

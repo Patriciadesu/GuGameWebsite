@@ -44,7 +44,7 @@
   animation: star-lens-leave 140ms ease-in both;
 }
 
-.star-lens-dock__body { background: var(--star-panel); animation: star-lens-content-change 120ms ease-out; }
+.star-lens-dock__body { max-height: calc(min(680px, 100vh - 24px) - 42px); overflow: auto; background: var(--star-panel); animation: star-lens-content-change 120ms ease-out; }
 
 .star-lens-dock__bar {
   min-height: 42px;
@@ -79,8 +79,13 @@
 .star-lens-dock__content { padding: 16px; display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 15px; }
 .star-lens-dock__content:not(:has(.star-lens-dock__art)) { grid-template-columns: 1fr; }
 .star-lens-dock__art { width: 118px; aspect-ratio: 4 / 3; overflow: hidden; align-self: start; background: var(--star-panel-raised); border: 1px solid var(--star-line); border-radius: 6px; }
+.star-lens-dock__art > button { width: 100%; height: 100%; padding: 0; display: block; overflow: hidden; background: transparent; border: 0; cursor: zoom-in; }
+.star-lens-dock__art > button:disabled { cursor: default; opacity: 1; }
 .star-lens-dock__art img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .star-lens-dock__art > span { width: 100%; height: 100%; padding: 8px; display: grid; place-items: center; color: var(--star-muted); font-size: 11px; font-weight: 700; text-align: center; }
+.star-lens-dock.is-skill-workflow .star-lens-dock__content { padding: 0; display: block; }
+.star-lens-dock.is-skill-workflow .star-lens-dock__art { width: 100%; max-height: 210px; aspect-ratio: 16 / 7; border-width: 0 0 1px; border-radius: 0; }
+.star-lens-dock.is-skill-workflow .star-lens-dock__summary { padding: 15px 16px; }
 .star-lens-dock__eyebrow { margin-bottom: 3px; color: var(--star-gold); font-size: 12px; font-weight: 800; text-transform: uppercase; }
 .star-lens-dock__summary h2 { margin: 0 0 6px; color: var(--star-ink); font: 700 23px/1.25 "Noto Sans Thai", sans-serif; letter-spacing: 0; overflow-wrap: anywhere; }
 .star-lens-dock__summary > p { margin: 0; display: -webkit-box; overflow: hidden; color: var(--star-muted); font-size: 14px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
@@ -111,10 +116,30 @@
 .star-lens-dock__step-list article > span { width: 24px; height: 24px; display: grid; place-items: center; color: var(--star-space); background: var(--star-gold); border-radius: 50%; font-size: 12px; font-weight: 900; }
 .star-lens-dock__step-list article.is-complete > span { background: var(--star-green); }
 .star-lens-dock__step-list article > span svg { width: 13px; height: 13px; }
-.star-lens-dock__step-list strong { display: block; color: var(--star-ink); font-size: 13px; line-height: 1.45; }
+.star-lens-dock__step-list article > div > strong { display: block; color: var(--star-ink); font-size: 13px; line-height: 1.45; }
 .star-lens-dock__step-list p { margin: 3px 0 0; color: var(--star-muted); font-size: 12px; line-height: 1.5; }
 .star-lens-dock__step-list article > button { min-height: 32px; padding: 5px 9px; color: var(--star-space); background: var(--star-cyan); border: 0; border-radius: 4px; cursor: pointer; font: inherit; font-size: 12px; font-weight: 800; }
 .star-lens-dock__step-list article > button:disabled { color: var(--star-muted); background: var(--star-panel-raised); cursor: default; }
+
+.star-lens-dock.is-skill-workflow .star-lens-dock__step-list { max-height: 310px; padding: 10px; display: grid; gap: 8px; }
+.star-lens-dock.is-skill-workflow .star-lens-dock__step-list article { padding: 12px; display: block; background: var(--star-panel); border: 1px solid var(--star-line); border-radius: 7px; }
+.star-lens-dock.is-skill-workflow .star-lens-dock__step-list article.is-complete { background: color-mix(in srgb, var(--star-green) 7%, var(--star-panel)); }
+.star-lens-dock__step-heading { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 9px; }
+.star-lens-dock__step-heading > span { width: 26px; height: 26px; display: grid; place-items: center; color: var(--star-space); background: var(--star-gold); border-radius: 50%; font-size: 12px; font-weight: 900; }
+.star-lens-dock__step-heading > span svg { width: 13px; height: 13px; }
+.star-lens-dock__step-list article.is-complete .star-lens-dock__step-heading > span { background: var(--star-green); }
+.star-lens-dock__step-heading small { margin-bottom: 1px; display: block; color: var(--star-muted); font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.star-lens-dock__step-heading strong { font-size: 13px; line-height: 1.35; }
+.star-lens-dock__step-heading > button { min-height: 34px; padding: 6px 10px; color: var(--star-space); background: var(--star-cyan); border: 0; border-radius: 4px; cursor: pointer; font: inherit; font-size: 12px; font-weight: 800; }
+.star-lens-dock__step-heading > button:disabled { color: var(--star-muted); background: var(--star-panel-raised); cursor: default; }
+.star-lens-dock__step-details { margin: 9px 0 0 37px; display: grid; gap: 8px; }
+.star-lens-dock__step-details:empty { display: none; }
+.star-lens-dock__step-details p { margin: 0; white-space: pre-wrap; }
+.star-lens-dock__step-media { min-height: 76px; overflow: hidden; display: grid; place-items: center; background: var(--star-panel-raised); border: 1px solid var(--star-line); border-radius: 6px; }
+.star-lens-dock__step-media > button { width: 100%; padding: 0; display: block; background: transparent; border: 0; cursor: zoom-in; }
+.star-lens-dock__step-media > button:disabled { cursor: default; opacity: 1; }
+.star-lens-dock__step-media img { width: 100%; max-height: 180px; display: block; object-fit: contain; }
+.star-lens-dock__step-media > span { padding: 16px; color: var(--star-muted); font-size: 11px; font-weight: 700; }
 
 .star-lens-dock__footer { position: sticky; bottom: 0; min-height: 62px; padding: 9px 12px 9px 16px; display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--star-line); background: var(--star-space); }
 .star-lens-dock__footer > span { color: var(--star-muted); font-size: 12px; font-weight: 700; }
@@ -155,6 +180,7 @@
   }
 
   .main-container > .star-lens-dock.is-closing { animation-name: star-lens-sheet-leave; animation-duration: 150ms; }
+  .star-lens-dock__body { max-height: none; overflow: visible; }
   .star-lens-dock__bar { position: sticky; top: 0; z-index: 3; cursor: default; }
   .star-lens-dock__drag svg { display: none; }
   .star-lens-dock__tools button:first-child { display: none; }
@@ -162,6 +188,10 @@
   .star-lens-dock__art { width: 88px; }
   .star-lens-dock__summary h2 { font-size: 20px; }
   .star-lens-dock__step-list { max-height: none; }
+  .star-lens-dock.is-skill-workflow .star-lens-dock__art { max-height: 180px; aspect-ratio: 16 / 8; }
+  .star-lens-dock__step-heading { grid-template-columns: 28px minmax(0, 1fr); align-items: start; }
+  .star-lens-dock__step-heading > button { grid-column: 2; width: 100%; }
+  .star-lens-dock__step-details { margin-left: 37px; }
   .star-lens-dock__footer { padding-bottom: max(10px, env(safe-area-inset-bottom)); flex-wrap: wrap; }
   .star-lens-dock__footer > span { width: 100%; }
   .star-lens-dock__action { width: 100%; margin-left: 0; justify-content: center; }

@@ -11,6 +11,7 @@ export interface IOfficeQuestCache extends Document {
   title: string;
   type?: string;
   description: string;
+  imageUrl?: string;
   tags: IOfficeQuestTag[];
   subQuestCount: number;
   subQuests: Array<{ externalId?: string; title: string; description: string; descriptionParts?: Array<{ type: string; content: string }>; type?: string }>;
@@ -32,6 +33,7 @@ const OfficeSubQuestSchema = new Schema({
   externalId: { type: String },
   title: { type: String, required: true },
   description: { type: String, default: '' },
+  imageUrl: { type: String, trim: true },
   descriptionParts: [{ type: { type: String, required: true }, content: { type: String, required: true } }],
   type: { type: String }
 }, { _id: false });

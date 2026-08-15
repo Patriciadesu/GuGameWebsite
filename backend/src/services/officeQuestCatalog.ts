@@ -81,6 +81,7 @@ export const getOfficeQuestDetailHash = (quest: OfficeQuest): string => crypto
     title: normalized(quest.title || ''),
     type: normalized(quest.type || ''),
     description: normalized(getOfficeQuestDescription(quest.description)),
+    imageUrl: normalized(getOfficeQuestImageUrl(quest) || ''),
     subQuests: (quest.subQuests || []).map((subQuest: any) => ({
       title: normalized(String(subQuest?.title || '')),
       type: normalized(String(subQuest?.subQuestType || '')),

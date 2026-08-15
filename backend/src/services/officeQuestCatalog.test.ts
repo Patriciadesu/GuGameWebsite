@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getOfficeQuestDescription, getOfficeQuestImageUrl } from './officeQuestCatalog';
+import { getOfficeQuestDescription, getOfficeQuestDetailHash, getOfficeQuestImageUrl } from './officeQuestCatalog';
 
 test('StarMaster presentation keeps text separate from quest images', () => {
   const quest = {
@@ -30,4 +30,17 @@ test('StarMaster presentation falls back to the first subquest image', () => {
   };
 
   assert.equal(getOfficeQuestImageUrl(quest), 'https://cdn.example.com/reference.webp');
+});
+
+test('StarMaster cache hash changes when the quest cover changes', () => {
+  const baseQuest = {
+    _id: 'quest-cover',
+    title: 'Quest cover',
+    description: [{ type: 'Text', content: 'Same description.' }],
+    subQuests: []
+  };
+  const first = { ...baseQuest, description: [...baseQuest.description, { type: 'Image', content: 'https://cdn.example.com/first.webp' }] };
+  const second = { ...baseQuest, description: [...baseQuest.description, { type: 'Image', content: 'https://cdn.example.com/second.webp' }] };
+
+  assert.notEqual(getOfficeQuestDetailHash(first), getOfficeQuestDetailHash(second));
 });

@@ -223,7 +223,7 @@ function MainMenu() {
     if (!starLensSkill) return;
     const handleOutsidePointer = (event: PointerEvent) => {
       const target = event.target as Element | null;
-      if (!target || target.closest('.star-lens-dock, .star-lens-scrim, .main-quest-strip button, .skill-constellation-panel .constellation-node, .theme-toggle')) return;
+      if (!target || target.closest('.star-lens-dock, .star-lens-scrim, .quest-image-preview, .main-quest-strip button, .skill-constellation-panel .constellation-node, .theme-toggle')) return;
       closeStarLens();
     };
     document.addEventListener('pointerdown', handleOutsidePointer);
@@ -1528,6 +1528,7 @@ function MainMenu() {
           void handleUnlockSkill(starLensSkill);
         }}
         onCompleteStep={stepId => { void handleCompleteQuestStep(starLensSkill, stepId); }}
+        onOpenImage={(src, alt) => setExpandedImage({ src, alt })}
       />}
 
       {/* Skill Detail Modal */}
@@ -1841,7 +1842,7 @@ function MainMenu() {
       )}
 
       {expandedImage && (
-        <div ref={imageDialogRef as React.RefObject<HTMLDivElement>} role="dialog" aria-modal="true" aria-label={`Image preview: ${expandedImage.alt}`} tabIndex={-1} onClick={() => setExpandedImage(null)} style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', padding: '24px', background: 'rgba(11, 25, 56, 0.82)', cursor: 'zoom-out' }}>
+        <div ref={imageDialogRef as React.RefObject<HTMLDivElement>} className="quest-image-preview" role="dialog" aria-modal="true" aria-label={`Image preview: ${expandedImage.alt}`} tabIndex={-1} onClick={() => setExpandedImage(null)} style={{ position: 'fixed', inset: 0, zIndex: 1200, display: 'grid', placeItems: 'center', padding: '24px', background: 'rgba(11, 25, 56, 0.82)', cursor: 'zoom-out' }}>
           <img src={expandedImage.src} alt={expandedImage.alt} onClick={(event) => event.stopPropagation()} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '8px', boxShadow: '0 18px 60px rgba(0, 0, 0, 0.45)', cursor: 'default' }} />
           <button onClick={() => setExpandedImage(null)} aria-label="Close image" style={{ position: 'fixed', top: '22px', right: '24px', width: '42px', height: '42px', border: 'none', borderRadius: '50%', background: '#fff', color: '#14306d', fontSize: '26px', cursor: 'pointer' }}>×</button>
         </div>

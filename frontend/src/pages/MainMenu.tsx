@@ -360,6 +360,21 @@ function MainMenu() {
     setStarLensSkill(skill);
   };
 
+  const handleTopicSkillClick = (skill: Skill, interaction: 'pointer' | 'keyboard' = 'pointer', trigger?: HTMLElement | SVGElement) => {
+    if (skill.isAdvancedLocked) {
+      alert('อันนี้เป็นเนื้อหา Advance สอนแค่ใน Starway/Starlight น้าาา');
+      return;
+    }
+    if (starLensCloseTimerRef.current !== null) window.clearTimeout(starLensCloseTimerRef.current);
+    starLensCloseTimerRef.current = null;
+    setStarLensClosing(false);
+    topicPathActionRef.current = null;
+    setStarLensWorkflow('skill');
+    starLensOpenerRef.current = trigger || document.activeElement as HTMLElement | SVGElement | null;
+    setStarLensFocusOnOpen(interaction === 'keyboard' || window.matchMedia('(max-width: 720px)').matches);
+    setStarLensSkill(skill);
+  };
+
   const handleTopicPathInfo = (
     skill: Skill,
     openPath: () => void,
@@ -1246,9 +1261,9 @@ function MainMenu() {
               pendingSkillIds={pendingApprovalSkills}
               userLevel={user?.level || 1}
               canUnlockSkill={(skill: ConstellationSkill) => canUnlockSkill(skill as Skill)}
-              onOpenSkill={(skill: ConstellationSkill) => handleSkillClick(skill as Skill)}
+              onOpenSkill={(skill, interaction, trigger) => handleTopicSkillClick(skill as Skill, interaction, trigger)}
               onOpenTopicInfo={(skill, openPath, interaction, trigger) => handleTopicPathInfo(skill as Skill, openPath, interaction, trigger)}
-              selectedSkillId={starLensWorkflow === 'topic' ? starLensSkill?._id : null}
+              selectedSkillId={['topic', 'skill'].includes(starLensWorkflow) ? starLensSkill?._id : null}
             />
           ) : (
             <div className="constellation-load-state" role="status">

@@ -69,6 +69,8 @@ export default function StarLensDock({
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 720px)').matches);
   const steps = skill.subQuests || [];
   const completedSteps = useMemo(() => steps.filter((step, index) => completedStepIds.includes(step.externalId || `step-${index}`)).length, [completedStepIds, steps]);
+  const allStepsCompleted = steps.length > 0 && completedSteps === steps.length;
+  const requiresReview = skill.nodeType === 'quest' || skill.nodeColor === 'green';
   const progress = steps.length > 0 ? Math.round((completedSteps / steps.length) * 100) : (unlocked || completed ? 100 : 0);
   const imageUrl = skill.nodePreview?.imageUrl;
   const summary = skill.nodePreview?.summary || skill.description;
@@ -80,9 +82,9 @@ export default function StarLensDock({
   const mainQuestStatus = resolveMainQuestStatus({ questLevel, userLevel, pending });
 
   useEffect(() => {
-    setShowSteps(false);
+    setShowSteps(workflow === 'skill' && steps.length > 0);
     setImageFailed(false);
-  }, [skill._id]);
+  }, [skill._id, steps.length, workflow]);
 
   useEffect(() => {
     const media = window.matchMedia('(max-width: 720px)');
@@ -189,7 +191,12 @@ export default function StarLensDock({
           : !unlocked && !canUnlock
             ? 'Prerequisites required'
           : skill.nodePreview?.actionLabel || 'View Path'
-    : completed ? 'Completed' : pending ? 'Pending review' : unlocked ? 'Continue journey' : canUnlock ? (skill.nodePreview?.actionLabel || 'Start journey') : 'Requirements locked';
+    : completed ? 'Completed'
+      : pending ? 'Pending review'
+        : steps.length > 0 && !allStepsCompleted ? 'View steps'
+          : allStepsCompleted && requiresReview ? 'Request approval'
+            : unlocked ? 'Journey active'
+              : canUnlock ? (skill.nodePreview?.actionLabel || 'Start journey') : 'Requirements locked';
   const actionDisabled = isMainQuest
     ? mainQuestStatus !== 'current' || !canUnlock
     : isTopicPath
@@ -209,7 +216,7 @@ export default function StarLensDock({
       onPrimaryAction();
       return;
     }
-    if (!isMainQuest && steps.length > 0 && (unlocked || completedSteps < steps.length)) {
+    if (!isMainQuest && steps.length > 0 && !allStepsCompleted) {
       setShowSteps(true);
       return;
     }
@@ -297,7 +304,7 @@ export default function StarLensDock({
             ? 'Admin review required after submission'
             : isTopicPath
               ? 'Skill constellation path'
-              : skill.cost > 0 ? `${skill.cost} ${assetPointName}` : 'Main journey'}</span>
+              : skill.cost > 0 ? `${skill.cost} ${assetPointName}` : 'Skill quest'}</span>
           <button type="button" className="star-lens-dock__action" onClick={handleAction} disabled={actionDisabled}>
             {(!isTopicPath && (isMainQuest ? mainQuestStatus === 'completed' : completed)) ? <Check aria-hidden="true" /> : <Play aria-hidden="true" />}{actionLabel}
           </button>

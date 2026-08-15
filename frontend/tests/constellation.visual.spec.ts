@@ -2248,65 +2248,63 @@ test('@audit topic viewport owns its focused map geometry', async ({ page, brows
   }
 });
 
-test('@audit quest detail modal provides keyboard dialog behavior', async ({ page, browserName }) => {
-  await installApiFixtures(page);
-  await page.goto('mainmenu');
-  await page.getByRole('button', { name: /Game Art/ }).click();
-  await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
-  await page.getByRole('button', { name: 'View Path' }).click();
-  const origin = page.locator('.constellation-topic-layer .constellation-node').filter({ hasText: 'Blender Setup' });
-  await origin.focus();
-  await origin.press('Enter');
+test('@audit topic quest Star Lens exposes steps and restores keyboard focus', async ({ page, browserName }) => {
+  const targetSkill = topicSkills[0];
+  const originalSteps = targetSkill.subQuests;
+  targetSkill.subQuests = [
+    { externalId: 'setup-01', title: 'Install Blender', description: 'Install the approved Blender version.' },
+    { externalId: 'setup-02', title: 'Configure workspace', description: 'Prepare the modeling workspace.' }
+  ];
+  try {
+    await installApiFixtures(page);
+    await page.goto('mainmenu');
+    await page.getByRole('button', { name: /Game Art/ }).click();
+    await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
+    await page.getByRole('button', { name: 'View Path' }).click();
+    const origin = page.locator('.constellation-topic-layer .constellation-node').filter({ hasText: 'Blender Setup' });
+    await origin.focus();
+    await origin.press('Enter');
 
-  const modal = page.locator('.guild-selection-modal').first();
-  await expect(modal).toBeVisible();
-  const initial = await modal.evaluate(node => ({
-    role: node.getAttribute('role'),
-    ariaModal: node.getAttribute('aria-modal'),
-    ariaLabelledby: node.getAttribute('aria-labelledby'),
-    containsFocus: node.contains(document.activeElement),
-    transitionDuration: getComputedStyle(node).transitionDuration,
-    animationName: getComputedStyle(node).animationName
-  }));
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(100);
-  const closedByEscape = !(await modal.isVisible());
-  if (!closedByEscape) {
-    const closeButton = modal.getByRole('button', { name: /close|cancel/i }).last();
-    if (await closeButton.count()) await closeButton.click();
-    else await page.locator('.guild-selection-modal-overlay').first().click({ position: { x: 4, y: 4 } });
+    const starLens = page.getByLabel('Blender Setup quest details');
+    await expect(starLens).toBeVisible();
+    await expect(origin).toHaveAttribute('aria-controls', 'star-lens-dock');
+    await expect(origin).toHaveAttribute('aria-expanded', 'true');
+    await expect(starLens.getByRole('button', { name: 'Quest steps' })).toHaveAttribute('aria-expanded', 'true');
+    await expect(starLens.locator('.star-lens-dock__step-list article')).toHaveCount(2);
+    await page.waitForTimeout(220);
+    await page.screenshot({ path: '/tmp/constellation-visual/topic-quest-star-lens-steps.png', fullPage: true });
+    const initial = await starLens.evaluate(node => ({
+      role: node.getAttribute('role'),
+      containsFocus: node.contains(document.activeElement),
+      transitionDuration: getComputedStyle(node).transitionDuration,
+      animationName: getComputedStyle(node).animationName
+    }));
+    await page.keyboard.press('Escape');
+    await expect(starLens).toHaveCount(0);
+    const focusAfterClose = await page.evaluate(() => ({
+      ariaLabel: document.activeElement?.getAttribute('aria-label'),
+      text: document.activeElement?.textContent?.trim().slice(0, 80)
+    }));
+
+    await recordAudit(browserName, 'topic-quest-star-lens', {
+      initial,
+      focusAfterClose,
+      focusReturnedToOrigin: /Blender Setup/i.test(`${focusAfterClose.ariaLabel || ''} ${focusAfterClose.text || ''}`),
+      hasEntryMotion: initial.transitionDuration !== '0s' || initial.animationName !== 'none'
+    });
+    expect(initial.role).toBe('complementary');
+    expect(initial.containsFocus).toBe(true);
+    expect(/Blender Setup/i.test(`${focusAfterClose.ariaLabel || ''} ${focusAfterClose.text || ''}`)).toBe(true);
+  } finally {
+    if (originalSteps) targetSkill.subQuests = originalSteps;
+    else delete targetSkill.subQuests;
   }
-  const focusAfterClose = await page.evaluate(() => ({
-    ariaLabel: document.activeElement?.getAttribute('aria-label'),
-    text: document.activeElement?.textContent?.trim().slice(0, 80)
-  }));
-
-  await recordAudit(browserName, 'quest-modal-accessibility', {
-    initial,
-    closedByEscape,
-    focusAfterClose,
-    focusReturnedToOrigin: /Blender Setup/i.test(`${focusAfterClose.ariaLabel || ''} ${focusAfterClose.text || ''}`),
-    hasDialogSemantics: initial.role === 'dialog' && initial.ariaModal === 'true' && Boolean(initial.ariaLabelledby),
-    hasEntryMotion: initial.transitionDuration !== '0s' || initial.animationName !== 'none'
-  });
-  expect(initial.role).toBe('dialog');
-  expect(initial.ariaModal).toBe('true');
-  expect(initial.ariaLabelledby).toBeTruthy();
-  expect(initial.containsFocus).toBe(true);
-  expect(closedByEscape).toBe(true);
-  expect(/Blender Setup/i.test(`${focusAfterClose.ariaLabel || ''} ${focusAfterClose.text || ''}`)).toBe(true);
 });
 
-test('player quest details render manually entered bold markdown and Discord-style code blocks', async ({ page }) => {
+test('topic quest Star Lens renders manually entered bold markdown', async ({ page }) => {
   const targetSkill = topicSkills[0];
   const originalDescription = targetSkill.description;
-  targetSkill.description = [
-    'Learn **Blender Setup** through a guided production quest.',
-    '```js',
-    'const label = "**keep markers**";',
-    '  console.log(label);',
-    '```'
-  ].join('\n');
+  targetSkill.description = 'Learn **Blender Setup** through a guided production quest.';
 
   try {
     await installApiFixtures(page);
@@ -2316,12 +2314,9 @@ test('player quest details render manually entered bold markdown and Discord-sty
     await page.getByRole('button', { name: 'View Path' }).click();
     await page.locator('.constellation-topic-layer .constellation-node').filter({ hasText: 'Blender Setup' }).click();
 
-    const modal = page.getByRole('dialog', { name: 'Blender Setup' });
-    await expect(modal.locator('.quest-detail strong')).toHaveText('Blender Setup');
-    const codeBlock = modal.locator('.quest-code-block');
-    await expect(codeBlock.locator('.quest-code-language')).toHaveText('js');
-    await expect(codeBlock.locator('code')).toHaveText('const label = "**keep markers**";\n  console.log(label);');
-    await expect(codeBlock.locator('strong')).toHaveCount(0);
+    const starLens = page.getByLabel('Blender Setup quest details');
+    await expect(starLens.locator('.star-lens-dock__summary strong')).toHaveText('Blender Setup');
+    await expect(page.locator('.guild-selection-modal')).toHaveCount(0);
   } finally {
     targetSkill.description = originalDescription;
   }

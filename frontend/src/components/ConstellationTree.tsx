@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import axios from '../config/axios';
-import { ChevronLeft, ChevronRight, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
 import { ConstellationMap, ConstellationSkill } from './constellationTypes';
 import ConstellationNodeGlyph from './ConstellationNodeGlyph';
 import { mainQuestVisualStatus, resolveMainQuestStatus } from './mainQuestStatus';
@@ -20,6 +20,12 @@ interface ConstellationTreeProps {
   pendingSkillIds: string[];
   canUnlockSkill: (skill: ConstellationSkill) => boolean;
   onOpenSkill: (skill: ConstellationSkill, interaction?: 'pointer' | 'keyboard', trigger?: SVGGElement) => void;
+  onOpenTopicInfo?: (
+    skill: ConstellationSkill,
+    openPath: () => void,
+    interaction?: 'pointer' | 'keyboard',
+    trigger?: SVGGElement
+  ) => void;
   userLevel?: number;
   compactOverview?: boolean;
   selectedSkillId?: string | null;
@@ -81,6 +87,7 @@ function ConstellationTree({
   pendingSkillIds,
   canUnlockSkill,
   onOpenSkill,
+  onOpenTopicInfo,
   userLevel = 1,
   compactOverview = false,
   selectedSkillId = null,
@@ -89,19 +96,16 @@ function ConstellationTree({
   const labelForSkill = (skill: ConstellationSkill) => skill.constellationLabel || skill.title;
   const [disciplineDetails, setDisciplineDetails] = useState<Record<string, MapDetail>>({});
   const [selectedDisciplineId, setSelectedDisciplineId] = useState<string | null>(null);
-  const [previewSkill, setPreviewSkill] = useState<ConstellationSkill | null>(null);
   const [topicGateway, setTopicGateway] = useState<ConstellationSkill | null>(null);
   const [topicDetail, setTopicDetail] = useState<MapDetail | null>(null);
   const [loadingTopic, setLoadingTopic] = useState(false);
   const [error, setError] = useState('');
-  const [failedPreviewImages, setFailedPreviewImages] = useState<Set<string>>(new Set());
   const [camera, setCamera] = useState<Camera>({ zoom: 1, x: 0, y: 0 });
   const [overviewIndex, setOverviewIndex] = useState(0);
   const [isDirectManipulating, setIsDirectManipulating] = useState(false);
   const dragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const canvasRef = useRef<SVGSVGElement | null>(null);
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
-  const previewTimerRef = useRef<number | null>(null);
   const overviewGridRef = useRef<HTMLDivElement | null>(null);
   const disciplineCameraRef = useRef<Camera>({ zoom: 1, x: 0, y: 0 });
   const originGatewayIdRef = useRef<string | null>(null);
@@ -133,10 +137,6 @@ function ConstellationTree({
     return () => { cancelled = true; };
   }, [disciplineMaps]);
 
-  useEffect(() => () => {
-    if (previewTimerRef.current !== null) window.clearTimeout(previewTimerRef.current);
-  }, []);
-
   useEffect(() => {
     const topicMapId = topicDetail?.map._id;
     if (!topicMapId) {
@@ -164,7 +164,6 @@ function ConstellationTree({
 
     const restoreHistory = async (event: PopStateEvent) => {
       const state = event.state?.constellationView as ConstellationHistoryState | undefined;
-      setPreviewSkill(null);
       setError('');
       if (!state || state.view === 'overview') {
         setSelectedDisciplineId(null);
@@ -273,7 +272,6 @@ function ConstellationTree({
   const selectDiscipline = (mapId: string) => {
     writeHistory({ view: 'discipline', disciplineId: mapId });
     setSelectedDisciplineId(mapId);
-    setPreviewSkill(null);
     setTopicGateway(null);
     setTopicDetail(null);
     setError('');
@@ -285,7 +283,6 @@ function ConstellationTree({
   const returnToOverview = () => {
     const disciplineId = selectedDisciplineId || originDisciplineIdRef.current;
     setSelectedDisciplineId(null);
-    setPreviewSkill(null);
     setTopicGateway(null);
     setTopicDetail(null);
     setError('');
@@ -297,7 +294,6 @@ function ConstellationTree({
 
   const returnToDiscipline = () => {
     setTopicDetail(null);
-    setPreviewSkill(null);
     setTopicGateway(null);
     setCamera(disciplineCameraRef.current);
     const gateway = originGatewayIdRef.current;
@@ -305,21 +301,6 @@ function ConstellationTree({
     window.requestAnimationFrame(() => {
       if (gateway) document.querySelector<SVGGElement>(`[data-skill-id="${gateway}"]`)?.focus();
     });
-  };
-
-  const showPreview = (skill: ConstellationSkill) => {
-    if (previewTimerRef.current !== null) window.clearTimeout(previewTimerRef.current);
-    setPreviewSkill(skill);
-  };
-
-  const schedulePreviewOpen = (skill: ConstellationSkill) => {
-    if (previewTimerRef.current !== null) window.clearTimeout(previewTimerRef.current);
-    previewTimerRef.current = window.setTimeout(() => setPreviewSkill(skill), 180);
-  };
-
-  const schedulePreviewClose = () => {
-    if (previewTimerRef.current !== null) window.clearTimeout(previewTimerRef.current);
-    previewTimerRef.current = window.setTimeout(() => setPreviewSkill(null), 140);
   };
 
   const moveOverview = (nextIndex: number) => {
@@ -356,7 +337,6 @@ function ConstellationTree({
       setTopicGateway(gateway);
       setTopicDetail({ map: response.data.map, skills: response.data.skills || [] });
       setSelectedDisciplineId(sourceDetail.map._id);
-      setPreviewSkill(null);
       disciplineCameraRef.current = camera;
       originGatewayIdRef.current = gateway._id;
       writeHistory({
@@ -590,14 +570,8 @@ function ConstellationTree({
               role="button"
               tabIndex={0}
               aria-label={`${labelForSkill(skill)}, ${skill.mapNodeRole || 'lesson'}, ${status}`}
-              aria-controls={directMap && selectedSkillId === skill._id ? 'star-lens-dock' : undefined}
-              aria-expanded={directMap ? selectedSkillId === skill._id : undefined}
-              onPointerEnter={event => {
-                if (event.pointerType === 'mouse' && skill.mapNodeRole === 'topic-gateway') schedulePreviewOpen(skill);
-              }}
-              onPointerLeave={() => skill.mapNodeRole === 'topic-gateway' && schedulePreviewClose()}
-              onFocus={() => skill.mapNodeRole === 'topic-gateway' && showPreview(skill)}
-              onBlur={() => skill.mapNodeRole === 'topic-gateway' && schedulePreviewClose()}
+              aria-controls={selectedSkillId === skill._id ? 'star-lens-dock' : undefined}
+              aria-expanded={selectedSkillId === skill._id ? true : undefined}
               onClick={(event) => {
                 event.stopPropagation();
                 options.onNodeClick(skill, 'pointer', event.currentTarget);
@@ -736,7 +710,7 @@ function ConstellationTree({
   const mapWidth = canvasMap?.viewport.width || 1600;
   const mapHeight = canvasMap?.viewport.height || 900;
 
-  const activeGateway = topicGateway || previewSkill;
+  const activeGateway = topicGateway;
   const gatewayIndex = activeGateway
     ? selectedDiscipline.skills.findIndex(skill => skill._id === activeGateway._id)
     : -1;
@@ -748,7 +722,7 @@ function ConstellationTree({
     : { x: 0, y: 0 };
   return (
     <section
-      className={`constellation-shell constellation-focus ${directMap ? 'is-main-quest-rail' : ''} ${topicDetail ? 'is-topic-active' : ''} ${previewSkill && !topicDetail ? 'has-preview' : ''}`}
+      className={`constellation-shell constellation-focus ${directMap ? 'is-main-quest-rail' : ''} ${topicDetail ? 'is-topic-active' : ''}`}
       style={{
         '--constellation-bg': activeTheme.backgroundColor,
         '--constellation-surface': activeTheme.surfaceColor,
@@ -795,6 +769,7 @@ function ConstellationTree({
       </header>
 
       {error && <div className="constellation-notice" role="status">{error}</div>}
+      {loadingTopic && <div className="constellation-notice" role="status">Opening topic path...</div>}
 
       {directMap && <p className="main-quest-swipe-hint">Swipe horizontally to explore levels · Current Quest is centered automatically</p>}
       <div className="constellation-canvas-wrap" ref={canvasWrapRef}>
@@ -820,9 +795,6 @@ function ConstellationTree({
           }}
           onPointerMove={(event) => {
             if (directMap) return;
-            if (!(event.target as Element).closest('.constellation-node') && previewSkill) {
-              schedulePreviewClose();
-            }
             const drag = dragRef.current;
             if (!drag || drag.pointerId !== event.pointerId) return;
             const bounds = event.currentTarget.getBoundingClientRect();
@@ -863,7 +835,15 @@ function ConstellationTree({
               gatewayOnly: !directMap,
               straightLineFit: directMap,
               focusedGatewayId: topicGateway?._id,
-              onNodeClick: (skill, interaction, trigger) => directMap ? onOpenSkill(skill, interaction, trigger) : showPreview(skill)
+              onNodeClick: (skill, interaction, trigger) => {
+                if (directMap) {
+                  onOpenSkill(skill, interaction, trigger);
+                  return;
+                }
+                const openPath = () => { void openTopic(skill); };
+                if (onOpenTopicInfo) onOpenTopicInfo(skill, openPath, interaction, trigger);
+                else openPath();
+              }
             })}
             {topicDetail && renderMapLayer(topicDetail, {
               className: 'constellation-topic-layer',
@@ -877,72 +857,6 @@ function ConstellationTree({
             <strong>No quests here yet</strong>
             <span>{directMap ? 'Add the first level-up quest in Main Quest Editor.' : 'This topic is ready for its first quest.'}</span>
           </div>
-        )}
-
-        {previewSkill && !topicDetail && (
-          <aside
-            className="constellation-info-panel"
-            onPointerEnter={() => showPreview(previewSkill)}
-            onPointerLeave={schedulePreviewClose}
-            aria-label={`${previewSkill.title} path preview`}
-          >
-            <button type="button" className="constellation-info-close" onClick={() => setPreviewSkill(null)} aria-label="Close preview"><X aria-hidden="true" /></button>
-            <div className="constellation-info-heading">
-              <span>{directMap ? 'Main quest star' : 'Topic path'}</span>
-              <h3>{labelForSkill(previewSkill)}</h3>
-            </div>
-            <p>{previewSkill.nodePreview?.summary || previewSkill.description}</p>
-            <div
-              className="constellation-preview-media"
-              aria-label={`${labelForSkill(previewSkill)} preview`}
-            >
-              {previewSkill.nodePreview?.imageUrl && !failedPreviewImages.has(previewSkill.nodePreview.imageUrl) ? (
-                <img
-                  src={previewSkill.nodePreview.imageUrl}
-                  alt={`${labelForSkill(previewSkill)} learning outcome`}
-                  onError={() => setFailedPreviewImages(current => new Set(current).add(previewSkill.nodePreview!.imageUrl!))}
-                />
-              ) : (
-                <span role="img" aria-label={`${labelForSkill(previewSkill)} preview unavailable`}>
-                  {labelForSkill(previewSkill)} preview
-                </span>
-              )}
-            </div>
-            {(previewSkill.nodePreview?.outcomes?.length || 0) > 0 && (
-              <div className="constellation-outcomes">
-                <strong>You'll be able to</strong>
-                <ul>{previewSkill.nodePreview!.outcomes.slice(0, 4).map(outcome => <li key={outcome}>{outcome}</li>)}</ul>
-              </div>
-            )}
-            <div className="constellation-info-action">
-              <span>{statusForSkill(previewSkill)}</span>
-              {statusForSkill(previewSkill) === 'locked' && (
-                <p className="constellation-requirement">
-                  {(previewSkill.topicLevel || userLevel) > userLevel
-                    ? `Reach Level ${previewSkill.topicLevel} to enter this topic.`
-                    : previewSkill.prerequisites?.length
-                    ? `Complete ${previewSkill.prerequisites.map(id => selectedDiscipline.skills.find(skill => skill._id === id)?.title || 'the required skill').join(', ')} first.`
-                    : 'Complete the required skills first.'}
-                </p>
-              )}
-              {statusForSkill(previewSkill) === 'pending' && (
-                <p className="constellation-requirement">Approval is pending.</p>
-              )}
-              <button
-                type="button"
-                onClick={() => directMap ? onOpenSkill(previewSkill) : openTopic(previewSkill)}
-                disabled={loadingTopic || ['locked', 'pending'].includes(statusForSkill(previewSkill))}
-              >
-                {loadingTopic
-                  ? 'Opening...'
-                  : statusForSkill(previewSkill) === 'locked'
-                    ? (previewSkill.topicLevel || userLevel) > userLevel ? `Unlocks at Level ${previewSkill.topicLevel}` : 'Prerequisites required'
-                    : statusForSkill(previewSkill) === 'pending'
-                      ? 'Approval pending'
-                      : directMap ? 'View quest requirements' : previewSkill.nodePreview?.actionLabel || 'View Path'}
-              </button>
-            </div>
-          </aside>
         )}
       </div>
     </section>

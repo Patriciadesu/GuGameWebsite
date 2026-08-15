@@ -445,9 +445,17 @@ test('player constellation states render without overflow', async ({ page }) => 
   await expect(disciplineCanvas.getByRole('button', { name: /Materials/ })).toBeVisible();
   await expect(disciplineCanvas.getByRole('button', { name: /VFX/ })).toBeVisible();
   const modelingNode = disciplineCanvas.locator('.constellation-node').filter({ hasText: '3D Modeling' });
-  await modelingNode.hover();
-  await expect(page.locator('.constellation-info-panel')).toBeVisible();
+  await modelingNode.click();
+  const topicLens = page.getByLabel('3D Modeling topic path info');
+  await expect(topicLens).toBeVisible();
+  await expect(topicLens).toContainText('Topic Path');
+  await expect(page.locator('.constellation-info-panel')).toHaveCount(0);
   await page.screenshot({ path: '/tmp/constellation-visual/player-gateway-preview.png', fullPage: true });
+
+  await page.locator('.topbar-brand').click({ position: { x: 3, y: 3 } });
+  await expect(page.locator('#star-lens-dock')).toHaveCount(0);
+  await expect(modelingNode).not.toHaveAttribute('aria-expanded', 'true');
+  await modelingNode.click();
 
   await page.getByRole('button', { name: 'View Path' }).click();
   await expect(page.locator('.skill-constellation-panel .constellation-focus')).toHaveClass(/is-topic-active/);
@@ -726,7 +734,8 @@ test('dark theme keeps player and editor surfaces consistently dark', async ({ p
   await page.screenshot({ path: '/tmp/constellation-visual/dark-main-quest-star-lens.png', fullPage: true });
 
   await page.getByRole('button', { name: /Game Art/ }).click();
-  await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).hover();
+  await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
+  await expect(page.getByLabel('3D Modeling topic path info')).toBeVisible();
   await expect(page.getByRole('button', { name: 'View Path' })).toBeVisible();
   await page.screenshot({ path: '/tmp/constellation-visual/dark-player-preview.png', fullPage: true });
 
@@ -797,9 +806,9 @@ test('player sees next-level topics but cannot enter them early', async ({ page 
     await expect(gatedTopic.locator('.constellation-node-label')).toHaveCSS('opacity', '1');
     await page.screenshot({ path: '/tmp/constellation-visual/level-gated-without-fog.png', fullPage: true });
     await canvas.getByRole('button', { name: /Materials/ }).click();
-    const preview = page.getByLabel('Materials path preview');
-    await expect(preview).toContainText('Reach Level 2 to enter this topic.');
-    await expect(preview.getByRole('button', { name: 'Unlocks at Level 2' })).toBeDisabled();
+    const topicLens = page.getByLabel('Materials topic path info');
+    await expect(topicLens).toContainText('Reach Level 2 to enter this topic.');
+    await expect(topicLens.getByRole('button', { name: 'Unlocks at Level 2' })).toBeDisabled();
   } finally {
     delete materials.topicLevel;
   }
@@ -826,13 +835,15 @@ test('player sees the next two connected topics when every topic shares the curr
   }
 });
 
-test('mobile constellation uses one-map paging and bottom preview', async ({ page }) => {
+test('mobile constellation uses one-map paging and Star Lens sheet', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await installApiFixtures(page);
   await page.goto('mainmenu');
   await page.getByRole('button', { name: /Game Art/ }).click();
   await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
-  await expect(page.locator('.constellation-info-panel')).toBeVisible();
+  const topicLens = page.getByRole('dialog', { name: '3D Modeling topic path info' });
+  await expect(topicLens).toBeVisible();
+  await expect(topicLens.getByRole('button', { name: 'View Path' })).toBeVisible();
   await page.waitForTimeout(250);
   await page.screenshot({ path: '/tmp/constellation-visual/player-mobile.png', fullPage: true });
 });
@@ -906,8 +917,9 @@ test('player can explore a constellation with keyboard, camera controls, and bro
 
   const modelingNode = canvas.getByRole('button', { name: /3D Modeling/ });
   await modelingNode.focus();
-  await expect(page.locator('.constellation-info-panel')).toBeVisible();
+  await expect(page.getByLabel('3D Modeling topic path info')).toHaveCount(0);
   await modelingNode.press('Enter');
+  await expect(page.getByLabel('3D Modeling topic path info')).toBeVisible();
   await page.getByRole('button', { name: 'View Path' }).click();
   await expect(page.locator('.skill-constellation-panel .constellation-focus')).toHaveClass(/is-topic-active/);
   await expect(page.locator('.constellation-topic-layer')).toHaveCSS('transition-duration', /0\.36s/);
@@ -1822,7 +1834,7 @@ test('@audit progression roles and path semantics remain independently readable'
   await installApiFixtures(page);
   await page.goto('mainmenu');
   await page.getByRole('button', { name: /Game Art/ }).click();
-  await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).hover();
+  await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
   await page.getByRole('button', { name: 'View Path' }).click();
   await expect(page.locator('.constellation-topic-layer')).toBeVisible();
   await page.waitForTimeout(650);
@@ -1863,7 +1875,7 @@ test('@audit progression roles and path semantics remain independently readable'
   await page.screenshot({ path: `/tmp/constellation-audit/${browserName}-role-and-path-semantics.png`, fullPage: true });
 });
 
-test('@audit mobile preview preserves spatial context and touch controls', async ({ page, browserName }) => {
+test('@audit mobile topic Star Lens preserves touch controls', async ({ page, browserName }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await installApiFixtures(page);
   await page.goto('mainmenu');
@@ -1879,36 +1891,31 @@ test('@audit mobile preview preserves spatial context and touch controls', async
   ));
   const modelingNode = page.locator('.constellation-node').filter({ hasText: '3D Modeling' });
   await modelingNode.click();
-  await expect(page.locator('.constellation-info-panel')).toBeVisible();
+  const topicLens = page.getByRole('dialog', { name: '3D Modeling topic path info' });
+  await expect(topicLens).toBeVisible();
   await page.waitForTimeout(220);
 
   const nodeBox = await modelingNode.boundingBox();
   const hitTargetBox = await modelingNode.locator('.constellation-node-hit-target').boundingBox();
-  const panelBox = await page.locator('.constellation-info-panel').boundingBox();
+  const panelBox = await topicLens.boundingBox();
   const labelBoxes = await page.locator('.constellation-discipline-layer .constellation-node-label').evaluateAll(labels => (
     labels.map(label => {
       const bounds = label.getBoundingClientRect();
       return { text: label.textContent, width: bounds.width, height: bounds.height };
     })
   ));
-  const overlap = nodeBox && panelBox
-    ? Math.max(0, Math.min(nodeBox.x + nodeBox.width, panelBox.x + panelBox.width) - Math.max(nodeBox.x, panelBox.x))
-      * Math.max(0, Math.min(nodeBox.y + nodeBox.height, panelBox.y + panelBox.height) - Math.max(nodeBox.y, panelBox.y))
-    : 0;
-  const nodeArea = nodeBox ? nodeBox.width * nodeBox.height : 0;
   const cameraControlsDisplay = await skillPanel.locator('.constellation-camera-controls').evaluate(element => getComputedStyle(element).display);
-  const panelButtons = await page.locator('.constellation-info-panel button').evaluateAll(buttons => buttons.map(button => ({
+  const panelButtons = await topicLens.getByRole('button').evaluateAll(buttons => buttons.map(button => ({
     text: button.textContent?.trim() || '',
     ariaLabel: button.getAttribute('aria-label') || ''
   })));
-  const viewPathBox = await page.getByRole('button', { name: 'View Path' }).boundingBox();
+  const viewPathBox = await topicLens.getByRole('button', { name: 'View Path' }).boundingBox();
 
   await recordAudit(browserName, 'mobile-spatial-context', {
     viewport: { width: 390, height: 844 },
     selectedNodeBox: nodeBox,
     hitTargetBox,
     previewPanelBox: panelBox,
-    selectedNodeOverlapRatio: nodeArea ? overlap / nodeArea : null,
     labelBoxes,
     backTarget: backBox,
     zoomTargets: zoomBoxes,
@@ -1917,9 +1924,9 @@ test('@audit mobile preview preserves spatial context and touch controls', async
     panelButtons,
     hasExplicitCloseControl: panelButtons.some(button => /close|dismiss/i.test(`${button.text} ${button.ariaLabel}`))
   });
-  expect(nodeArea ? overlap / nodeArea : 1).toBeLessThanOrEqual(0.1);
+  expect(panelBox?.width).toBe(390);
   expect(Boolean(hitTargetBox && hitTargetBox.width >= 44 && hitTargetBox.height >= 44)).toBe(true);
-  expect(Boolean(viewPathBox && viewPathBox.y >= 0 && viewPathBox.y + viewPathBox.height <= await page.evaluate(() => document.documentElement.scrollHeight))).toBe(true);
+  expect(Boolean(viewPathBox && viewPathBox.y >= 0 && viewPathBox.y + viewPathBox.height <= 844)).toBe(true);
   expect(Boolean(backBox && backBox.width >= 44 && backBox.height >= 44 && zoomBoxes.every(box => box.width >= 44 && box.height >= 44))).toBe(true);
   expect(panelButtons.some(button => /close|dismiss/i.test(`${button.text} ${button.ariaLabel}`))).toBe(true);
   await page.screenshot({ path: `/tmp/constellation-audit/${browserName}-mobile-spatial-context.png`, fullPage: true });
@@ -2169,14 +2176,13 @@ test('@audit pending and locked progression states remain explainable', async ({
     await page.getByRole('button', { name: /Game Art/ }).click();
     const lockedGateway = page.locator('.constellation-node').filter({ hasText: 'Animation' });
     await lockedGateway.click();
-    const lockedPanel = page.locator('.constellation-info-panel');
+    const lockedPanel = page.getByLabel('Animation topic path info');
     await expect(lockedPanel).toBeVisible();
     const lockedPanelText = await lockedPanel.innerText();
     const lockedActions = await lockedPanel.getByRole('button').allTextContents();
     const lockedActionDisabled = await lockedPanel.getByRole('button', { name: 'Prerequisites required' }).isDisabled();
 
-    await page.getByRole('button', { name: 'Back' }).click();
-    await page.getByRole('button', { name: /Game Art/ }).click();
+    await lockedPanel.getByRole('button', { name: 'Close quest dock' }).click();
     await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
     await page.getByRole('button', { name: 'View Path' }).click();
     await expect(page.locator('.constellation-topic-layer')).toBeVisible();
@@ -2383,7 +2389,7 @@ test('@audit preview media failure has a meaningful fallback', async ({ page, br
     await page.goto('mainmenu');
     await page.getByRole('button', { name: /Game Art/ }).click();
     await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
-    const media = page.locator('.constellation-preview-media');
+    const media = page.getByLabel('3D Modeling preview');
     await expect(media).toBeVisible();
     const mediaState = await media.evaluate(element => {
       const image = element.querySelector('img');
@@ -2424,7 +2430,7 @@ test('@audit topic loading blocks conflicting map manipulation', async ({ page, 
   const camera = skillPanel.locator('.constellation-camera');
   const before = await camera.getAttribute('transform');
   await page.getByRole('button', { name: 'View Path' }).click();
-  await expect(page.getByRole('button', { name: 'Opening...' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Opening topic path...' })).toBeVisible();
   const controlsVisible = await skillPanel.locator('.constellation-camera-controls').isVisible();
   const controlsDisabled = await skillPanel.locator('.constellation-camera-controls button').evaluateAll(buttons => (
     buttons.every(button => (button as HTMLButtonElement).disabled)

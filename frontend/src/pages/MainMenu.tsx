@@ -166,11 +166,12 @@ function MainMenu() {
   const [highlightedSkillId, setHighlightedSkillId] = useState<string | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [starLensSkill, setStarLensSkill] = useState<Skill | null>(null);
-  const [starLensWorkflow, setStarLensWorkflow] = useState<'main' | 'skill'>('skill');
+  const [starLensWorkflow, setStarLensWorkflow] = useState<'main' | 'skill' | 'topic'>('skill');
   const [starLensClosing, setStarLensClosing] = useState(false);
   const [starLensFocusOnOpen, setStarLensFocusOnOpen] = useState(false);
   const starLensCloseTimerRef = useRef<number | null>(null);
   const starLensOpenerRef = useRef<HTMLElement | SVGElement | null>(null);
+  const topicPathActionRef = useRef<(() => void) | null>(null);
   const [showSkillModal, setShowSkillModal] = useState(false);
   const skillModalRef = useRef<HTMLDivElement | null>(null);
   const skillModalOpenerRef = useRef<HTMLElement | null>(null);
@@ -198,6 +199,7 @@ function MainMenu() {
     const finish = () => {
       setStarLensSkill(null);
       setStarLensClosing(false);
+      topicPathActionRef.current = null;
       starLensCloseTimerRef.current = null;
       if (shouldRestoreFocus) {
         window.requestAnimationFrame(() => {
@@ -221,7 +223,7 @@ function MainMenu() {
     if (!starLensSkill) return;
     const handleOutsidePointer = (event: PointerEvent) => {
       const target = event.target as Element | null;
-      if (!target || target.closest('.star-lens-dock, .star-lens-scrim, .main-quest-strip button, .theme-toggle')) return;
+      if (!target || target.closest('.star-lens-dock, .star-lens-scrim, .main-quest-strip button, .skill-constellation-panel .constellation-node, .theme-toggle')) return;
       closeStarLens();
     };
     document.addEventListener('pointerdown', handleOutsidePointer);
@@ -349,11 +351,28 @@ function MainMenu() {
     if (starLensCloseTimerRef.current !== null) window.clearTimeout(starLensCloseTimerRef.current);
     starLensCloseTimerRef.current = null;
     setStarLensClosing(false);
+    topicPathActionRef.current = null;
     setStarLensWorkflow('main');
-    if (starLensSkill?._id === skill._id) return;
+    if (starLensWorkflow === 'main' && starLensSkill?._id === skill._id) return;
     starLensOpenerRef.current = trigger || document.activeElement as HTMLElement | SVGElement | null;
     const shouldFocus = interaction === 'keyboard' || window.matchMedia('(max-width: 720px)').matches;
     setStarLensFocusOnOpen(shouldFocus);
+    setStarLensSkill(skill);
+  };
+
+  const handleTopicPathInfo = (
+    skill: Skill,
+    openPath: () => void,
+    interaction: 'pointer' | 'keyboard' = 'pointer',
+    trigger?: HTMLElement | SVGElement
+  ) => {
+    if (starLensCloseTimerRef.current !== null) window.clearTimeout(starLensCloseTimerRef.current);
+    starLensCloseTimerRef.current = null;
+    setStarLensClosing(false);
+    topicPathActionRef.current = openPath;
+    setStarLensWorkflow('topic');
+    starLensOpenerRef.current = trigger || document.activeElement as HTMLElement | SVGElement | null;
+    setStarLensFocusOnOpen(interaction === 'keyboard' || window.matchMedia('(max-width: 720px)').matches);
     setStarLensSkill(skill);
   };
 
@@ -1190,7 +1209,7 @@ function MainMenu() {
               pendingSkillIds={pendingApprovalSkills}
               userLevel={user?.level || 1}
               onOpenSkill={(skill: ConstellationSkill, interaction, trigger) => handleMainTopicClick(skill as Skill, interaction, trigger)}
-              selectedSkillId={starLensSkill?._id}
+              selectedSkillId={starLensWorkflow === 'main' ? starLensSkill?._id : null}
             />
           ) : (
             <div className="constellation-load-state" role="status">
@@ -1228,6 +1247,8 @@ function MainMenu() {
               userLevel={user?.level || 1}
               canUnlockSkill={(skill: ConstellationSkill) => canUnlockSkill(skill as Skill)}
               onOpenSkill={(skill: ConstellationSkill) => handleSkillClick(skill as Skill)}
+              onOpenTopicInfo={(skill, openPath, interaction, trigger) => handleTopicPathInfo(skill as Skill, openPath, interaction, trigger)}
+              selectedSkillId={starLensWorkflow === 'topic' ? starLensSkill?._id : null}
             />
           ) : (
             <div className="constellation-load-state" role="status">
@@ -1482,7 +1503,15 @@ function MainMenu() {
         closing={starLensClosing}
         focusOnOpen={starLensFocusOnOpen}
         onClose={() => closeStarLens()}
-        onPrimaryAction={() => { void handleUnlockSkill(starLensSkill); }}
+        onPrimaryAction={() => {
+          if (starLensWorkflow === 'topic') {
+            const openPath = topicPathActionRef.current;
+            closeStarLens(true, false);
+            openPath?.();
+            return;
+          }
+          void handleUnlockSkill(starLensSkill);
+        }}
         onCompleteStep={stepId => { void handleCompleteQuestStep(starLensSkill, stepId); }}
       />}
 

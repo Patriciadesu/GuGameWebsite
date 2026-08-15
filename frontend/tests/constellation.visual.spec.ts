@@ -645,6 +645,63 @@ test('mobile Main Quest opens Star Lens as a focus-contained bottom sheet', asyn
   await expect(currentQuest).toBeFocused();
 });
 
+test('desktop Skill Constellation fits dense discipline graphs without overflow', async ({ page }) => {
+  const denseGateways = [
+    skill('720000000000000000000001', 'Advanced Particle Systems', gameArtMap._id, 90, 250, 'topic-gateway'),
+    skill('720000000000000000000002', 'Animation Blend Trees', gameArtMap._id, 300, 520, 'topic-gateway'),
+    skill('720000000000000000000003', 'Audio Mixer and Spatial Sound', gameArtMap._id, 560, 330, 'topic-gateway'),
+    skill('720000000000000000000004', 'Timeline Production', gameArtMap._id, 740, 760, 'topic-gateway'),
+    skill('720000000000000000000005', 'Shader Graph Foundations', gameArtMap._id, 930, 260, 'topic-gateway'),
+    skill('720000000000000000000006', 'Character Rigging Pipeline', gameArtMap._id, 1160, 520, 'topic-gateway'),
+    skill('720000000000000000000007', 'Visual Effects Optimization', gameArtMap._id, 1510, 240, 'topic-gateway')
+  ];
+  gameArtSkills.push(...denseGateways);
+  allSkills.push(...denseGateways);
+
+  try {
+    await page.setViewportSize({ width: 2048, height: 1152 });
+    await installApiFixtures(page);
+    await page.goto('mainmenu');
+    const skillPanel = page.locator('.skill-constellation-panel');
+    const shell = skillPanel.locator('.constellation-shell');
+    const card = skillPanel.locator(`.constellation-overview-item[data-map-id="${gameArtMap._id}"]`);
+    await expect(card.locator('.constellation-node')).toHaveCount(gameArtSkills.length);
+
+    const fit = await card.evaluate(element => {
+      const cardBounds = element.getBoundingClientRect();
+      const stars = [...element.querySelectorAll('.constellation-node-star')].map(star => {
+        const bounds = star.getBoundingClientRect();
+        return { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom };
+      });
+      return {
+        card: { left: cardBounds.left, right: cardBounds.right, top: cardBounds.top, bottom: cardBounds.bottom },
+        stars,
+        viewBox: element.querySelector('svg')?.getAttribute('viewBox'),
+        dense: element.querySelector('.constellation-mini-layer')?.classList.contains('is-dense'),
+        visibleLabels: [...element.querySelectorAll('.constellation-node-label')]
+          .filter(label => getComputedStyle(label).display !== 'none').length
+      };
+    });
+    const [shellBounds, panelBounds] = await Promise.all([shell.boundingBox(), skillPanel.boundingBox()]);
+    expect(shellBounds).not.toBeNull();
+    expect(panelBounds).not.toBeNull();
+    expect(shellBounds!.width).toBeGreaterThanOrEqual(panelBounds!.width - 4);
+    expect(fit.viewBox).not.toBe(`0 0 ${gameArtMap.viewport.width} ${gameArtMap.viewport.height}`);
+    expect(fit.dense).toBe(true);
+    expect(fit.visibleLabels).toBe(0);
+    expect(fit.stars.every(star =>
+      star.left >= fit.card.left + 2 && star.right <= fit.card.right - 2 &&
+      star.top >= fit.card.top + 70 && star.bottom <= fit.card.bottom - 2
+    )).toBe(true);
+    await page.screenshot({ path: '/tmp/constellation-visual/dense-overview-fit.png', fullPage: true });
+    await page.getByRole('button', { name: 'Switch to dark theme' }).click();
+    await page.screenshot({ path: '/tmp/constellation-visual/dense-overview-fit-dark.png', fullPage: true });
+  } finally {
+    gameArtSkills.splice(gameArtSkills.length - denseGateways.length, denseGateways.length);
+    allSkills.splice(allSkills.length - denseGateways.length, denseGateways.length);
+  }
+});
+
 test('login dark theme preserves gateway contrast', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('gugame-theme', 'dark'));
   await page.goto('login');
@@ -800,11 +857,15 @@ test('player can explore a constellation with keyboard, camera controls, and bro
   await installApiFixtures(page);
   await page.goto('mainmenu');
   const skillFrame = page.locator('.skill-constellation-panel .constellation-shell');
+  const skillPanel = page.locator('.skill-constellation-panel');
+  await expect(skillFrame).toBeVisible();
   const overviewFrame = await skillFrame.boundingBox();
+  const skillPanelFrame = await skillPanel.boundingBox();
   const desktopViewport = page.viewportSize();
   expect(overviewFrame).not.toBeNull();
+  expect(skillPanelFrame).not.toBeNull();
   expect(desktopViewport).not.toBeNull();
-  expect(overviewFrame!.width / overviewFrame!.height).toBeCloseTo(16 / 9, 2);
+  expect(overviewFrame!.width).toBeGreaterThanOrEqual(skillPanelFrame!.width - 4);
   expect(overviewFrame!.y + overviewFrame!.height).toBeLessThanOrEqual(desktopViewport!.height);
   expect(overviewFrame!.height).toBeLessThanOrEqual(desktopViewport!.height - 280);
   await page.getByRole('button', { name: /Game Art/ }).click();

@@ -459,6 +459,30 @@ function ConstellationTree({
     return gateways.filter(gateway => visibleById.has(gateway._id));
   };
 
+  const overviewViewBoxFor = (detail: MapDetail) => {
+    const skills = topicWindowFor(detail);
+    if (skills.length === 0) return `0 0 ${detail.map.viewport.width} ${detail.map.viewport.height}`;
+    const isDense = skills.length > 8;
+
+    const bounds = skills.reduce((current, skill, index) => {
+      const point = pointForSkill(skill, index, skills.length, detail.map);
+      const labelWidth = isDense ? 0 : Math.min(520, Math.max(150, labelForSkill(skill).length * 22));
+      const labelOnLeft = point.x > detail.map.viewport.width * 0.74;
+      return {
+        left: Math.min(current.left, point.x - (labelOnLeft ? labelWidth + 54 : 70)),
+        right: Math.max(current.right, point.x + (labelOnLeft ? 70 : labelWidth + 54)),
+        top: Math.min(current.top, point.y - (isDense ? 76 : 100)),
+        bottom: Math.max(current.bottom, point.y + (isDense ? 76 : 120))
+      };
+    }, { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity });
+
+    const left = bounds.left - 44;
+    const top = bounds.top - 190;
+    const width = Math.max(620, bounds.right - bounds.left + 88);
+    const height = Math.max(520, bounds.bottom - bounds.top + 330);
+    return `${Math.round(left)} ${Math.round(top)} ${Math.round(width)} ${Math.round(height)}`;
+  };
+
   const renderMapLayer = (
     detail: MapDetail,
     options: {
@@ -636,7 +660,7 @@ function ConstellationTree({
                 <svg
                   viewBox={compactOverview
                     ? `100 ${Math.max(0, map.viewport.height / 2 - 90)} ${Math.max(400, map.viewport.width - 200)} 210`
-                    : `0 0 ${map.viewport.width} ${map.viewport.height}`}
+                    : detail ? overviewViewBoxFor(detail) : `0 0 ${map.viewport.width} ${map.viewport.height}`}
                   preserveAspectRatio="xMidYMid meet"
                   aria-hidden={compactOverview ? undefined : true}
                   aria-label={compactOverview ? `${map.name} topics` : undefined}
@@ -656,7 +680,7 @@ function ConstellationTree({
                   {detail && (
                     <g transform="translate(0 34)">
                       {renderMapLayer(detail, {
-                        className: 'constellation-mini-layer',
+                        className: `constellation-mini-layer ${topicWindowFor(detail).length > 8 ? 'is-dense' : ''}`,
                         gatewayOnly: true,
                         straightLineFit: compactOverview,
                         onNodeClick: skill => {

@@ -241,6 +241,9 @@
   font-size: 42px;
 }
 
+.constellation-mini-layer.is-dense .constellation-node-label,
+.constellation-mini-layer.is-dense .constellation-node-kicker { display: none; }
+
 .constellation-back,
 .constellation-camera-controls button {
   display: inline-flex;
@@ -1142,25 +1145,26 @@
   .is-main-quest-rail .constellation-node-hit-target { r: 76px; }
 }
 
-/* Desktop skill maps keep one stable 16:9 stage across overview, discipline, and topic. */
+/* Desktop skill maps fill the available panel while keeping one stable stage across states. */
 @media (min-width: 769px) {
   .skill-constellation-panel .constellation-shell {
-    width: auto;
-    max-width: 100%;
+    width: 100%;
     height: min(760px, calc(100dvh - 360px), calc(56.25vw - 21px));
     min-height: 0;
-    aspect-ratio: 16 / 9;
+    aspect-ratio: auto;
     margin-inline: auto;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
   }
 
   .skill-constellation-panel .constellation-overview-grid,
-  .skill-constellation-panel .constellation-overview-item,
   .skill-constellation-panel .constellation-canvas-wrap {
     height: 100%;
     min-height: 0;
   }
+
+  .skill-constellation-panel .constellation-overview-grid { grid-auto-rows: minmax(0, 1fr); }
+  .skill-constellation-panel .constellation-overview-item { height: auto; min-height: 0; }
 }
 
 @media (min-width: 901px) {
@@ -1216,7 +1220,6 @@
 }
 
 @media (min-width: 769px) {
-  .skill-constellation-panel .constellation-overview-item svg { transform: scale(1.26); transform-origin: 50% 54%; }
   .skill-constellation-panel .constellation-overview-copy { z-index: 3; }
 }
 
@@ -1234,7 +1237,6 @@
     height: clamp(340px, calc(100svh - 450px), 430px);
     min-height: 340px;
   }
-  .skill-constellation-panel .constellation-overview-item svg { transform: scale(1.18); transform-origin: 50% 54%; }
   .skill-constellation-panel .constellation-overview-pager { min-height: 52px; }
   .skill-constellation-panel .constellation-canvas { height: clamp(360px, 58svh, 480px); flex-basis: clamp(360px, 58svh, 480px); }
 }

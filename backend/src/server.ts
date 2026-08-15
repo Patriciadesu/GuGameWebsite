@@ -27,6 +27,14 @@ import { VoiceTracker } from './services/voiceTracker';
 import { getOfficeCatalogItem, getOfficeCatalogItems, OfficeCatalogItem } from './services/officeCatalog';
 import { getOfficeQuestById, getOfficeQuestDescription, getOfficeQuestDescriptionParts, getOfficeQuestDetailHash, getOfficeQuestImageUrl, getOfficeQuestPage, getOfficeQuestTags, getOfficeQuests } from './services/officeQuestCatalog';
 import { AsyncTtlCache, KeyedAsyncTtlCache } from './services/asyncCache';
+import { clearStarMasterQuestHydrationCache, hydrateSkillsFromStarMaster } from './services/starMasterQuestHydration';
+import { createStarMasterQuest, deleteStarMasterQuest, getStarMasterQuest, updateStarMasterQuest } from './services/starMasterApi';
+import {
+  buildStarMasterQuestMutation,
+  mergeStarMasterQuestMutation,
+  remoteQuestMatchesMutation,
+  starMasterQuestContentHash
+} from './services/starMasterMigration';
 import { CachedSessionStore } from './services/cachedSessionStore';
 import { KeyedBatchLoader } from './services/keyedBatchLoader';
 import {
@@ -417,9 +425,10 @@ const progressionCache = new AsyncTtlCache<ProgressionSnapshot>(10_000);
 const sessionUserCache = new KeyedAsyncTtlCache<Express.User | null>(15_000, 2_000);
 const discordRoleCache = new KeyedAsyncTtlCache<'user' | 'admin' | 'super-admin'>(5 * 60_000, 2_000);
 
-const getActiveSkills = () => activeSkillsCache.get(() =>
-  Skill.find({ isActive: true }).sort({ layer: 1, position: 1 }).lean()
-);
+const getActiveSkills = () => activeSkillsCache.get(async () => {
+  const skills = await Skill.find({ isActive: true }).sort({ layer: 1, position: 1 }).lean();
+  return hydrateSkillsFromStarMaster(skills);
+});
 
 interface ConstellationMapPageOptions {
   constellationType?: 'main' | 'skill';
@@ -618,6 +627,7 @@ const presentProgressionLeaderboard = (
 const invalidateSkillCaches = () => {
   activeSkillsCache.clear();
   progressionCache.clear();
+  clearStarMasterQuestHydrationCache();
 };
 
 const invalidateConstellationMapCache = () => {
@@ -1873,6 +1883,56 @@ const normalizeSubQuests = (
   return normalizeQuestStepExternalIds(steps, persistedSteps);
 };
 
+const getStarMasterQuestPlacement = async (constellationMapId: unknown) => {
+  if (!constellationMapId) throw new ConstellationOperationError('Quest Star must belong to a Topic', 409);
+  const topic = await ConstellationMap.findOne({
+    _id: constellationMapId,
+    scope: 'topic',
+    $or: [{ constellationType: 'skill' }, { constellationType: { $exists: false } }]
+  }).select('_id parentMapId externalTagId').lean();
+  if (!topic?.parentMapId || !topic.externalTagId) {
+    throw new ConstellationOperationError('Topic is not linked to a HamsterQuest Tag', 409);
+  }
+  const discipline = await ConstellationMap.findById(topic.parentMapId)
+    .select('_id externalHouseId')
+    .lean();
+  if (!discipline?.externalHouseId) {
+    throw new ConstellationOperationError('Discipline is not linked to a HamsterQuest House', 409);
+  }
+  return { houseId: discipline.externalHouseId, tagId: topic.externalTagId };
+};
+
+const syncExistingSkillQuestToStarMaster = async (
+  skill: InstanceType<typeof Skill>,
+  updates: Parameters<typeof mergeStarMasterQuestMutation>[1]
+) => {
+  if (skill.externalSource !== 'star-master' || !skill.externalQuestId) return;
+  const placement = await getStarMasterQuestPlacement(skill.constellationMapId);
+  const authoritativeQuest = await getStarMasterQuest(skill.externalQuestId);
+  const payload = mergeStarMasterQuestMutation(
+    authoritativeQuest,
+    updates,
+    placement.houseId,
+    placement.tagId
+  );
+  const remote = await updateStarMasterQuest(skill.externalQuestId, payload);
+  if (!remoteQuestMatchesMutation(remote, payload)) {
+    throw new ConstellationOperationError('HamsterQuest rejected part of the Quest update', 409);
+  }
+  skill.externalQuestContentHash = starMasterQuestContentHash(payload);
+  skill.externalQuestSyncedAt = new Date();
+};
+
+const removeLocalQuestContent = (skill: InstanceType<typeof Skill>) => {
+  skill.set('title', undefined);
+  skill.set('description', undefined);
+  skill.set('previewClip', undefined);
+  skill.set('contentYouTube', undefined);
+  skill.set('contentGoogleDrive', undefined);
+  skill.set('nodePreview', undefined);
+  skill.set('subQuests', undefined);
+};
+
 const officeQuestNodePreview = (quest: {
   title?: string;
   description?: string;
@@ -2477,10 +2537,11 @@ app.get('/api/constellation-maps/:id', requireAuth, async (req: Request, res: Re
         return topic ? [{ ...skill, topicLevel: topic.level || 1 }] : [];
       });
     }
+    const hydratedSkills = await hydrateSkillsFromStarMaster(visibleSkills);
     res.json({
       success: true,
       map,
-      skills: presentSkillsForUser(visibleSkills, {
+      skills: presentSkillsForUser(hydratedSkills, {
         role: req.user!.role,
         unlockedSkills: req.user!.state?.unlockedSkills
       })
@@ -2611,7 +2672,7 @@ app.get('/api/skills', requireAuth, async (req: Request, res: Response) => {
     const isAdmin = req.user!.role === 'admin' || req.user!.role === 'super-admin';
     const includeInactive = isAdmin && req.query.includeInactive === 'true';
     const allSkills = includeInactive
-      ? await Skill.find({}).sort({ layer: 1, position: 1 }).lean()
+      ? await hydrateSkillsFromStarMaster(await Skill.find({}).sort({ layer: 1, position: 1 }).lean())
       : await getActiveSkills();
     const skills = isAdmin
       ? allSkills
@@ -2651,7 +2712,7 @@ app.get('/api/skills/:id', requireAuth, async (req: Request, res: Response) => {
     
     // For asset nodes, hide content links until unlocked (unless admin)
     const isAssetNode = skill.nodeType === 'asset' || skill.nodeColor === 'blue';
-    const skillData = skill.toObject();
+    const [skillData] = await hydrateSkillsFromStarMaster([skill.toObject()]);
     
     // Admins can always see content, regular users need to unlock asset nodes
     if (isAssetNode && !isUnlocked && !isAdmin) {
@@ -2736,9 +2797,40 @@ app.post('/api/skills', requireConstellationSkillEditor, async (req: Request, re
       mainQuestLevel: skill.mainQuestLevel
     });
     await assertPublishedMainQuestReady(skill);
-    await skill.save();
+    let createdRemoteQuestId: string | undefined;
+    const destinationMap = skill.constellationMapId
+      ? await ConstellationMap.findById(skill.constellationMapId).select('scope constellationType').lean()
+      : null;
+    if (destinationMap?.scope === 'topic' && destinationMap.constellationType !== 'main') {
+      const placement = await getStarMasterQuestPlacement(skill.constellationMapId);
+      const { payload } = buildStarMasterQuestMutation(skill.toObject(), placement.houseId, placement.tagId);
+      const remote = await createStarMasterQuest(payload);
+      if (!remoteQuestMatchesMutation(remote, payload)) {
+        throw new ConstellationOperationError('HamsterQuest rejected part of the new Quest', 409);
+      }
+      createdRemoteQuestId = remote._id;
+      skill.externalSource = 'star-master';
+      skill.externalQuestId = remote._id;
+      skill.externalQuestContentHash = starMasterQuestContentHash(payload);
+      skill.externalQuestSyncedAt = new Date();
+      if (!skill.constellationLabel) skill.constellationLabel = title.trim().slice(0, 80);
+      removeLocalQuestContent(skill);
+    }
+    try {
+      await skill.save();
+    } catch (error) {
+      if (createdRemoteQuestId) {
+        try { await deleteStarMasterQuest(createdRemoteQuestId); } catch {
+          console.error('[StarMaster] Failed to compensate remote Quest after local Star save failed');
+        }
+      }
+      throw error;
+    }
     invalidateSkillCaches();
-    res.json({ success: true, skill });
+    const [presentedSkill] = await hydrateSkillsFromStarMaster([skill.toObject()], {
+      failClosed: skill.externalSource === 'star-master'
+    });
+    res.json({ success: true, skill: presentedSkill });
   } catch (error) {
     sendConstellationError(res, error, 'Failed to create skill');
   }
@@ -2755,6 +2847,7 @@ app.put('/api/skills/:id', requireConstellationSkillEditor, async (req: Request,
     if (!skill) {
       return res.status(404).json({ error: 'Skill not found' });
     }
+    const isStarMasterLinked = skill.externalSource === 'star-master' && Boolean(skill.externalQuestId);
 
     // Validate layer if provided
     if (layer !== undefined && (layer < 0 || layer > 7)) {
@@ -2780,19 +2873,19 @@ app.put('/api/skills/:id', requireConstellationSkillEditor, async (req: Request,
     }
 
     // Update fields
-    if (title !== undefined) skill.title = title;
-    if (description !== undefined) skill.description = description;
+    if (!isStarMasterLinked && title !== undefined) skill.title = title;
+    if (!isStarMasterLinked && description !== undefined) skill.description = description;
     if (cost !== undefined) skill.cost = cost;
     if (nextQuestCost !== undefined) skill.nextQuestCost = nextQuestCost;
-    if (previewClip !== undefined) {
+    if (!isStarMasterLinked && previewClip !== undefined) {
       // Ensure it's always an array (even if empty)
       skill.previewClip = Array.isArray(previewClip) ? previewClip : (previewClip ? [previewClip] : []);
     }
-    if (contentYouTube !== undefined) {
+    if (!isStarMasterLinked && contentYouTube !== undefined) {
       // Ensure it's always an array (even if empty) to allow clearing content
       skill.contentYouTube = Array.isArray(contentYouTube) ? contentYouTube : (contentYouTube ? [contentYouTube] : []);
     }
-    if (contentGoogleDrive !== undefined) {
+    if (!isStarMasterLinked && contentGoogleDrive !== undefined) {
       // Ensure it's always an array (even if empty) to allow clearing content
       skill.contentGoogleDrive = Array.isArray(contentGoogleDrive) ? contentGoogleDrive : (contentGoogleDrive ? [contentGoogleDrive] : []);
     }
@@ -2812,7 +2905,7 @@ app.put('/api/skills/:id', requireConstellationSkillEditor, async (req: Request,
       skill.set('mainQuestLevel', mainQuestLevel === null ? undefined : mainQuestLevel);
     }
     if (mapNodeRole !== undefined) skill.mapNodeRole = mapNodeRole;
-    if (nodePreview !== undefined) {
+    if (!isStarMasterLinked && nodePreview !== undefined) {
       skill.set('nodePreview', nodePreview === null ? undefined : nodePreview);
     }
     if (prerequisites !== undefined) skill.prerequisites = prerequisites;
@@ -2820,13 +2913,13 @@ app.put('/api/skills/:id', requireConstellationSkillEditor, async (req: Request,
     if (isAdvancedLocked !== undefined) skill.isAdvancedLocked = isAdvancedLocked === true;
     if (nodeColor !== undefined) skill.nodeColor = nodeColor;
     if (connections !== undefined) skill.connections = connections;
-    if (subQuests !== undefined) {
+    if (!isStarMasterLinked && subQuests !== undefined) {
       skill.subQuests = normalizeSubQuests(subQuests, skill.subQuests || []);
     }
     if (minAP !== undefined) skill.minAP = minAP !== null && minAP !== '' ? minAP : undefined;
     if (maxAP !== undefined) skill.maxAP = maxAP !== null && maxAP !== '' ? maxAP : undefined;
 
-    console.log(`📝 Updating skill: ${skill.title}`, { 
+    console.log(`📝 Updating skill: ${skill.constellationLabel || skill.title || skill.id}`, {
       connections: skill.connections, 
       minAP, 
       maxAP,
@@ -2849,6 +2942,30 @@ app.put('/api/skills/:id', requireConstellationSkillEditor, async (req: Request,
         skill.connections || []
       );
     }
+    if (isStarMasterLinked) {
+      if ([
+        title,
+        description,
+        previewClip,
+        contentYouTube,
+        contentGoogleDrive,
+        subQuests,
+        nodePreview,
+        constellationMapId
+      ].some(value => value !== undefined)) {
+        await syncExistingSkillQuestToStarMaster(skill, {
+          title,
+          description,
+          previewClip,
+          contentYouTube,
+          contentGoogleDrive,
+          subQuests,
+          nodePreview
+        });
+      }
+      if (!skill.constellationLabel) skill.constellationLabel = String(title || skill.title || 'Quest').slice(0, 80);
+      removeLocalQuestContent(skill);
+    }
     await skill.save();
     invalidateSkillCaches();
     
@@ -2860,7 +2977,10 @@ app.put('/api/skills/:id', requireConstellationSkillEditor, async (req: Request,
       previewClip: updatedSkill?.previewClip
     });
     
-    res.json({ success: true, skill: updatedSkill });
+    const [presentedSkill] = updatedSkill
+      ? await hydrateSkillsFromStarMaster([updatedSkill.toObject()], { failClosed: isStarMasterLinked })
+      : [updatedSkill];
+    res.json({ success: true, skill: presentedSkill });
   } catch (error) {
     sendConstellationError(res, error, 'Failed to update skill');
   }
@@ -3435,6 +3555,14 @@ const isMainConstellationQuest = async (skill: any) => {
   return map?.constellationType === 'main';
 };
 
+const getAuthoritativeQuestSteps = async (skill: any) => {
+  if (skill.externalSource !== 'star-master' || !skill.externalQuestId) return skill.subQuests || [];
+  const [hydrated] = await hydrateSkillsFromStarMaster([
+    typeof skill.toObject === 'function' ? skill.toObject() : skill
+  ], { failClosed: true });
+  return hydrated.subQuests || [];
+};
+
 app.get('/api/user/quest-progress', requireAuth, async (req: Request, res: Response) => {
   try {
     const [user, pendingRequests] = await Promise.all([
@@ -3469,11 +3597,13 @@ app.post('/api/skills/:id/steps/:stepId/complete', requireAuth, async (req: Requ
       return res.status(400).json({ error: 'Complete the previous quest first', missingPrerequisites });
     }
 
-    const steps = skill.subQuests || [];
+    const steps = await getAuthoritativeQuestSteps(skill);
     if (await isMainConstellationQuest(skill)) {
       return res.status(400).json({ error: 'Main quests do not use quest step completion' });
     }
-    const stepIndex = steps.findIndex((step, index) => (step.externalId || `step-${index}`) === req.params.stepId);
+    const stepIndex = steps.findIndex((step: any, index: number) =>
+      (step.externalId || `step-${index}`) === req.params.stepId
+    );
     if (stepIndex < 0) return res.status(404).json({ error: 'Quest step not found' });
 
     const stepId = steps[stepIndex].externalId || `step-${stepIndex}`;
@@ -3544,7 +3674,7 @@ app.post('/api/skills/:id/approval-request', requireAuth, async (req: Request, r
       return res.status(400).json({ error: 'Complete the previous quest first', missingPrerequisites });
     }
 
-    const steps = skill.subQuests || [];
+    const steps = await getAuthoritativeQuestSteps(skill);
     const completedStepIds = new Set(
       (user.completedQuestSteps || [])
         .filter(step => step.skillId === skillId)

@@ -17,6 +17,7 @@ backend/node_modules/
 backend/dist/
 backend/build/
 backend/*.log
+backend/migration/checkpoints/
 
 # Python (if using Python backend)
 backend/__pycache__/

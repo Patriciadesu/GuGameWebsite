@@ -21,7 +21,9 @@ export interface OfficeQuest {
 }
 
 const getOfficeQuestUrl = (): string =>
-  process.env.STAR_MASTER_API_URL || process.env.HAMQUEST_STAR_MASTER_API_URL || process.env.OFFICE_QUEST_API_URL ||
+  (process.env.STAR_MASTER_API_BASE_URL || process.env.HAMQUEST_STAR_MASTER_API_BASE_URL)
+    ? `${(process.env.STAR_MASTER_API_BASE_URL || process.env.HAMQUEST_STAR_MASTER_API_BASE_URL)!.replace(/\/+$/, '')}/quests`
+    : process.env.STAR_MASTER_API_URL || process.env.HAMQUEST_STAR_MASTER_API_URL || process.env.OFFICE_QUEST_API_URL ||
   'https://test.api.hamsterquest.com/api/v1/integrations/star-master/quests';
 
 const getStarMasterBearerToken = (): string => {
@@ -29,23 +31,30 @@ const getStarMasterBearerToken = (): string => {
   return process.env.STAR_MASTER_BEARER_TOKEN || (tokenFile ? fs.readFileSync(tokenFile, 'utf8').trim() : '');
 };
 
-const getOfficeQuestKey = (): string => {
+const readOfficeQuestKey = (): string => {
   const keyFile = process.env.STAR_MASTER_API_KEY_FILE || process.env.HAMQUEST_STAR_MASTER_API_KEY_FILE;
-  const key = process.env.STAR_MASTER_API_KEY || process.env.HAMQUEST_STAR_MASTER_API_KEY || process.env.OFFICE_QUEST_API_KEY ||
+  return process.env.STAR_MASTER_API_KEY || process.env.HAMQUEST_STAR_MASTER_API_KEY || process.env.OFFICE_QUEST_API_KEY ||
     (keyFile ? fs.readFileSync(keyFile, 'utf8').trim() : '');
+};
+
+const getOfficeQuestKey = (): string => {
+  const key = readOfficeQuestKey();
   if (!key) throw new Error('STAR_MASTER_API_KEY is not configured');
   return key;
 };
 
 const getRequestHeaders = () => {
   const bearerToken = getStarMasterBearerToken();
+  const apiKey = readOfficeQuestKey();
   return {
     Accept: 'application/json',
-    Authorization: bearerToken ? `Bearer ${bearerToken}` : `ApiKey ${getOfficeQuestKey()}`
+    Authorization: apiKey ? `ApiKey ${apiKey}` : `Bearer ${bearerToken || getOfficeQuestKey()}`
   };
 };
 
-const usesProductionUserApi = (): boolean => Boolean(getStarMasterBearerToken());
+const usesProductionUserApi = (): boolean => Boolean(getStarMasterBearerToken() && !readOfficeQuestKey());
+
+export const isOfficeQuestCatalogConfigured = (): boolean => Boolean(readOfficeQuestKey() || getStarMasterBearerToken());
 
 export const getOfficeQuestDescription = (description: OfficeQuest['description']): string => {
   if (typeof description === 'string') return description.trim();
@@ -144,6 +153,16 @@ export const getOfficeQuestPage = async (options: {
 };
 
 export const getOfficeQuestTags = async (): Promise<OfficeQuestTag[]> => {
+  if (!usesProductionUserApi()) {
+    const byId = new Map<string, OfficeQuestTag>();
+    for (const quest of await getOfficeQuests()) {
+      for (const tag of quest.tags || []) {
+        const id = tag._id || tag.id;
+        if (id && tag.name) byId.set(id, tag);
+      }
+    }
+    return [...byId.values()];
+  }
   const response = await axios.get(getOfficeQuestUrl().replace(/\/quests\/?$/, '/tags'), {
     timeout: 30000,
     headers: getRequestHeaders()

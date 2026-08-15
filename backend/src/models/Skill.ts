@@ -35,6 +35,9 @@ export interface ISkill extends Document {
   nodePreview?: INodePreview;
   externalSource?: 'office-quest' | 'hamquest' | 'star-master';
   externalQuestId?: string;
+  legacyExternalQuestId?: string;
+  externalQuestContentHash?: string;
+  externalQuestSyncedAt?: Date;
   subQuests?: Array<{
     externalId?: string;
     title: string;
@@ -63,8 +66,16 @@ export interface ISkill extends Document {
 
 const SkillSchema = new Schema<ISkill>(
   {
-    title: { type: String, required: true },
-    description: { type: String, required: true },
+    // HamsterQuest-linked Stars keep Quest content remotely. Legacy and Main Quest
+    // documents still require their local title/description.
+    title: {
+      type: String,
+      required: function(this: ISkill) { return this.externalSource !== 'star-master'; }
+    },
+    description: {
+      type: String,
+      required: function(this: ISkill) { return this.externalSource !== 'star-master'; }
+    },
     cost: { type: Number, required: true, min: 0 },
     nextQuestCost: { type: Number, default: 25, min: 0 },
     previewClip: [{ type: String }],
@@ -96,6 +107,9 @@ const SkillSchema = new Schema<ISkill>(
     },
     externalSource: { type: String, enum: ['office-quest', 'hamquest', 'star-master'] },
     externalQuestId: { type: String },
+    legacyExternalQuestId: { type: String },
+    externalQuestContentHash: { type: String },
+    externalQuestSyncedAt: { type: Date },
     subQuests: [{
       externalId: { type: String, required: true, immutable: true, trim: true },
       title: { type: String, required: true },

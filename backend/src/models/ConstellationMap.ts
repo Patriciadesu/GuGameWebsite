@@ -35,6 +35,8 @@ export interface IConstellationMap extends Document {
   scope: ConstellationScope;
   parentMapId?: Types.ObjectId;
   gatewaySkillId?: Types.ObjectId;
+  externalHouseId?: string;
+  externalTagId?: string;
   displayOrder: number;
   isActive: boolean;
   level: number;
@@ -84,6 +86,8 @@ const ConstellationMapSchema = new Schema<IConstellationMap>({
   scope: { type: String, enum: ['discipline', 'topic'], required: true },
   parentMapId: { type: Schema.Types.ObjectId, ref: 'ConstellationMap' },
   gatewaySkillId: { type: Schema.Types.ObjectId, ref: 'Skill' },
+  externalHouseId: { type: String, trim: true, match: /^[a-f0-9]{24}$/i },
+  externalTagId: { type: String, trim: true, match: /^[a-f0-9]{24}$/i },
   displayOrder: { type: Number, default: 0, min: 0 },
   isActive: { type: Boolean, default: false },
   level: { type: Number, default: 1, min: 1, validate: Number.isInteger },
@@ -114,5 +118,7 @@ ConstellationMapSchema.index({ scope: 1, isActive: 1, displayOrder: 1, _id: 1 })
 ConstellationMapSchema.index({ parentMapId: 1, isActive: 1, displayOrder: 1, _id: 1 });
 ConstellationMapSchema.index({ scope: 1, level: 1, isActive: 1, displayOrder: 1, _id: 1 });
 ConstellationMapSchema.index({ gatewaySkillId: 1 }, { unique: true, sparse: true });
+ConstellationMapSchema.index({ externalHouseId: 1 }, { sparse: true });
+ConstellationMapSchema.index({ externalTagId: 1 }, { sparse: true });
 
 export default mongoose.model<IConstellationMap>('ConstellationMap', ConstellationMapSchema);

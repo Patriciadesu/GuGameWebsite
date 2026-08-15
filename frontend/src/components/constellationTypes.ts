@@ -62,6 +62,8 @@ export interface ConstellationSkill {
   };
   externalSource?: 'office-quest' | 'hamquest' | 'star-master';
   externalQuestId?: string;
+  questDataSource?: 'hamsterquest' | 'local';
+  questDataStatus?: 'remote' | 'local-fallback' | 'missing';
   subQuests?: Array<{
     externalId?: string;
     title: string;

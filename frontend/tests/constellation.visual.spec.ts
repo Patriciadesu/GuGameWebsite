@@ -1993,6 +1993,7 @@ test('@audit camera manipulation, restoration, and reduced motion', async ({ pag
   const disciplineCameraBeforeTopic = await camera.getAttribute('transform');
 
   await modelingNode.focus();
+  await modelingNode.press('Enter');
   await page.getByRole('button', { name: 'View Path' }).click();
   await expect(page.locator('.skill-constellation-panel .constellation-focus')).toHaveClass(/is-topic-active/);
   await page.getByRole('button', { name: 'Back' }).click();
@@ -2001,6 +2002,7 @@ test('@audit camera manipulation, restoration, and reduced motion', async ({ pag
 
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await modelingNode.focus();
+  await modelingNode.press('Enter');
   await page.getByRole('button', { name: 'View Path' }).click();
   await expect(page.locator('.constellation-topic-layer')).toBeVisible();
   const reducedMotion = await page.locator('.constellation-topic-layer').evaluate(element => ({
@@ -2501,4 +2503,266 @@ test('@audit topic loading blocks conflicting map manipulation', async ({ page, 
   });
   expect(controlsDisabled).toBe(true);
   expect(during).toBe(before);
+});
+
+test('@audit HamsterQuest Step flow exposes hints, validates proof, and restores focus', async ({ page }) => {
+  const target = topicSkills[0] as typeof topicSkills[0] & {
+    externalSource?: string;
+    externalQuestId?: string;
+    subQuests?: Array<Record<string, unknown>>;
+  };
+  const previous = {
+    externalSource: target.externalSource,
+    externalQuestId: target.externalQuestId,
+    subQuests: target.subQuests
+  };
+  Object.assign(target, {
+    externalSource: 'star-master',
+    externalQuestId: 'hamsterquest-quest-01',
+    subQuests: [{
+      externalId: 'hamsterquest-step-01',
+      title: 'Create a production model',
+      description: 'Submit a screenshot of the finished model.',
+      descriptionParts: [{ type: 'Text', content: 'Use the approved naming convention.' }],
+      hintParts: [
+        { type: 'Text', content: 'Start from the silhouette before adding details.' },
+        { type: 'Image', content: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="320" height="180"%3E%3Crect width="320" height="180" fill="%2308789b"/%3E%3C/svg%3E' }
+      ],
+      hasHint: true,
+      type: 'ImageNote'
+    }]
+  });
+
+  let workflow = {
+    connected: true,
+    externalUserQuestId: 'user-quest-01',
+    questStatus: 'Active',
+    lifecycleStatus: 'active',
+    steps: [{ stepId: 'hamsterquest-step-01', status: 'available' }],
+    allStepsApproved: false,
+    questCompleted: false
+  };
+  let submittedBody = '';
+
+  try {
+    await installApiFixtures(page);
+    await page.route(`http://localhost:3099/api/skills/${target._id}/hamsterquest-workflow`, route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, workflow })
+    }));
+    await page.route(`http://localhost:3099/api/skills/${target._id}/hamsterquest-submissions`, async route => {
+      submittedBody = route.request().postDataBuffer()?.toString('utf8') || '';
+      workflow = {
+        ...workflow,
+        questStatus: 'Active',
+        steps: [{ stepId: 'hamsterquest-step-01', status: 'pending' }]
+      };
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, workflow })
+      });
+    });
+
+    await page.goto('mainmenu');
+    await page.getByRole('button', { name: /Game Art/ }).click();
+    await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
+    await page.getByRole('button', { name: 'View Path' }).click();
+    await page.locator('.constellation-topic-layer .constellation-node').filter({ hasText: 'Blender Setup' }).click();
+
+    const starLens = page.getByLabel('Blender Setup quest details');
+    const submitButton = starLens.getByRole('button', { name: 'Submit', exact: true });
+    await expect(submitButton).toBeEnabled();
+    await starLens.getByRole('button', { name: 'Show hint' }).click();
+    await expect(starLens).toContainText('Start from the silhouette before adding details.');
+    await expect(starLens.locator('.star-lens-dock__hint-content img')).toBeVisible();
+
+    await submitButton.click();
+    const dialog = page.getByRole('dialog', { name: 'Create a production model' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('textbox', { name: 'Message' })).toBeFocused();
+    expect(await starLens.evaluate(element => (element as HTMLElement).inert)).toBe(true);
+    await page.waitForTimeout(220);
+    await expect(starLens).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(submitButton).toBeFocused();
+
+    await page.getByRole('button', { name: 'Switch to dark theme' }).click();
+    await submitButton.click();
+    const imageInput = dialog.locator('input[type="file"]');
+    await imageInput.setInputFiles({
+      name: 'too-large.png',
+      mimeType: 'image/png',
+      buffer: Buffer.alloc(10 * 1024 * 1024 + 1)
+    });
+    await expect(dialog.getByRole('alert')).toHaveText('Image must be 10 MB or smaller.');
+    await dialog.getByRole('textbox', { name: 'Message' }).fill('Finished model with clean topology.');
+    await expect(dialog).toContainText('35 / 5,000');
+    await imageInput.setInputFiles({
+      name: 'model-proof.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL8WQAAAABJRU5ErkJggg==', 'base64')
+    });
+    await expect(dialog.getByAltText('Submission preview')).toBeVisible();
+    await page.waitForTimeout(220);
+    await expect(starLens).toBeVisible();
+    await page.screenshot({ path: '/tmp/constellation-audit/hamsterquest-submission-dialog-dark.png', fullPage: true });
+    await dialog.getByRole('button', { name: 'Submit for review' }).click();
+
+    await expect(dialog).toHaveCount(0);
+    await expect(starLens.getByRole('button', { name: 'Pending' })).toBeDisabled();
+    await expect(starLens).toContainText('Step submitted. HamsterQuest review is now pending.');
+    expect(submittedBody).toContain('Finished model with clean topology.');
+    expect(submittedBody).toContain('model-proof.png');
+    await page.screenshot({ path: '/tmp/constellation-audit/hamsterquest-submission-pending.png', fullPage: true });
+  } finally {
+    if (previous.externalSource) target.externalSource = previous.externalSource;
+    else delete target.externalSource;
+    if (previous.externalQuestId) target.externalQuestId = previous.externalQuestId;
+    else delete target.externalQuestId;
+    if (previous.subQuests) target.subQuests = previous.subQuests;
+    else delete target.subQuests;
+  }
+});
+
+test('@audit mobile HamsterQuest dialog traps focus and only closes its own layer', async ({ page }) => {
+  const target = topicSkills[0] as typeof topicSkills[0] & {
+    externalSource?: string;
+    externalQuestId?: string;
+    subQuests?: Array<Record<string, unknown>>;
+  };
+  const previous = {
+    externalSource: target.externalSource,
+    externalQuestId: target.externalQuestId,
+    subQuests: target.subQuests
+  };
+  Object.assign(target, {
+    externalSource: 'star-master',
+    externalQuestId: 'hamsterquest-mobile-quest',
+    subQuests: [{ externalId: 'mobile-hq-step', title: 'Mobile proof', description: 'Submit evidence.', type: 'ImageNote' }]
+  });
+
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await installApiFixtures(page);
+    await page.route(`http://localhost:3099/api/skills/${target._id}/hamsterquest-workflow`, route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        workflow: {
+          connected: true,
+          steps: [{ stepId: 'mobile-hq-step', status: 'available' }],
+          allStepsApproved: false,
+          questCompleted: false
+        }
+      })
+    }));
+    await page.goto('mainmenu');
+    await page.getByRole('button', { name: /Game Art/ }).click();
+    await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
+    await page.getByRole('button', { name: 'View Path' }).click();
+    await page.locator('.constellation-topic-layer .constellation-node').filter({ hasText: 'Blender Setup' }).click();
+
+    const starLens = page.getByRole('dialog', { name: 'Blender Setup quest details' });
+    const submitButton = starLens.getByRole('button', { name: 'Submit', exact: true });
+    await submitButton.click();
+    const submission = page.getByRole('dialog', { name: 'Mobile proof' });
+    await expect(submission).toBeVisible();
+    await page.waitForTimeout(220);
+    await expect(starLens).toBeVisible();
+    const first = submission.getByRole('button', { name: 'Close submission' });
+    const last = submission.getByRole('button', { name: 'Cancel' });
+    await first.focus();
+    await page.keyboard.press('Shift+Tab');
+    await expect(last).toBeFocused();
+    const geometry = await submission.locator('.star-lens-submit__panel').evaluate(element => ({
+      left: element.getBoundingClientRect().left,
+      right: element.getBoundingClientRect().right,
+      viewport: innerWidth,
+      scrollWidth: element.scrollWidth,
+      clientWidth: element.clientWidth
+    }));
+    expect(geometry.left).toBeGreaterThanOrEqual(0);
+    expect(geometry.right).toBeLessThanOrEqual(geometry.viewport);
+    expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth + 1);
+    await page.keyboard.press('Escape');
+    await expect(submission).toHaveCount(0);
+    await expect(starLens).toBeVisible();
+    await expect(submitButton).toBeFocused();
+  } finally {
+    if (previous.externalSource) target.externalSource = previous.externalSource;
+    else delete target.externalSource;
+    if (previous.externalQuestId) target.externalQuestId = previous.externalQuestId;
+    else delete target.externalQuestId;
+    if (previous.subQuests) target.subQuests = previous.subQuests;
+    else delete target.subQuests;
+  }
+});
+
+test('@audit HamsterQuest setup and rejection states explain the next action', async ({ page }) => {
+  const target = topicSkills[0] as typeof topicSkills[0] & {
+    externalSource?: string;
+    externalQuestId?: string;
+    subQuests?: Array<Record<string, unknown>>;
+  };
+  const previous = {
+    externalSource: target.externalSource,
+    externalQuestId: target.externalQuestId,
+    subQuests: target.subQuests
+  };
+  Object.assign(target, {
+    externalSource: 'star-master',
+    externalQuestId: 'hamsterquest-setup-quest',
+    subQuests: [{ externalId: 'setup-hq-step', title: 'Connect evidence', description: 'Submit evidence.', type: 'ImageNote' }]
+  });
+  let workflow: Record<string, unknown> = {
+    connected: false,
+    setupIssue: 'house-required',
+    setupMessage: 'Join at least one active HamsterQuest House before submitting.',
+    steps: [{ stepId: 'setup-hq-step', status: 'available' }],
+    allStepsApproved: false,
+    questCompleted: false
+  };
+
+  try {
+    await installApiFixtures(page);
+    await page.route(`http://localhost:3099/api/skills/${target._id}/hamsterquest-workflow`, route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, workflow })
+    }));
+    await page.goto('mainmenu');
+    await page.getByRole('button', { name: /Game Art/ }).click();
+    await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
+    await page.getByRole('button', { name: 'View Path' }).click();
+    await page.locator('.constellation-topic-layer .constellation-node').filter({ hasText: 'Blender Setup' }).click();
+
+    const starLens = page.getByLabel('Blender Setup quest details');
+    await expect(starLens).toContainText('Join at least one active HamsterQuest House before submitting.');
+    await expect(starLens.getByRole('button', { name: 'Submit', exact: true })).toBeDisabled();
+    await expect(starLens.getByRole('button', { name: 'Setup required' })).toBeDisabled();
+
+    workflow = {
+      connected: true,
+      questStatus: 'Active',
+      lifecycleStatus: 'active',
+      steps: [{ stepId: 'setup-hq-step', status: 'rejected' }],
+      allStepsApproved: false,
+      questCompleted: false
+    };
+    await starLens.getByRole('button', { name: 'Refresh HamsterQuest review status' }).click();
+    await expect(starLens.getByRole('button', { name: 'Resubmit' })).toBeEnabled();
+    await expect(starLens).toContainText('Needs revision');
+    await expect(starLens).not.toContainText('Join at least one active HamsterQuest House');
+  } finally {
+    if (previous.externalSource) target.externalSource = previous.externalSource;
+    else delete target.externalSource;
+    if (previous.externalQuestId) target.externalQuestId = previous.externalQuestId;
+    else delete target.externalQuestId;
+    if (previous.subQuests) target.subQuests = previous.subQuests;
+    else delete target.subQuests;
+  }
 });

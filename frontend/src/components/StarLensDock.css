@@ -152,6 +152,7 @@
 .star-lens-dock__hint-content { margin-top: 5px; padding: 9px; display: grid; gap: 8px; color: var(--star-ink); background: color-mix(in srgb, var(--star-gold) 7%, var(--star-panel-raised)); border: 1px solid color-mix(in srgb, var(--star-gold) 32%, var(--star-line)); border-radius: 5px; }
 .star-lens-dock__workflow-note { margin: 0 16px 13px; padding: 9px 10px; color: var(--star-ink); background: color-mix(in srgb, var(--star-gold) 8%, var(--star-panel-raised)); border-left: 3px solid var(--star-gold); border-radius: 4px; font-size: 12px; line-height: 1.5; }
 .star-lens-dock__workflow-note.is-error { background: color-mix(in srgb, #c65f67 9%, var(--star-panel-raised)); border-left-color: #c65f67; }
+.star-lens-dock__workflow-note.is-success { background: color-mix(in srgb, var(--star-green) 9%, var(--star-panel-raised)); border-left-color: var(--star-green); }
 .star-lens-dock__workflow-note button { margin-left: 8px; padding: 2px 6px; color: var(--star-cyan); background: transparent; border: 1px solid currentColor; border-radius: 3px; cursor: pointer; font: inherit; font-weight: 800; }
 
 .star-lens-dock__footer { position: sticky; bottom: 0; min-height: 62px; padding: 9px 12px 9px 16px; display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--star-line); background: var(--star-space); }
@@ -160,6 +161,10 @@
 .star-lens-dock__action:hover, .star-lens-dock__action:focus-visible { filter: brightness(1.08); outline: 2px solid var(--star-cyan); outline-offset: 2px; }
 .star-lens-dock__action:disabled { color: var(--star-muted); background: var(--star-panel-raised); border-color: var(--star-line); box-shadow: none; cursor: default; }
 .star-lens-dock__action svg { width: 15px; height: 15px; }
+.star-lens-dock__refresh { width: 36px; height: 36px; padding: 0; flex: 0 0 auto; display: grid; place-items: center; color: var(--star-muted); background: transparent; border: 1px solid var(--star-line); border-radius: 5px; cursor: pointer; }
+.star-lens-dock__refresh:hover, .star-lens-dock__refresh:focus-visible { color: var(--star-cyan); border-color: var(--star-cyan); outline: none; }
+.star-lens-dock__refresh:disabled { opacity: .5; cursor: default; }
+.star-lens-dock__refresh svg { width: 15px; height: 15px; }
 .star-lens-dock__announcement { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 .is-spinning { animation: star-lens-spin 800ms linear infinite; }
 
@@ -172,6 +177,7 @@
 .star-lens-submit__panel header > button { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; color: var(--star-muted); background: transparent; border: 0; border-radius: 4px; cursor: pointer; }
 .star-lens-submit__panel header > button:hover { color: var(--star-space); background: var(--star-cyan); }
 .star-lens-submit__panel > label { margin: 14px 16px; display: grid; gap: 6px; color: var(--star-ink); font-size: 12px; font-weight: 800; }
+.star-lens-submit__count { justify-self: end; color: var(--star-muted); font-size: 10px; font-weight: 700; }
 .star-lens-submit__panel textarea { width: 100%; resize: vertical; padding: 10px; color: var(--star-ink); background: var(--star-space); border: 1px solid var(--star-line); border-radius: 5px; font: inherit; font-size: 13px; line-height: 1.5; }
 .star-lens-submit__panel textarea:focus { border-color: var(--star-cyan); outline: 2px solid color-mix(in srgb, var(--star-cyan) 30%, transparent); }
 .star-lens-submit__image { margin: 0 16px 14px; }

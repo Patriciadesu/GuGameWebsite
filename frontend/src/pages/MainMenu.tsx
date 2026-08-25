@@ -223,7 +223,7 @@ function MainMenu() {
     if (!starLensSkill) return;
     const handleOutsidePointer = (event: PointerEvent) => {
       const target = event.target as Element | null;
-      if (!target || target.closest('.star-lens-dock, .star-lens-scrim, .quest-image-preview, .main-quest-strip button, .skill-constellation-panel .constellation-node, .theme-toggle')) return;
+      if (!target || target.closest('.star-lens-dock, .star-lens-submit, .star-lens-scrim, .quest-image-preview, .main-quest-strip button, .skill-constellation-panel .constellation-node, .theme-toggle')) return;
       closeStarLens();
     };
     document.addEventListener('pointerdown', handleOutsidePointer);

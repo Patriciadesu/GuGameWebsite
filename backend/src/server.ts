@@ -17,6 +17,7 @@ import Skill, { ISkill } from './models/Skill';
 import ConstellationMap from './models/ConstellationMap';
 import SkillTreeSettings from './models/SkillTreeSettings';
 import ApprovalRequest from './models/ApprovalRequest';
+import HamsterQuestSubmission from './models/HamsterQuestSubmission';
 import ShopItem from './models/ShopItem';
 import Purchase from './models/Purchase';
 import ExternalPurchaseOperation from './models/ExternalPurchaseOperation';
@@ -534,11 +535,12 @@ const filterSkillsForUserLevel = async (skills: any[], userLevel: number) => {
 };
 
 const getProgressionSnapshot = () => progressionCache.get(async () => {
-  const [users, guilds, skills, pendingApprovals] = await Promise.all([
+  const [users, guilds, skills, pendingApprovals, pendingHamsterQuestSteps] = await Promise.all([
     User.find().select('discordId username nickname avatar guildId unlockedSkills').lean(),
     Guild.find().select('name assetPointName').lean(),
     getActiveSkills(),
-    ApprovalRequest.find({ status: 'pending', reviewSystem: { $ne: 'hamsterquest' } }).select('userId skillId').lean()
+    ApprovalRequest.find({ status: 'pending' }).select('userId skillId').lean(),
+    HamsterQuestSubmission.find({ status: 'pending' }).select('userId skillId').lean()
   ]);
   const progressSkillIds = new Set(
     skills
@@ -587,10 +589,10 @@ const getProgressionSnapshot = () => progressionCache.get(async () => {
     guildsById,
     membersByGuildId,
     rankedGuilds: [...guildsById.values()].sort(compareProgress),
-    pendingApprovalsByUserId: pendingApprovals.reduce((requestsByUser, request) => {
-      const requests = requestsByUser.get(request.userId) || [];
-      requests.push(request.skillId);
-      requestsByUser.set(request.userId, requests);
+    pendingApprovalsByUserId: [...pendingApprovals, ...pendingHamsterQuestSteps].reduce((requestsByUser, request) => {
+      const requests = new Set(requestsByUser.get(request.userId) || []);
+      requests.add(request.skillId);
+      requestsByUser.set(request.userId, [...requests]);
       return requestsByUser;
     }, new Map<string, string[]>())
   };
@@ -3602,16 +3604,20 @@ const getAuthoritativeQuestSteps = async (skill: any) => {
 
 app.get('/api/user/quest-progress', requireAuth, async (req: Request, res: Response) => {
   try {
-    const [user, pendingRequests] = await Promise.all([
+    const [user, pendingRequests, pendingHamsterQuestSteps] = await Promise.all([
       User.findOne({ discordId: req.user!.id }).select('completedQuestSteps completedQuestRewards'),
-      ApprovalRequest.find({ userId: req.user!.id, status: 'pending', reviewSystem: { $ne: 'hamsterquest' } }).select('skillId')
+      ApprovalRequest.find({ userId: req.user!.id, status: 'pending' }).select('skillId'),
+      HamsterQuestSubmission.find({ userId: req.user!.id, status: 'pending' }).select('skillId')
     ]);
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json({
       success: true,
       completedSteps: (user.completedQuestSteps || []).map(step => ({ skillId: step.skillId, stepId: step.stepId })),
       completedQuests: user.completedQuestRewards || [],
-      pendingApprovalSkillIds: pendingRequests.map(request => request.skillId)
+      pendingApprovalSkillIds: [...new Set([
+        ...pendingRequests.map(request => request.skillId),
+        ...pendingHamsterQuestSteps.map(submission => submission.skillId)
+      ])]
     });
   } catch (error) {
     console.error('Error fetching quest progress:', error);
@@ -3700,7 +3706,7 @@ app.get('/api/skills/:id/hamsterquest-workflow', requireAuth, async (req: Reques
       stepIds
     });
     sessionUserCache.delete(req.user!.id);
-    if (workflow.questCompleted) invalidateProgressionCache();
+    invalidateProgressionCache();
     res.json({ success: true, workflow });
   } catch (error) {
     console.error('Error syncing HamsterQuest workflow:', error);

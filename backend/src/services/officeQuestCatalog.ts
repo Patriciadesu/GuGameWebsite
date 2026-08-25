@@ -15,7 +15,14 @@ export interface OfficeQuest {
   type?: string;
   description?: Array<{ type?: string; content?: string; isPixelArt?: boolean }> | string;
   tags?: OfficeQuestTag[];
-  subQuests?: Array<{ _id?: string; title?: string; description?: Array<{ type?: string; content?: string }> | string; subQuestType?: string }>;
+  subQuests?: Array<{
+    _id?: string;
+    title?: string;
+    description?: Array<{ type?: string; content?: string }> | string;
+    hint?: Array<{ type?: string; content?: string }> | string;
+    hintCost?: number;
+    subQuestType?: string;
+  }>;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -94,7 +101,8 @@ export const getOfficeQuestDetailHash = (quest: OfficeQuest): string => crypto
     subQuests: (quest.subQuests || []).map((subQuest: any) => ({
       title: normalized(String(subQuest?.title || '')),
       type: normalized(String(subQuest?.subQuestType || '')),
-      description: getOfficeQuestDescriptionParts(subQuest?.description).map(part => ({ type: normalized(part.type), content: normalized(part.content) }))
+      description: getOfficeQuestDescriptionParts(subQuest?.description).map(part => ({ type: normalized(part.type), content: normalized(part.content) })),
+      hint: getOfficeQuestDescriptionParts(subQuest?.hint).map(part => ({ type: normalized(part.type), content: normalized(part.content) }))
     }))
   }))
   .digest('hex');

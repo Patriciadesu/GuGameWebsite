@@ -69,6 +69,8 @@ export interface ConstellationSkill {
     title: string;
     description: string;
     descriptionParts?: Array<{ type: string; content: string }>;
+    hintParts?: Array<{ type: string; content: string }>;
+    hasHint?: boolean;
     type?: string;
   }>;
   isActive: boolean;

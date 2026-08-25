@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
-import { Check, ChevronDown, ChevronUp, GripHorizontal, Minus, Play, X } from 'lucide-react';
+import axios from 'axios';
+import { Check, ChevronDown, ChevronUp, GripHorizontal, HelpCircle, ImagePlus, LoaderCircle, Minus, Play, Send, Trash2, X } from 'lucide-react';
 import type { ConstellationSkill } from './constellationTypes';
 import { renderInlineMarkdown } from './inlineMarkdown';
 import { resolveMainQuestStatus } from './mainQuestStatus';
@@ -22,7 +23,23 @@ interface StarLensDockProps {
   onClose: () => void;
   onPrimaryAction: () => void;
   onCompleteStep: (stepId: string) => void;
+  onProgressSynced?: () => void | Promise<void>;
   onOpenImage?: (src: string, alt: string) => void;
+}
+
+type RemoteStepStatus = 'available' | 'pending' | 'approved' | 'rejected';
+
+interface HamsterQuestWorkflow {
+  connected: boolean;
+  setupIssue?: 'user-not-found' | 'house-required';
+  setupMessage?: string;
+  externalUserQuestId?: string;
+  questStatus?: 'Active' | 'Pending' | 'Completed';
+  lifecycleStatus?: 'active' | 'completed';
+  steps: Array<{ stepId: string; status: RemoteStepStatus; submissionId?: string }>;
+  allStepsApproved: boolean;
+  questCompleted: boolean;
+  syncWarning?: string;
 }
 
 const defaultPosition = (): DockPoint => ({
@@ -60,6 +77,7 @@ export default function StarLensDock({
   onClose,
   onPrimaryAction,
   onCompleteStep,
+  onProgressSynced,
   onOpenImage
 }: StarLensDockProps) {
   const dockRef = useRef<HTMLElement | null>(null);
@@ -69,9 +87,25 @@ export default function StarLensDock({
   const [showSteps, setShowSteps] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
   const [failedStepImages, setFailedStepImages] = useState<Set<string>>(new Set());
+  const [workflowData, setWorkflowData] = useState<HamsterQuestWorkflow | null>(null);
+  const [workflowLoading, setWorkflowLoading] = useState(false);
+  const [workflowError, setWorkflowError] = useState('');
+  const [revealedHints, setRevealedHints] = useState<Set<string>>(new Set());
+  const [submissionStepId, setSubmissionStepId] = useState<string | null>(null);
+  const [submissionMessage, setSubmissionMessage] = useState('');
+  const [submissionImage, setSubmissionImage] = useState<File | null>(null);
+  const [submissionPreview, setSubmissionPreview] = useState('');
+  const [submissionError, setSubmissionError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const progressSignatureRef = useRef('');
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 720px)').matches);
   const steps = skill.subQuests || [];
-  const completedSteps = useMemo(() => steps.filter((step, index) => completedStepIds.includes(step.externalId || `step-${index}`)).length, [completedStepIds, steps]);
+  const usesHamsterQuestWorkflow = workflow === 'skill' && skill.externalSource === 'star-master' && Boolean(skill.externalQuestId);
+  const remoteStatusByStep = useMemo(() => new Map((workflowData?.steps || []).map(step => [step.stepId, step.status])), [workflowData]);
+  const completedSteps = useMemo(() => steps.filter((step, index) => {
+    const stepId = step.externalId || `step-${index}`;
+    return usesHamsterQuestWorkflow ? remoteStatusByStep.get(stepId) === 'approved' : completedStepIds.includes(stepId);
+  }).length, [completedStepIds, remoteStatusByStep, steps, usesHamsterQuestWorkflow]);
   const allStepsCompleted = steps.length > 0 && completedSteps === steps.length;
   const requiresReview = skill.nodeType === 'quest' || skill.nodeColor === 'green';
   const progress = steps.length > 0 ? Math.round((completedSteps / steps.length) * 100) : (unlocked || completed ? 100 : 0);
@@ -87,11 +121,86 @@ export default function StarLensDock({
   const questLevel = skill.mainQuestLevel || 1;
   const mainQuestStatus = resolveMainQuestStatus({ questLevel, userLevel, pending });
 
+  const loadWorkflow = async (showLoading = false) => {
+    if (!usesHamsterQuestWorkflow) return;
+    if (showLoading) setWorkflowLoading(true);
+    try {
+      const response = await axios.get(`/api/skills/${skill._id}/hamsterquest-workflow`);
+      const next = response.data.workflow as HamsterQuestWorkflow;
+      setWorkflowData(next);
+      setWorkflowError('');
+      const signature = JSON.stringify({ steps: next.steps, completed: next.questCompleted });
+      if (progressSignatureRef.current && progressSignatureRef.current !== signature) await onProgressSynced?.();
+      progressSignatureRef.current = signature;
+    } catch (error: any) {
+      setWorkflowError(error.response?.data?.error || 'Unable to sync HamsterQuest review status.');
+    } finally {
+      if (showLoading) setWorkflowLoading(false);
+    }
+  };
+
   useEffect(() => {
     setShowSteps(workflow === 'skill' && steps.length > 0);
     setImageFailed(false);
     setFailedStepImages(new Set());
+    setWorkflowData(null);
+    setWorkflowError('');
+    setRevealedHints(new Set());
+    setSubmissionStepId(null);
+    progressSignatureRef.current = '';
   }, [skill._id, steps.length, workflow]);
+
+  useEffect(() => {
+    if (!usesHamsterQuestWorkflow) return;
+    void loadWorkflow(true);
+    const timer = window.setInterval(() => { void loadWorkflow(false); }, 12_000);
+    return () => window.clearInterval(timer);
+  }, [skill._id, usesHamsterQuestWorkflow]);
+
+  useEffect(() => {
+    if (!submissionImage) {
+      setSubmissionPreview('');
+      return;
+    }
+    const preview = URL.createObjectURL(submissionImage);
+    setSubmissionPreview(preview);
+    return () => URL.revokeObjectURL(preview);
+  }, [submissionImage]);
+
+  const closeSubmission = () => {
+    if (submitting) return;
+    setSubmissionStepId(null);
+    setSubmissionMessage('');
+    setSubmissionImage(null);
+    setSubmissionError('');
+  };
+
+  const submitStep = async () => {
+    if (!submissionStepId || (!submissionMessage.trim() && !submissionImage)) {
+      setSubmissionError('Add a message or image before submitting.');
+      return;
+    }
+    setSubmitting(true);
+    setSubmissionError('');
+    try {
+      const formData = new FormData();
+      formData.append('stepId', submissionStepId);
+      formData.append('message', submissionMessage.trim());
+      if (submissionImage) formData.append('image', submissionImage);
+      const response = await axios.post(`/api/skills/${skill._id}/hamsterquest-submissions`, formData);
+      setWorkflowData(response.data.workflow);
+      progressSignatureRef.current = JSON.stringify({ steps: response.data.workflow.steps, completed: response.data.workflow.questCompleted });
+      setSubmissionStepId(null);
+      setSubmissionMessage('');
+      setSubmissionImage(null);
+      setSubmissionError('');
+      await onProgressSynced?.();
+    } catch (error: any) {
+      setSubmissionError(error.response?.data?.error || 'Unable to submit this Step.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     const media = window.matchMedia('(max-width: 720px)');
@@ -185,7 +294,11 @@ export default function StarLensDock({
         : mainQuestStatus === 'current' ? 'Current quest' : 'Future level'
     : isTopicPath
       ? pending ? 'Pending review' : topicLevelLocked ? 'Locked' : unlocked ? 'Unlocked' : canUnlock ? 'Available' : 'Locked'
-    : completed ? 'Completed' : pending ? 'Pending review' : unlocked ? 'In progress' : canUnlock ? 'Available' : 'Locked';
+    : usesHamsterQuestWorkflow
+      ? workflowData?.questCompleted ? 'Completed'
+        : workflowData?.steps.some(step => step.status === 'pending') || workflowData?.allStepsApproved ? 'Pending review'
+          : unlocked ? 'In progress' : canUnlock ? 'Available' : 'Locked'
+      : completed ? 'Completed' : pending ? 'Pending review' : unlocked ? 'In progress' : canUnlock ? 'Available' : 'Locked';
   const actionLabel = isMainQuest
     ? mainQuestStatus === 'completed' ? `Level ${questLevel} completed`
       : mainQuestStatus === 'pending' ? 'Pending level-up review'
@@ -198,6 +311,12 @@ export default function StarLensDock({
           : !unlocked && !canUnlock
             ? 'Prerequisites required'
           : skill.nodePreview?.actionLabel || 'View Path'
+    : usesHamsterQuestWorkflow
+      ? workflowLoading ? 'Syncing review status'
+        : workflowData?.setupMessage || workflowError || (workflowData?.questCompleted ? 'Completed in HamsterQuest'
+          : workflowData?.allStepsApproved ? 'Awaiting final review'
+            : workflowData?.steps.some(step => step.status === 'pending') ? 'Awaiting HamsterQuest review'
+              : showSteps ? 'Hide steps' : 'View steps')
     : completed ? 'Completed'
       : pending ? 'Pending review'
         : steps.length > 0 && !allStepsCompleted ? (showSteps ? 'Hide steps' : 'View steps')
@@ -208,7 +327,9 @@ export default function StarLensDock({
     ? mainQuestStatus !== 'current' || !canUnlock
     : isTopicPath
       ? pending || topicLevelLocked || (!unlocked && !canUnlock)
-    : completed || pending || (!unlocked && !canUnlock) || (unlocked && steps.length === 0);
+    : usesHamsterQuestWorkflow
+      ? workflowLoading || Boolean(workflowData?.setupIssue) || Boolean(workflowData?.questCompleted) || (!unlocked && !canUnlock)
+      : completed || pending || (!unlocked && !canUnlock) || (unlocked && steps.length === 0);
   const topicRequirement = isTopicPath
     ? pending
       ? 'Approval is pending.'
@@ -227,7 +348,26 @@ export default function StarLensDock({
       setShowSteps(value => !value);
       return;
     }
+    if (usesHamsterQuestWorkflow) {
+      setShowSteps(value => !value);
+      return;
+    }
     onPrimaryAction();
+  };
+
+  const renderStepPart = (part: { type: string; content: string }, key: string, alt: string) => {
+    const type = part.type.toLowerCase();
+    if (type === 'image') {
+      return <div className="star-lens-dock__step-media" key={key}>
+        {failedStepImages.has(part.content) ? <span>Image unavailable</span> : <button type="button" onClick={() => onOpenImage?.(part.content, alt)} disabled={!onOpenImage} aria-label={`View ${alt}`}>
+          <img src={part.content} alt="" loading="lazy" onError={() => setFailedStepImages(current => new Set(current).add(part.content))} />
+        </button>}
+      </div>;
+    }
+    if (type === 'youtube' || type === 'googledrive') {
+      return <a className="star-lens-dock__resource-link" key={key} href={part.content} target="_blank" rel="noreferrer">Open {type === 'youtube' ? 'video' : 'resource'}</a>;
+    }
+    return <p key={key}>{renderInlineMarkdown(part.content, key)}</p>;
   };
 
   return <>
@@ -289,6 +429,11 @@ export default function StarLensDock({
           <i><b style={{ width: `${progress}%` }} /></i>
         </div>}
 
+        {usesHamsterQuestWorkflow && (workflowError || workflowData?.setupMessage || workflowData?.syncWarning) && <div className={`star-lens-dock__workflow-note ${workflowError || workflowData?.setupIssue ? 'is-error' : ''}`} role="status">
+          {workflowError || workflowData?.setupMessage || workflowData?.syncWarning}
+          {workflowError && <button type="button" onClick={() => void loadWorkflow(true)}>Try again</button>}
+        </div>}
+
         {!isMainQuest && !isTopicPath && steps.length > 0 && <section className="star-lens-dock__steps">
           <button type="button" className="star-lens-dock__steps-toggle" onClick={() => setShowSteps(value => !value)} aria-expanded={showSteps}>
             <span>Quest steps</span>{showSteps ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
@@ -296,23 +441,37 @@ export default function StarLensDock({
           {showSteps && <div className="star-lens-dock__step-list">
             {steps.map((step, index) => {
               const stepId = step.externalId || `step-${index}`;
-              const isDone = completedStepIds.includes(stepId);
+              const remoteStatus = remoteStatusByStep.get(stepId) || 'available';
+              const isDone = usesHamsterQuestWorkflow ? remoteStatus === 'approved' : completedStepIds.includes(stepId);
+              const isPendingStep = usesHamsterQuestWorkflow && remoteStatus === 'pending';
+              const isRejectedStep = usesHamsterQuestWorkflow && remoteStatus === 'rejected';
               const parts = (step.descriptionParts || []).filter(part => part.content.trim());
-              return <article key={stepId} className={isDone ? 'is-complete' : ''}>
+              const hintParts = (step.hintParts || []).filter(part => part.content.trim());
+              const hintRevealed = revealedHints.has(stepId);
+              const stepActionLabel = isDone ? 'Approved' : isPendingStep ? 'Pending' : isRejectedStep ? 'Resubmit' : usesHamsterQuestWorkflow ? 'Submit' : 'Complete';
+              return <article key={stepId} className={`${isDone ? 'is-complete' : ''} ${isPendingStep ? 'is-pending' : ''} ${isRejectedStep ? 'is-rejected' : ''}`}>
                 <div className="star-lens-dock__step-heading">
                   <span>{isDone ? <Check aria-hidden="true" /> : index + 1}</span>
-                  <div><small>{isDone ? 'Completed' : `Step ${index + 1}`}</small><strong>{step.title}</strong></div>
-                  <button type="button" onClick={() => onCompleteStep(stepId)} disabled={isDone || pending || (!unlocked && !canUnlock)}>{isDone ? 'Done' : 'Complete'}</button>
+                  <div><small>{isDone ? 'Approved' : isPendingStep ? 'Waiting for review' : isRejectedStep ? 'Needs revision' : `Step ${index + 1}`}</small><strong>{step.title}</strong></div>
+                  <button
+                    type="button"
+                    onClick={() => usesHamsterQuestWorkflow ? setSubmissionStepId(stepId) : onCompleteStep(stepId)}
+                    disabled={isDone || isPendingStep || (usesHamsterQuestWorkflow && (workflowLoading || Boolean(workflowData?.setupIssue))) || (!unlocked && !canUnlock) || (!usesHamsterQuestWorkflow && pending)}
+                  >{stepActionLabel}</button>
                 </div>
                 <div className="star-lens-dock__step-details">
-                  {parts.length > 0 ? parts.map((part, partIndex) => part.type.toLowerCase() === 'image' ? (
-                    <div className="star-lens-dock__step-media" key={`${stepId}-image-${partIndex}`}>
-                      {failedStepImages.has(part.content) ? <span>Image unavailable</span> : <button type="button" onClick={() => onOpenImage?.(part.content, `${step.title} image`)} disabled={!onOpenImage} aria-label={`View ${step.title} image`}>
-                        <img src={part.content} alt="" loading="lazy" onError={() => setFailedStepImages(current => new Set(current).add(part.content))} />
-                      </button>}
-                    </div>
-                  ) : <p key={`${stepId}-text-${partIndex}`}>{renderInlineMarkdown(part.content, `star-lens-step-${stepId}-${partIndex}`)}</p>)
+                  {parts.length > 0 ? parts.map((part, partIndex) => renderStepPart(part, `star-lens-step-${stepId}-${partIndex}`, `${step.title} image`))
                     : step.description && <p>{renderInlineMarkdown(step.description, `star-lens-step-${stepId}`)}</p>}
+                  {hintParts.length > 0 && <div className="star-lens-dock__hint">
+                    <button type="button" onClick={() => setRevealedHints(current => {
+                      const next = new Set(current);
+                      if (next.has(stepId)) next.delete(stepId); else next.add(stepId);
+                      return next;
+                    })} aria-expanded={hintRevealed}><HelpCircle aria-hidden="true" />{hintRevealed ? 'Hide hint' : 'Show hint'}</button>
+                    {hintRevealed && <div className="star-lens-dock__hint-content">
+                      {hintParts.map((part, partIndex) => renderStepPart(part, `star-lens-hint-${stepId}-${partIndex}`, `${step.title} hint`))}
+                    </div>}
+                  </div>}
                 </div>
               </article>;
             })}
@@ -326,9 +485,11 @@ export default function StarLensDock({
             ? 'Admin review required after submission'
             : isTopicPath
               ? 'Skill constellation path'
-              : skill.cost > 0 ? `${skill.cost} ${assetPointName}` : 'Skill quest'}</span>
+              : usesHamsterQuestWorkflow ? 'Review in HamsterQuest Backoffice'
+                : skill.cost > 0 ? `${skill.cost} ${assetPointName}` : 'Skill quest'}</span>
           <button type="button" className="star-lens-dock__action" onClick={handleAction} disabled={actionDisabled}>
-            {!isMainQuest && !isTopicPath && steps.length > 0 && !allStepsCompleted && showSteps
+            {workflowLoading ? <LoaderCircle className="is-spinning" aria-hidden="true" />
+              : !isMainQuest && !isTopicPath && steps.length > 0 && !allStepsCompleted && showSteps
               ? <ChevronUp aria-hidden="true" />
               : (!isTopicPath && (isMainQuest ? mainQuestStatus === 'completed' : completed)) ? <Check aria-hidden="true" /> : <Play aria-hidden="true" />}{actionLabel}
           </button>
@@ -336,5 +497,17 @@ export default function StarLensDock({
       </div>}
       <span className="star-lens-dock__announcement" role="status" aria-live="polite">{skill.title}: {status}</span>
     </aside>
+    {submissionStepId && <div className="star-lens-submit" role="dialog" aria-modal="true" aria-labelledby="star-lens-submit-title" onClick={closeSubmission}>
+      <div className="star-lens-submit__panel" onClick={event => event.stopPropagation()}>
+        <header><div><small>HamsterQuest submission</small><h3 id="star-lens-submit-title">{steps.find((step, index) => (step.externalId || `step-${index}`) === submissionStepId)?.title}</h3></div><button type="button" onClick={closeSubmission} disabled={submitting} aria-label="Close submission"><X aria-hidden="true" /></button></header>
+        <label>Message<textarea value={submissionMessage} onChange={event => setSubmissionMessage(event.target.value)} maxLength={5000} rows={4} placeholder="Explain what you completed or leave context for the reviewer…" /></label>
+        <div className="star-lens-submit__image">
+          {submissionPreview ? <div className="star-lens-submit__preview"><img src={submissionPreview} alt="Submission preview" /><button type="button" onClick={() => setSubmissionImage(null)} disabled={submitting}><Trash2 aria-hidden="true" />Remove</button></div>
+            : <label><ImagePlus aria-hidden="true" /><span>Add proof image<small>PNG, JPEG, GIF or WebP · up to 10 MB</small></span><input type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={event => setSubmissionImage(event.target.files?.[0] || null)} /></label>}
+        </div>
+        {submissionError && <p className="star-lens-submit__error" role="alert">{submissionError}</p>}
+        <footer><button type="button" onClick={closeSubmission} disabled={submitting}>Cancel</button><button type="button" className="is-primary" onClick={() => void submitStep()} disabled={submitting || (!submissionMessage.trim() && !submissionImage)}>{submitting ? <LoaderCircle className="is-spinning" aria-hidden="true" /> : <Send aria-hidden="true" />}{submitting ? 'Submitting…' : 'Submit for review'}</button></footer>
+      </div>
+    </div>}
   </>;
 }

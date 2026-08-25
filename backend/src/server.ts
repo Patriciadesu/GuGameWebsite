@@ -28,7 +28,8 @@ import { getOfficeCatalogItem, getOfficeCatalogItems, OfficeCatalogItem } from '
 import { getOfficeQuestById, getOfficeQuestDescription, getOfficeQuestDescriptionParts, getOfficeQuestDetailHash, getOfficeQuestImageUrl, getOfficeQuestPage, getOfficeQuestTags, getOfficeQuests } from './services/officeQuestCatalog';
 import { AsyncTtlCache, KeyedAsyncTtlCache } from './services/asyncCache';
 import { clearStarMasterQuestHydrationCache, hydrateSkillsFromStarMaster } from './services/starMasterQuestHydration';
-import { createStarMasterQuest, deleteStarMasterQuest, getStarMasterQuest, updateStarMasterQuest } from './services/starMasterApi';
+import { createStarMasterQuest, deleteStarMasterQuest, getStarMasterQuest, StarMasterApiError, updateStarMasterQuest } from './services/starMasterApi';
+import { getHamsterQuestWorkflow, submitHamsterQuestStep } from './services/starMasterQuestWorkflow';
 import {
   buildStarMasterQuestMutation,
   mergeStarMasterQuestMutation,
@@ -537,7 +538,7 @@ const getProgressionSnapshot = () => progressionCache.get(async () => {
     User.find().select('discordId username nickname avatar guildId unlockedSkills').lean(),
     Guild.find().select('name assetPointName').lean(),
     getActiveSkills(),
-    ApprovalRequest.find({ status: 'pending' }).select('userId skillId').lean()
+    ApprovalRequest.find({ status: 'pending', reviewSystem: { $ne: 'hamsterquest' } }).select('userId skillId').lean()
   ]);
   const progressSkillIds = new Set(
     skills
@@ -3417,6 +3418,42 @@ const upload = multer({
   }
 });
 
+const submissionStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadsDir),
+  filename: (_req, _file, cb) => cb(null, `submission-${Date.now()}-${crypto.randomUUID()}.upload`)
+});
+
+const submissionUpload = multer({
+  storage: submissionStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => file.mimetype.startsWith('image/')
+    ? cb(null, true)
+    : cb(new Error('Only image files are allowed'))
+});
+
+const getVerifiedImageExtension = (filePath: string): string | null => {
+  const handle = fs.openSync(filePath, 'r');
+  try {
+    const header = Buffer.alloc(12);
+    fs.readSync(handle, header, 0, header.length, 0);
+    if (header.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]))) return '.png';
+    if (header.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) return '.jpg';
+    if (header.subarray(0, 6).toString('ascii') === 'GIF87a' || header.subarray(0, 6).toString('ascii') === 'GIF89a') return '.gif';
+    if (header.subarray(0, 4).toString('ascii') === 'RIFF' && header.subarray(8, 12).toString('ascii') === 'WEBP') return '.webp';
+    return null;
+  } finally {
+    fs.closeSync(handle);
+  }
+};
+
+const getPublicBackendUrl = (req: Request): string => {
+  if (process.env.BACKEND_URL) return process.env.BACKEND_URL.replace(/\/+$/, '');
+  const protocol = String(req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http')).split(',')[0].trim();
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || `localhost:${PORT}`).split(',')[0].trim();
+  const pathPrefix = String(req.headers['x-forwarded-prefix'] || (host.includes('localhost') || host.includes('127.0.0.1') ? '' : '/gugame-back'));
+  return `${protocol}://${host}${pathPrefix}`.replace(/\/+$/, '');
+};
+
 // Unlock skill endpoint (authenticated users)
 app.post('/api/skills/:id/unlock', requireAuth, async (req: Request, res: Response) => {
   try {
@@ -3567,7 +3604,7 @@ app.get('/api/user/quest-progress', requireAuth, async (req: Request, res: Respo
   try {
     const [user, pendingRequests] = await Promise.all([
       User.findOne({ discordId: req.user!.id }).select('completedQuestSteps completedQuestRewards'),
-      ApprovalRequest.find({ userId: req.user!.id, status: 'pending' }).select('skillId')
+      ApprovalRequest.find({ userId: req.user!.id, status: 'pending', reviewSystem: { $ne: 'hamsterquest' } }).select('skillId')
     ]);
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json({
@@ -3591,6 +3628,9 @@ app.post('/api/skills/:id/steps/:stepId/complete', requireAuth, async (req: Requ
     if (!user) return res.status(404).json({ error: 'User not found' });
     const skill = await getPlayerEligibleSkill(req.params.id, user.level || 1);
     if (!skill) return res.status(404).json({ error: 'Quest not found' });
+    if (skill.externalSource === 'star-master' && skill.externalQuestId) {
+      return res.status(409).json({ error: 'Submit this Step for review through HamsterQuest' });
+    }
 
     const missingPrerequisites = await getMissingQuestPrerequisites(skill, user.unlockedSkills || []);
     if (missingPrerequisites.length > 0) {
@@ -3637,6 +3677,107 @@ app.post('/api/skills/:id/steps/:stepId/complete', requireAuth, async (req: Requ
   }
 });
 
+const getStarMasterWorkflowSkill = async (skillId: string, user: IUser) => {
+  const skill = await getPlayerEligibleSkill(skillId, user.level || 1);
+  if (!skill || skill.externalSource !== 'star-master' || !skill.externalQuestId) return null;
+  if (await isMainConstellationQuest(skill)) return null;
+  return skill;
+};
+
+app.get('/api/skills/:id/hamsterquest-workflow', requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid quest ID' });
+    const user = await User.findOne({ discordId: req.user!.id });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const skill = await getStarMasterWorkflowSkill(req.params.id, user);
+    if (!skill) return res.status(404).json({ error: 'HamsterQuest-linked Skill Quest not found' });
+    const steps = await getAuthoritativeQuestSteps(skill);
+    const stepIds = steps.map((step: any, index: number) => step.externalId || `step-${index}`);
+    const workflow = await getHamsterQuestWorkflow({
+      discordId: req.user!.id,
+      skillId: skill.id,
+      externalQuestId: skill.externalQuestId!,
+      stepIds
+    });
+    sessionUserCache.delete(req.user!.id);
+    if (workflow.questCompleted) invalidateProgressionCache();
+    res.json({ success: true, workflow });
+  } catch (error) {
+    console.error('Error syncing HamsterQuest workflow:', error);
+    const status = error instanceof StarMasterApiError ? (error.status || 502) : 500;
+    res.status(status).json({ error: error instanceof Error ? error.message : 'Failed to sync HamsterQuest Quest' });
+  }
+});
+
+app.post(
+  '/api/skills/:id/hamsterquest-submissions',
+  requireAuth,
+  (req: Request, res: Response, next: any) => submissionUpload.single('image')(req, res, error => {
+    if (!error) return next();
+    if ((error as any).code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'Image must be 10 MB or smaller' });
+    }
+    return res.status(400).json({ error: error.message || 'Unable to upload image' });
+  }),
+  async (req: Request, res: Response) => {
+    let uploadedPath = req.file?.path;
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid quest ID' });
+      const stepId = typeof req.body.stepId === 'string' ? req.body.stepId.trim() : '';
+      const message = typeof req.body.message === 'string' ? req.body.message.trim() : '';
+      if (!stepId) return res.status(400).json({ error: 'Step is required' });
+      if (message.length > 5000) return res.status(400).json({ error: 'Message must be 5,000 characters or fewer' });
+      if (!message && !req.file) return res.status(400).json({ error: 'Add a message or image before submitting' });
+
+      let imageUrl: string | undefined;
+      if (req.file) {
+        const extension = getVerifiedImageExtension(req.file.path);
+        if (!extension) return res.status(400).json({ error: 'Only PNG, JPEG, GIF, or WebP images are allowed' });
+        const safeFilename = req.file.filename.replace(/\.upload$/, extension);
+        const safePath = path.join(uploadsDir, safeFilename);
+        fs.renameSync(req.file.path, safePath);
+        uploadedPath = safePath;
+        imageUrl = `${getPublicBackendUrl(req)}/uploads/${safeFilename}`;
+      }
+
+      const user = await User.findOne({ discordId: req.user!.id });
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      const skill = await getStarMasterWorkflowSkill(req.params.id, user);
+      if (!skill) return res.status(404).json({ error: 'HamsterQuest-linked Skill Quest not found' });
+      const missingPrerequisites = await getMissingQuestPrerequisites(skill, user.unlockedSkills || []);
+      if (missingPrerequisites.length > 0) {
+        return res.status(400).json({ error: 'Complete the previous quest first', missingPrerequisites });
+      }
+      const steps = await getAuthoritativeQuestSteps(skill);
+      const stepIds = steps.map((step: any, index: number) => step.externalId || `step-${index}`);
+      if (!stepIds.includes(stepId)) return res.status(404).json({ error: 'Quest Step not found' });
+
+      const workflow = await submitHamsterQuestStep({
+        discordId: req.user!.id,
+        skillId: skill.id,
+        externalQuestId: skill.externalQuestId!,
+        stepIds,
+        stepId,
+        message,
+        imageUrl
+      });
+      uploadedPath = undefined;
+      sessionUserCache.delete(req.user!.id);
+      invalidateProgressionCache();
+      res.status(201).json({ success: true, message: 'Submitted to HamsterQuest Backoffice', workflow });
+    } catch (error) {
+      console.error('Error submitting HamsterQuest Step:', error);
+      const status = error instanceof StarMasterApiError ? (error.status || 502) : 500;
+      res.status(status).json({
+        error: error instanceof Error ? error.message : 'Failed to submit Step to HamsterQuest',
+        ...(error instanceof StarMasterApiError && error.code ? { code: error.code } : {})
+      });
+    } finally {
+      if (uploadedPath && fs.existsSync(uploadedPath)) fs.unlinkSync(uploadedPath);
+    }
+  }
+);
+
 // Send approval request for quest node (authenticated users)
 app.post('/api/skills/:id/approval-request', requireAuth, async (req: Request, res: Response) => {
   try {
@@ -3660,6 +3801,9 @@ app.post('/api/skills/:id/approval-request', requireAuth, async (req: Request, r
     }
 
     const isMainQuest = await isMainConstellationQuest(skill);
+    if (!isMainQuest && skill.externalSource === 'star-master' && skill.externalQuestId) {
+      return res.status(409).json({ error: 'This Quest is reviewed in HamsterQuest Backoffice after each Step submission' });
+    }
     // Main Quest stars are reviewable regardless of their legacy node colour.
     const isQuest = isMainQuest || skill.nodeType === 'quest' || skill.nodeColor === 'green';
     if (!isQuest) {
@@ -3752,7 +3896,7 @@ app.get('/api/approval-requests', requireAdmin, async (req: Request, res: Respon
   try {
     const { guildId } = req.query; // Optional guild filter
     
-    let query: any = { status: 'pending' };
+    let query: any = { status: 'pending', reviewSystem: { $ne: 'hamsterquest' } };
     
     // If guildId filter is provided, only get requests from users in that guild
     if (guildId && guildId !== 'all') {
@@ -3838,10 +3982,13 @@ app.post('/api/approval-requests/:id/approve', requireAdmin, async (req: Request
       return res.status(400).json({ error: 'Invalid approval request ID' });
     }
 
-    const approvalRequest = await ApprovalRequest.findById(requestId).select('userId skillId status').lean();
+    const approvalRequest = await ApprovalRequest.findById(requestId).select('userId skillId status reviewSystem').lean();
     if (!approvalRequest) return res.status(404).json({ error: 'Approval request not found' });
     if (approvalRequest.status !== 'pending') {
       return res.status(409).json({ error: 'This request has already been processed' });
+    }
+    if (approvalRequest.reviewSystem === 'hamsterquest') {
+      return res.status(409).json({ error: 'Review this submission in HamsterQuest Backoffice' });
     }
     const targetUser = await User.findOne({ discordId: approvalRequest.userId }).select('level').lean();
     if (!targetUser) return res.status(404).json({ error: 'User not found' });

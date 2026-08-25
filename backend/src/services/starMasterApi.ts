@@ -28,6 +28,53 @@ export interface StarMasterSubQuest {
   description?: StarMasterDescriptionPart[];
   subQuestType: 'Choice' | 'ImageNote' | 'System';
   choices?: Array<{ text: string; isCorrect?: boolean }>;
+  hint?: StarMasterDescriptionPart[];
+  hintCost?: number;
+}
+
+export interface StarMasterUser {
+  id: string;
+  discordId: string;
+  discordUsername?: string;
+  discordNickname?: string;
+  currentHouseId?: string | null;
+}
+
+export interface StarMasterUserHouse {
+  house: StarMasterHouse;
+  joinedAt?: string;
+  lastActivatedAt?: string | null;
+  disabledAt?: string | null;
+}
+
+export interface StarMasterUserQuestSubQuest {
+  subQuestId: string;
+  title: string;
+  description?: StarMasterDescriptionPart[];
+  subQuestType?: string;
+  status: 'Active' | 'Pending' | 'Completed';
+  submissionId?: string | null;
+  hint?: StarMasterDescriptionPart[];
+  hintPurchased?: boolean;
+}
+
+export interface StarMasterUserQuest {
+  _id: string;
+  status: 'Active' | 'Pending' | 'Completed';
+  houseId?: string;
+  lifecycleStatus: 'active' | 'completed';
+  quest: {
+    originalQuestId: string;
+    title: string;
+    subQuests: StarMasterUserQuestSubQuest[];
+  };
+}
+
+export interface StarMasterQuestSubmission {
+  message: string;
+  submission: { _id: string; status?: string };
+  mainQuestAutoSubmitted?: boolean;
+  mainQuestSubmission?: { _id: string; status?: string } | null;
 }
 
 export interface StarMasterQuest {
@@ -213,6 +260,89 @@ export const deleteStarMasterQuest = async (questId: string): Promise<void> => {
     method: 'DELETE',
     url: `${getStarMasterApiBaseUrl()}/quests/${encodeURIComponent(questId)}`
   });
+};
+
+export const findStarMasterUserByDiscordId = async (discordId: string): Promise<StarMasterUser | null> => {
+  const envelope = await request<ListEnvelope<StarMasterUser>>({
+    method: 'GET',
+    url: `${getStarMasterApiBaseUrl()}/users`,
+    params: { discordIds: discordId, page: 1, limit: 100 }
+  });
+  if (!Array.isArray(envelope.data)) throw new StarMasterApiError('StarMaster returned an invalid User list');
+  return envelope.data.find(user => user.discordId === discordId) || null;
+};
+
+export const listStarMasterUserHouses = async (userId: string): Promise<StarMasterUserHouse[]> => {
+  const envelope = await request<DataEnvelope<StarMasterUserHouse[]>>({
+    method: 'GET',
+    url: `${getStarMasterApiBaseUrl()}/users/${encodeURIComponent(userId)}/houses`
+  });
+  if (!Array.isArray(envelope.data)) throw new StarMasterApiError('StarMaster returned an invalid User House list');
+  return envelope.data;
+};
+
+export const listStarMasterUserQuests = async (userId: string): Promise<StarMasterUserQuest[]> => {
+  const quests: StarMasterUserQuest[] = [];
+  let page = 1;
+  let totalPages = 1;
+  do {
+    const envelope = await request<ListEnvelope<StarMasterUserQuest>>({
+      method: 'GET',
+      url: `${getStarMasterApiBaseUrl()}/users/${encodeURIComponent(userId)}/quests`,
+      params: { status: 'all', page, limit: 100 }
+    });
+    if (!Array.isArray(envelope.data)) throw new StarMasterApiError('StarMaster returned an invalid User Quest list');
+    quests.push(...envelope.data);
+    totalPages = Math.max(1, Number(envelope.meta?.totalPages) || 1);
+    page += 1;
+  } while (page <= totalPages);
+  return quests;
+};
+
+export const getStarMasterUserQuest = async (
+  userId: string,
+  userQuestId: string
+): Promise<StarMasterUserQuest> => {
+  const envelope = await request<DataEnvelope<StarMasterUserQuest>>({
+    method: 'GET',
+    url: `${getStarMasterApiBaseUrl()}/users/${encodeURIComponent(userId)}/quests/${encodeURIComponent(userQuestId)}`
+  });
+  if (!envelope.data?._id) throw new StarMasterApiError('StarMaster returned an invalid User Quest');
+  return envelope.data;
+};
+
+export const assignStarMasterUserQuest = async (input: {
+  userId: string;
+  questId: string;
+  houseId: string;
+}): Promise<{ userId: string; questId: string; houseId: string; userQuestId: string }> => {
+  const envelope = await request<DataEnvelope<{ userId: string; questId: string; houseId: string; userQuestId: string }>>({
+    method: 'POST',
+    url: `${getStarMasterApiBaseUrl()}/users/${encodeURIComponent(input.userId)}/assign`,
+    data: { questId: input.questId, houseId: input.houseId }
+  });
+  if (!envelope.data?.userQuestId) throw new StarMasterApiError('StarMaster returned an invalid Quest assignment');
+  return envelope.data;
+};
+
+export const submitStarMasterUserQuest = async (input: {
+  userId: string;
+  userQuestId: string;
+  subQuestId: string;
+  description?: string;
+  imageProof?: string;
+}): Promise<StarMasterQuestSubmission> => {
+  const envelope = await request<DataEnvelope<StarMasterQuestSubmission>>({
+    method: 'POST',
+    url: `${getStarMasterApiBaseUrl()}/users/${encodeURIComponent(input.userId)}/quests/${encodeURIComponent(input.userQuestId)}/submit`,
+    data: {
+      subQuestId: input.subQuestId,
+      ...(input.description ? { description: input.description } : {}),
+      ...(input.imageProof ? { imageProof: input.imageProof } : {})
+    }
+  });
+  if (!envelope.data?.submission?._id) throw new StarMasterApiError('StarMaster returned an invalid submission');
+  return envelope.data;
 };
 
 export const isMissingStarMasterQuest = (error: unknown): boolean =>

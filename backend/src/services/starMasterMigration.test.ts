@@ -21,6 +21,7 @@ test('migration preserves quest text, image, steps, House, and Topic tag', () =>
         { type: 'Text', content: 'Configure emission.' },
         { type: 'YouTube', content: 'https://youtu.be/example' }
       ],
+      hintParts: [{ type: 'Text', content: 'Start with a low emission rate.' }],
       type: 'ImageNote'
     }]
   }, 'house-id', 'tag-id');
@@ -35,6 +36,7 @@ test('migration preserves quest text, image, steps, House, and Topic tag', () =>
   ]);
   assert.equal(result.payload.subQuests[0]?.subQuestType, 'ImageNote');
   assert.equal(result.payload.subQuests[0]?.description?.[1]?.type, 'YouTube');
+  assert.equal(result.payload.subQuests[0]?.hint?.[0]?.content, 'Start with a low emission rate.');
   assert.deepEqual(result.warnings, []);
 });
 
@@ -80,6 +82,7 @@ test('remote edit merge preserves untouched image, links, and steps', () => {
       _id: 'remote-step',
       title: 'Keep this step',
       description: [{ type: 'Image', content: 'https://cdn.example.test/step.png' }],
+      hint: [{ type: 'Text', content: 'Keep this hint' }],
       subQuestType: 'ImageNote' as const
     }],
     tags: [{ _id: 'old-tag', name: 'Old topic' }],
@@ -90,6 +93,7 @@ test('remote edit merge preserves untouched image, links, and steps', () => {
   assert.equal(merged.title, 'Renamed');
   assert.deepEqual(merged.description, remote.description);
   assert.equal(merged.subQuests[0]?.title, 'Keep this step');
+  assert.equal(merged.subQuests[0]?.hint?.[0]?.content, 'Keep this hint');
   assert.deepEqual(merged.tags, ['new-tag']);
   assert.deepEqual(merged.assignedHouses, ['new-house']);
 });

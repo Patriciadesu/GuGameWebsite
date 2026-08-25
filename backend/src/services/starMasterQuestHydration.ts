@@ -26,6 +26,8 @@ export const projectStarMasterQuestOntoSkill = (skill: any, quest: OfficeQuest):
     title: step.title?.trim() || `Step ${index + 1}`,
     description: getOfficeQuestDescription(step.description),
     descriptionParts: getOfficeQuestDescriptionParts(step.description),
+    hintParts: getOfficeQuestDescriptionParts(step.hint),
+    hasHint: Array.isArray(step.hint) && step.hint.some(part => part?.content?.trim()),
     type: step.subQuestType
   }));
   return {

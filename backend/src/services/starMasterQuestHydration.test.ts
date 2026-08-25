@@ -22,6 +22,10 @@ const quest = {
     _id: 'remote-step',
     title: 'Remote step',
     description: [{ type: 'Text', content: 'Remote requirement' }],
+    hint: [
+      { type: 'Text', content: 'Try the timeline first.' },
+      { type: 'Image', content: 'https://cdn.example.test/hint.png' }
+    ],
     subQuestType: 'ImageNote'
   }]
 };
@@ -34,6 +38,8 @@ test('remote Quest data is projected without changing structural Star fields', (
   assert.equal(projected.nodePreview.imageUrl, 'https://cdn.example.test/cover.png');
   assert.deepEqual(projected.contentYouTube, []);
   assert.equal(projected.subQuests[0].externalId, 'remote-step');
+  assert.equal(projected.subQuests[0].hasHint, true);
+  assert.deepEqual(projected.subQuests[0].hintParts, quest.subQuests[0].hint);
   assert.equal(projected.questDataStatus, 'remote');
 });
 

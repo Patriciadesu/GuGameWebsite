@@ -1528,6 +1528,7 @@ function MainMenu() {
           void handleUnlockSkill(starLensSkill);
         }}
         onCompleteStep={stepId => { void handleCompleteQuestStep(starLensSkill, stepId); }}
+        onProgressSynced={() => refreshMainMenuStatus()}
         onOpenImage={(src, alt) => setExpandedImage({ src, alt })}
       />}
 

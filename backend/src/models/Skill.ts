@@ -43,6 +43,7 @@ export interface ISkill extends Document {
     title: string;
     description: string;
     descriptionParts?: Array<{ type: string; content: string }>;
+    hintParts?: Array<{ type: string; content: string }>;
     type?: string;
   }>;
   isActive: boolean; // Whether the skill is currently active/visible
@@ -115,6 +116,7 @@ const SkillSchema = new Schema<ISkill>(
       title: { type: String, required: true },
       description: { type: String, default: '' },
       descriptionParts: [{ type: { type: String, required: true }, content: { type: String, required: true } }],
+      hintParts: [{ type: { type: String, required: true }, content: { type: String, required: true } }],
       type: { type: String }
     }],
     isActive: { type: Boolean, default: true },

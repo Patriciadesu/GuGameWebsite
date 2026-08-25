@@ -8,6 +8,7 @@ export interface MigratableQuestStep {
   descriptionParts?: Array<{ type: string; content: string }>;
   type?: string;
   choices?: Array<{ text: string; isCorrect?: boolean }>;
+  hintParts?: Array<{ type: string; content: string }>;
 }
 
 export interface MigratableStar {
@@ -98,6 +99,7 @@ export const buildStarMasterQuestMutation = (
         title: step.title.trim().slice(0, 500),
         description: normalizeMigrationDescriptionParts(step.descriptionParts, step.description || ''),
         subQuestType,
+        ...(step.hintParts?.length ? { hint: normalizeMigrationDescriptionParts(step.hintParts) } : {}),
         ...(subQuestType === 'Choice' ? { choices } : {})
       };
     });
@@ -166,13 +168,23 @@ export const mergeStarMasterQuestMutation = (
       title: step.title.trim().slice(0, 500),
       description: normalizeMigrationDescriptionParts(step.description),
       subQuestType: step.subQuestType,
+      ...(step.hint?.length ? { hint: normalizeMigrationDescriptionParts(step.hint) } : {}),
       ...(step.subQuestType === 'Choice' ? { choices: step.choices || [] } : {})
     }))
     : buildStarMasterQuestMutation({
       _id: quest._id,
       title: updates.title || quest.title,
       subQuests: updates.subQuests
-    }, houseId, tagId).payload.subQuests;
+    }, houseId, tagId).payload.subQuests.map((step, index) => {
+      const localStep = updates.subQuests?.[index];
+      const remoteStep = (quest.subQuests || []).find(candidate =>
+        Boolean(localStep?.externalId) && candidate._id === localStep?.externalId
+      ) || quest.subQuests?.[index];
+      const hint = localStep?.hintParts?.length
+        ? normalizeMigrationDescriptionParts(localStep.hintParts)
+        : normalizeMigrationDescriptionParts(remoteStep?.hint);
+      return { ...step, ...(hint.length ? { hint } : {}) };
+    });
 
   const type = quest.type === 'ExtraQuest' ? 'ExtraQuest' : 'MainQuest';
   return {
@@ -195,6 +207,7 @@ const normalizedQuestForHash = (quest: StarMasterQuestMutation | StarMasterQuest
     title: step.title,
     subQuestType: step.subQuestType,
     description: (step.description || []).map(part => ({ type: part.type, content: part.content })),
+    hint: (step.hint || []).map(part => ({ type: part.type, content: part.content })),
     choices: step.choices || []
   })),
   tags: (quest.tags || []).map(tag => typeof tag === 'string' ? tag : tag._id).filter(Boolean).sort(),

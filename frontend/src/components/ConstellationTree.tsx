@@ -627,6 +627,17 @@ function ConstellationTree({
     return (
       <g transform={`translate(${options.offsetX || 0} ${options.offsetY || 0}) scale(${options.scale || 1})`}>
        <g className={options.className}>
+        {detail.map.visualTheme?.backgroundAssetUrl && <image
+          className="constellation-map-svg-guide"
+          href={detail.map.visualTheme.backgroundAssetUrl}
+          x="0"
+          y="0"
+          width={detail.map.viewport.width}
+          height={detail.map.viewport.height}
+          preserveAspectRatio="xMidYMid meet"
+          opacity="0.72"
+          pointerEvents="none"
+        />}
         <g className="constellation-lines">
           {connections.map(({ source, targetSkill, connection, sourcePoint, targetPoint }) => {
             const connectionStatus = statusForConnection(source, targetSkill);

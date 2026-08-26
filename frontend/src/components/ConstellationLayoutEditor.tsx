@@ -20,6 +20,7 @@ interface ConstellationLayoutEditorProps {
   skills: ConstellationSkill[];
   topicGroups?: ConstellationTopicGroup[];
   onEmbeddedTopicPositionChange?: (topicMapId: string, skillId: string, position: ConstellationLayoutPosition) => void;
+  onEmbeddedTopicVisualChange?: (topicMapId: string, backgroundAssetUrl: string) => void;
   embeddedTopicDirtyCount?: number;
   embeddedTopicResetRevision?: number;
   positions: Record<string, ConstellationLayoutPosition>;
@@ -126,6 +127,7 @@ function ConstellationLayoutEditor({
   skills,
   topicGroups,
   onEmbeddedTopicPositionChange,
+  onEmbeddedTopicVisualChange,
   embeddedTopicDirtyCount = 0,
   embeddedTopicResetRevision = 0,
   positions,
@@ -147,6 +149,7 @@ function ConstellationLayoutEditor({
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(new Set());
   const [embeddedSelection, setEmbeddedSelection] = useState<{ topicMapId: string; skillId?: string } | null>(null);
   const [embeddedPositions, setEmbeddedPositions] = useState<Record<string, ConstellationLayoutPosition>>({});
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const lastTapRef = useRef<{ skillId: string; timestamp: number } | null>(null);
@@ -431,6 +434,40 @@ function ConstellationLayoutEditor({
   };
 
   const theme = map.visualTheme;
+  const selectedTopicGroup = embeddedSelection?.topicMapId
+    ? topicGroups?.find(group => group.map._id === embeddedSelection.topicMapId)
+    : undefined;
+  const arrangeFromSvg = async (file: File) => {
+    if (!file.name.toLowerCase().endsWith('.svg')) return;
+    const topic = selectedTopicGroup;
+    const targetSkills = topic?.skills || (selectedSkillIds.size > 1 ? skills.filter(skill => selectedSkillIds.has(skill._id)) : []);
+    const targetMap = topic?.map || map;
+    if (targetSkills.length < 2) return;
+    const svgText = await file.text();
+    const document = new DOMParser().parseFromString(svgText, 'image/svg+xml');
+    if (document.querySelector('parsererror')) return;
+    const root = document.documentElement;
+    const viewBox = (root.getAttribute('viewBox') || `0 0 ${targetMap.viewport.width} ${targetMap.viewport.height}`).trim().split(/[ ,]+/).map(Number);
+    const [vx, vy, vw, vh] = viewBox.length === 4 && viewBox.every(Number.isFinite) ? viewBox : [0, 0, targetMap.viewport.width, targetMap.viewport.height];
+    const points = [...document.querySelectorAll<SVGGraphicsElement>('[data-star], circle, ellipse, rect')].map(element => {
+      const x = Number(element.getAttribute('cx') ?? element.getAttribute('x') ?? 0) + Number(element.getAttribute('width') || 0) / 2;
+      const y = Number(element.getAttribute('cy') ?? element.getAttribute('y') ?? 0) + Number(element.getAttribute('height') || 0) / 2;
+      return { x, y };
+    }).filter(point => Number.isFinite(point.x) && Number.isFinite(point.y));
+    while (points.length < targetSkills.length) {
+      const index = points.length;
+      points.push({ x: vx + vw * (0.18 + 0.64 * (index / Math.max(1, targetSkills.length - 1))), y: vy + vh * (0.5 + ((index % 3) - 1) * 0.18) });
+    }
+    const next = points.slice(0, targetSkills.length).map(point => ({
+      x: Math.round(Math.max(NODE_MARGIN, Math.min(targetMap.viewport.width - NODE_MARGIN, (point.x - vx) / vw * targetMap.viewport.width)) / SNAP_SIZE) * SNAP_SIZE,
+      y: Math.round(Math.max(NODE_MARGIN, Math.min(targetMap.viewport.height - NODE_MARGIN, (point.y - vy) / vh * targetMap.viewport.height)) / SNAP_SIZE) * SNAP_SIZE
+    }));
+    targetSkills.forEach((skill, index) => {
+      if (topic) onEmbeddedTopicPositionChange?.(topic.map._id, skill._id, next[index]);
+      else onPositionChange(skill._id, next[index]);
+    });
+    if (topic) onEmbeddedTopicVisualChange?.(topic.map._id, `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgText)))}`);
+  };
   const autoStyleSelection = () => {
     const nextPositions = autoStyleConstellation(skills, [...selectedSkillIds], positions, map);
     Object.entries(nextPositions).forEach(([skillId, position]) => onPositionChange(skillId, position));
@@ -516,7 +553,8 @@ function ConstellationLayoutEditor({
         </div>
         <div className="constellation-layout-simple-actions">
           {selectedSkillIds.size > 1 && <span className="constellation-layout-selection-count">{selectedSkillIds.size} selected</span>}
-          <button type="button" className="constellation-admin-secondary" disabled={disabled || selectedSkillIds.size < 2} onClick={autoStyleSelection} title="Arrange selected stars from their connections"><Sparkles size={15} aria-hidden="true" /> Auto Style</button>
+          <button type="button" className="constellation-admin-secondary" disabled={disabled || (selectedSkillIds.size < 2 && !selectedTopicGroup)} onClick={() => selectedTopicGroup ? fileInputRef.current?.click() : autoStyleSelection()} title={selectedTopicGroup ? 'Arrange this star cluster from an SVG constellation guide' : 'Arrange selected stars from their connections'}><Sparkles size={15} aria-hidden="true" /> Auto Layout</button>
+          <input ref={fileInputRef} type="file" accept=".svg,image/svg+xml" hidden onChange={event => { const file = event.target.files?.[0]; if (file) void arrangeFromSvg(file); event.currentTarget.value = ''; }} />
           {hasUnsavedChanges && <span className="constellation-layout-dirty-count is-dirty">Unsaved</span>}
           <button type="button" className="constellation-admin-secondary" disabled={disabled || !hasUnsavedChanges} onClick={onCancel}><RotateCcw size={15} aria-hidden="true" /> Cancel</button>
           <button type="button" className="constellation-admin-primary" disabled={disabled || !hasUnsavedChanges} onClick={onSave} title="Save (Ctrl+S)"><Save size={15} aria-hidden="true" /> Save</button>
@@ -630,6 +668,16 @@ function ConstellationLayoutEditor({
                     }
                   }}
                 >
+                  {group.map.visualTheme?.backgroundAssetUrl && <image
+                    className="constellation-layout-topic-background"
+                    href={group.map.visualTheme.backgroundAssetUrl}
+                    x={Math.min(...points.map(point => point.x)) - 60}
+                    y={Math.min(...points.map(point => point.y)) - 60}
+                    width={Math.max(...points.map(point => point.x)) - Math.min(...points.map(point => point.x)) + 120}
+                    height={Math.max(...points.map(point => point.y)) - Math.min(...points.map(point => point.y)) + 120}
+                    preserveAspectRatio="xMidYMid meet"
+                    pointerEvents="none"
+                  />}
                   <path className="constellation-layout-topic-boundary" d={boundary} vectorEffect="non-scaling-stroke" />
                   <text className="constellation-layout-topic-eyebrow" x={Math.min(...points.map(point => point.x)) + 12} y={Math.min(...points.map(point => point.y)) - 94}>TOPIC · LEVEL {group.map.level || 1}</text>
                   <text className="constellation-layout-topic-title" x={Math.min(...points.map(point => point.x)) + 12} y={Math.min(...points.map(point => point.y)) - 66}>{group.map.name}</text>

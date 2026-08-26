@@ -111,6 +111,8 @@ function ConstellationAdmin({
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [connectionSourceId, setConnectionSourceId] = useState('');
   const [draftPositions, setDraftPositions] = useState<Record<string, ConstellationLayoutPosition>>({});
+  const [draftTopicPositions, setDraftTopicPositions] = useState<Record<string, ConstellationLayoutPosition>>({});
+  const [topicPositionResetRevision, setTopicPositionResetRevision] = useState(0);
   const [showMapForm, setShowMapForm] = useState(false);
   const [showRenameMapForm, setShowRenameMapForm] = useState(false);
   const [showStarForm, setShowStarForm] = useState(false);
@@ -280,9 +282,14 @@ function ConstellationAdmin({
       return Boolean(draft && (!saved || draft.x !== saved.x || draft.y !== saved.y));
     })
     .map(skill => skill._id)), [draftPositions, mapSkills]);
+  const dirtyTopicPositionIds = useMemo(() => new Set(Object.keys(draftTopicPositions).filter(skillId => {
+    const draft = draftTopicPositions[skillId];
+    const saved = skills.find(skill => skill._id === skillId)?.constellationPosition;
+    return Boolean(draft && (!saved || draft.x !== saved.x || draft.y !== saved.y));
+  })), [draftTopicPositions, skills]);
 
   useEffect(() => {
-    const dirty = dirtySkillIds.size > 0;
+    const dirty = dirtySkillIds.size > 0 || dirtyTopicPositionIds.size > 0;
     onDirtyChange?.(dirty);
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       if (!dirty) return;
@@ -291,7 +298,7 @@ function ConstellationAdmin({
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [dirtySkillIds, onDirtyChange]);
+  }, [dirtySkillIds, dirtyTopicPositionIds, onDirtyChange]);
 
   const closeModal = () => {
     setShowMapForm(false);
@@ -760,6 +767,8 @@ function ConstellationAdmin({
   };
 
   const resetLayout = () => {
+    setDraftTopicPositions({});
+    setTopicPositionResetRevision(current => current + 1);
     setDraftPositions(Object.fromEntries(mapSkills.map((skill, index) => [
       skill._id,
       skill.constellationPosition || {
@@ -770,13 +779,26 @@ function ConstellationAdmin({
   };
 
   const saveLayout = async () => {
-    if (!selectedMap || dirtySkillIds.size === 0) return;
+    if (!selectedMap || (dirtySkillIds.size === 0 && dirtyTopicPositionIds.size === 0)) return;
     try {
       setBusy(true);
       setError('');
-      await axios.patch(`/api/constellation-maps/${selectedMap._id}/layout`, {
-        nodes: Array.from(dirtySkillIds).map(skillId => ({ skillId, ...draftPositions[skillId] }))
+      if (dirtySkillIds.size > 0) {
+        await axios.patch(`/api/constellation-maps/${selectedMap._id}/layout`, {
+          nodes: Array.from(dirtySkillIds).map(skillId => ({ skillId, ...draftPositions[skillId] }))
+        });
+      }
+      const topicChanges = new Map<string, Array<{ skillId: string; x: number; y: number }>>();
+      dirtyTopicPositionIds.forEach(skillId => {
+        const skill = skills.find(candidate => candidate._id === skillId);
+        if (!skill?.constellationMapId || !draftTopicPositions[skillId]) return;
+        const nodes = topicChanges.get(skill.constellationMapId) || [];
+        nodes.push({ skillId, ...draftTopicPositions[skillId] });
+        topicChanges.set(skill.constellationMapId, nodes);
       });
+      await Promise.all([...topicChanges].map(([topicMapId, nodes]) => axios.patch(`/api/constellation-maps/${topicMapId}/layout`, { nodes })));
+      setDraftTopicPositions({});
+      setTopicPositionResetRevision(current => current + 1);
       await onSkillsChanged();
     } catch (requestError: any) {
       setError(requestError.response?.data?.error || 'Unable to save star positions. Your changes are still here.');
@@ -1045,7 +1067,7 @@ function ConstellationAdmin({
         if (mapForm.name.trim()) void renameDiscipline();
         return;
       }
-      if (dirtySkillIds.size > 0) void saveLayout();
+      if (dirtySkillIds.size > 0 || dirtyTopicPositionIds.size > 0) void saveLayout();
     };
     document.addEventListener('keydown', handleSaveShortcut);
     return () => document.removeEventListener('keydown', handleSaveShortcut);
@@ -1057,7 +1079,7 @@ function ConstellationAdmin({
         <div className="constellation-admin-simple-navigation">
           {selectedMap?.scope === 'topic' && selectedMap.parentMapId && <button type="button" className="constellation-admin-icon" onClick={() => switchMap(selectedMap.parentMapId!)} title={`Back to ${rootLabelLower}`} aria-label={`Back to ${rootLabelLower}`}><ArrowLeft size={18} aria-hidden="true" /></button>}
           <label>
-            <span>{rootLabel}</span>
+            <span>{isMainConstellation ? rootLabel : 'Sky'}</span>
             <select value={selectedMap?.scope === 'topic' ? selectedMap.parentMapId || '' : selectedMapId} onChange={event => switchMap(event.target.value)} aria-label={`Choose ${rootLabelLower}`}>
               {disciplineMaps.map(map => <option value={map._id} key={map._id}>{map.name}</option>)}
               {disciplineMaps.length === 0 && <option value="">No disciplines</option>}
@@ -1133,6 +1155,9 @@ function ConstellationAdmin({
             parentMapName={selectedMap.parentMapId ? maps.find(map => map._id === selectedMap.parentMapId)?.name : undefined}
             skills={mapSkills}
             topicGroups={topicGroups}
+            onEmbeddedTopicPositionChange={(_, skillId, position) => setDraftTopicPositions(current => ({ ...current, [skillId]: position }))}
+            embeddedTopicDirtyCount={dirtyTopicPositionIds.size}
+            embeddedTopicResetRevision={topicPositionResetRevision}
             positions={draftPositions}
             dirtySkillIds={dirtySkillIds}
             selectedSkillId={selectedSkillId}

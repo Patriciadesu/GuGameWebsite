@@ -19,6 +19,9 @@ interface ConstellationLayoutEditorProps {
   parentMapName?: string;
   skills: ConstellationSkill[];
   topicGroups?: ConstellationTopicGroup[];
+  onEmbeddedTopicPositionChange?: (topicMapId: string, skillId: string, position: ConstellationLayoutPosition) => void;
+  embeddedTopicDirtyCount?: number;
+  embeddedTopicResetRevision?: number;
   positions: Record<string, ConstellationLayoutPosition>;
   dirtySkillIds: Set<string>;
   selectedSkillId: string;
@@ -122,6 +125,9 @@ function ConstellationLayoutEditor({
   parentMapName,
   skills,
   topicGroups,
+  onEmbeddedTopicPositionChange,
+  embeddedTopicDirtyCount = 0,
+  embeddedTopicResetRevision = 0,
   positions,
   dirtySkillIds,
   selectedSkillId,
@@ -139,6 +145,8 @@ function ConstellationLayoutEditor({
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [gesture, setGesture] = useState<EditorGesture | null>(null);
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(new Set());
+  const [embeddedSelection, setEmbeddedSelection] = useState<{ topicMapId: string; skillId?: string } | null>(null);
+  const [embeddedPositions, setEmbeddedPositions] = useState<Record<string, ConstellationLayoutPosition>>({});
   const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const lastTapRef = useRef<{ skillId: string; timestamp: number } | null>(null);
@@ -148,8 +156,10 @@ function ConstellationLayoutEditor({
     setZoom(mobile ? Math.min(1.5, map.viewport.maxZoom || 3) : 1);
     setPan({ x: 0, y: 0 });
     setSelectedSkillIds(new Set());
+    setEmbeddedSelection(null);
+    setEmbeddedPositions({});
     setSelectionBox(null);
-  }, [map._id, map.viewport.maxZoom]);
+  }, [embeddedTopicResetRevision, map._id, map.viewport.maxZoom]);
 
   useEffect(() => {
     if (!selectedSkillId) return;
@@ -188,6 +198,25 @@ function ConstellationLayoutEditor({
     });
   }, [map, positions, skills, topicGroups]);
   const isEmbeddedDiscipline = embeddedTopicGroups.length > 0;
+  const hasUnsavedChanges = dirtySkillIds.size > 0 || embeddedTopicDirtyCount > 0;
+  useEffect(() => {
+    if (!isEmbeddedDiscipline) return;
+    setEmbeddedPositions(current => {
+      const next = { ...current };
+      embeddedTopicGroups.forEach(group => group.skills.forEach(skill => {
+        if (!next[skill._id]) next[skill._id] = skill.constellationPosition!;
+      }));
+      return next;
+    });
+  }, [embeddedTopicGroups, isEmbeddedDiscipline]);
+  const visibleEmbeddedTopicGroups = useMemo(() => embeddedTopicGroups.map(group => {
+    const nextSkills = group.skills.map(skill => ({
+      ...skill,
+      constellationPosition: embeddedPositions[skill._id] || skill.constellationPosition
+    }));
+    const points = nextSkills.map(skill => skill.constellationPosition!);
+    return { ...group, skills: nextSkills, points, boundary: boundaryPath(points) };
+  }), [embeddedPositions, embeddedTopicGroups]);
   const connectionEdges = useMemo(() => {
     const result: Array<{ sourceId: string; targetId: string; special: boolean }> = [];
     const seen = new Set<string>();
@@ -420,19 +449,75 @@ function ConstellationLayoutEditor({
     '--constellation-capstone': theme?.capstoneColor || '#6d4aff'
   } as CSSProperties;
 
+  const startEmbeddedDrag = (
+    event: React.PointerEvent<SVGGElement>,
+    topicMapId: string,
+    groupSkills: ConstellationSkill[],
+    gateway: ConstellationSkill | null | undefined,
+    childSkillId?: string
+  ) => {
+    if (disabled) return;
+    event.stopPropagation();
+    const moveChild = Boolean(childSkillId && embeddedSelection?.topicMapId === topicMapId && embeddedSelection.skillId === childSkillId);
+    setEmbeddedSelection({ topicMapId, skillId: moveChild ? childSkillId : undefined });
+    const startPositions = Object.fromEntries(groupSkills.map(skill => [skill._id, skill.constellationPosition!])) as Record<string, ConstellationLayoutPosition>;
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    let moved = false;
+    const handleMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== event.pointerId) return;
+      const delta = {
+        x: ((moveEvent.clientX - event.clientX) / rect.width) * viewWidth,
+        y: ((moveEvent.clientY - event.clientY) / rect.height) * viewHeight
+      };
+      if (Math.hypot(delta.x, delta.y) <= 4) return;
+      moved = true;
+      if (moveChild && childSkillId) {
+        const position = startPositions[childSkillId];
+        if (!position) return;
+        const next = { x: position.x + delta.x, y: position.y + delta.y };
+        setEmbeddedPositions(current => ({ ...current, [childSkillId]: next }));
+        onEmbeddedTopicPositionChange?.(topicMapId, childSkillId, next);
+        return;
+      }
+      const nextPositions = Object.fromEntries(Object.entries(startPositions).map(([skillId, position]) => [skillId, {
+        x: position.x + delta.x,
+        y: position.y + delta.y
+      }])) as Record<string, ConstellationLayoutPosition>;
+      setEmbeddedPositions(current => ({ ...current, ...nextPositions }));
+      if (gateway) {
+        const gatewayPosition = positions[gateway._id] || positionFor(gateway, skills.findIndex(skill => skill._id === gateway._id));
+        onPositionChange(gateway._id, { x: gatewayPosition.x + delta.x, y: gatewayPosition.y + delta.y });
+      }
+    };
+    const cleanup = () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleEnd);
+      window.removeEventListener('pointercancel', handleEnd);
+    };
+    const handleEnd = (endEvent: PointerEvent) => {
+      if (endEvent.pointerId !== event.pointerId) return;
+      cleanup();
+      if (!moved) setEmbeddedSelection({ topicMapId, skillId: moveChild ? childSkillId : undefined });
+    };
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleEnd);
+    window.addEventListener('pointercancel', handleEnd);
+  };
+
   return (
     <div className={`constellation-layout-editor constellation-shell constellation-focus ${isEmbeddedDiscipline ? 'is-embedded-discipline' : ''}`} style={themeStyle}>
       <header className="constellation-layout-simple-header">
         <div>
-          <p>{parentMapName || (map.scope === 'discipline' ? 'Discipline' : 'Topic')}</p>
+          <p>{parentMapName || (map.scope === 'discipline' ? 'Sky' : 'Star Cluster')}</p>
           <h2>{map.name}</h2>
         </div>
         <div className="constellation-layout-simple-actions">
           {selectedSkillIds.size > 1 && <span className="constellation-layout-selection-count">{selectedSkillIds.size} selected</span>}
           <button type="button" className="constellation-admin-secondary" disabled={disabled || selectedSkillIds.size < 2} onClick={autoStyleSelection} title="Arrange selected stars from their connections"><Sparkles size={15} aria-hidden="true" /> Auto Style</button>
-          {dirtySkillIds.size > 0 && <span className="constellation-layout-dirty-count is-dirty">Unsaved</span>}
-          <button type="button" className="constellation-admin-secondary" disabled={disabled || dirtySkillIds.size === 0} onClick={onCancel}><RotateCcw size={15} aria-hidden="true" /> Cancel</button>
-          <button type="button" className="constellation-admin-primary" disabled={disabled || dirtySkillIds.size === 0} onClick={onSave} title="Save (Ctrl+S)"><Save size={15} aria-hidden="true" /> Save</button>
+          {hasUnsavedChanges && <span className="constellation-layout-dirty-count is-dirty">Unsaved</span>}
+          <button type="button" className="constellation-admin-secondary" disabled={disabled || !hasUnsavedChanges} onClick={onCancel}><RotateCcw size={15} aria-hidden="true" /> Cancel</button>
+          <button type="button" className="constellation-admin-primary" disabled={disabled || !hasUnsavedChanges} onClick={onSave} title="Save (Ctrl+S)"><Save size={15} aria-hidden="true" /> Save</button>
         </div>
       </header>
 
@@ -526,12 +611,13 @@ function ConstellationLayoutEditor({
               />
             ))}
             {isEmbeddedDiscipline && <g className="constellation-layout-embedded-topics">
-              {embeddedTopicGroups.map(({ group, skills: topicSkills, points, boundary }) => (
+              {visibleEmbeddedTopicGroups.map(({ group, skills: topicSkills, points, boundary }) => (
                 <g
                   key={group.map._id}
                   className="constellation-layout-embedded-topic"
                   role="group"
                   aria-label={`${group.map.name} topic, ${topicSkills.length} quests`}
+                  onPointerDown={event => startEmbeddedDrag(event, group.map._id, topicSkills, group.gateway)}
                   onDoubleClick={() => group.gateway && onActivateSkill?.(group.gateway._id)}
                 >
                   <path className="constellation-layout-topic-boundary" d={boundary} vectorEffect="non-scaling-stroke" />
@@ -554,6 +640,7 @@ function ConstellationLayoutEditor({
                       role="button"
                       tabIndex={0}
                       aria-label={`${skill.constellationLabel || skill.title}, ${skill.mapNodeRole || 'lesson'}, in ${group.map.name}`}
+                      onPointerDown={event => startEmbeddedDrag(event, group.map._id, topicSkills, group.gateway, skill._id)}
                       onDoubleClick={() => onActivateSkill?.(skill._id)}
                       onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onActivateSkill?.(skill._id); } }}
                     >

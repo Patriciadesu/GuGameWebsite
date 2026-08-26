@@ -199,6 +199,37 @@
 .constellation-layout-editor .constellation-link-star { fill: var(--constellation-surface); stroke: var(--constellation-line); stroke-width: 2; }
 .constellation-layout-node { cursor: move; }
 
+.constellation-layout-editor.is-embedded-discipline .constellation-layout-embedded-topic { cursor: pointer; }
+.constellation-layout-editor.is-embedded-discipline .constellation-layout-nodes { opacity: 0; }
+.constellation-layout-editor.is-embedded-discipline .constellation-layout-lines,
+.constellation-layout-editor.is-embedded-discipline > .constellation-layout-canvas-wrap .constellation-link-star { opacity: 0; }
+.constellation-layout-topic-boundary {
+  fill: color-mix(in srgb, var(--constellation-unlocked) 5%, transparent);
+  stroke: color-mix(in srgb, var(--constellation-unlocked) 76%, var(--constellation-border));
+  stroke-width: 2.5;
+  stroke-dasharray: 8 7;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.constellation-layout-topic-eyebrow {
+  fill: var(--constellation-unlocked);
+  font: 800 18px/1 "Noto Sans Thai", sans-serif;
+  letter-spacing: .12em;
+  paint-order: stroke;
+  stroke: var(--constellation-bg);
+  stroke-width: 8px;
+}
+.constellation-layout-topic-title {
+  fill: var(--constellation-text);
+  font: 600 32px/1 Georgia, "Noto Sans Thai", serif;
+  paint-order: stroke;
+  stroke: var(--constellation-bg);
+  stroke-width: 10px;
+}
+.constellation-layout-topic-lines path { stroke-width: 2.5; }
+.constellation-layout-embedded-node { cursor: pointer; }
+.constellation-layout-embedded-node:focus-visible .constellation-node-star { stroke-width: 5; stroke-dasharray: 3 2; }
+
 .constellation-layout-selection-ring {
   fill: none;
   stroke: var(--constellation-unlocked);

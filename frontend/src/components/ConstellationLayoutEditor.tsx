@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { LocateFixed, RotateCcw, Save, Sparkles, ZoomIn, ZoomOut } from 'lucide-react';
-import type { ConstellationMap, ConstellationSkill } from './constellationTypes';
+import type { ConstellationMap, ConstellationSkill, ConstellationTopicGroup } from './constellationTypes';
 import ConstellationNodeGlyph from './ConstellationNodeGlyph';
 import {
   pointForConstellationSkill,
@@ -18,6 +18,7 @@ interface ConstellationLayoutEditorProps {
   map: ConstellationMap;
   parentMapName?: string;
   skills: ConstellationSkill[];
+  topicGroups?: ConstellationTopicGroup[];
   positions: Record<string, ConstellationLayoutPosition>;
   dirtySkillIds: Set<string>;
   selectedSkillId: string;
@@ -59,6 +60,42 @@ interface SelectionBox {
 const NODE_MARGIN = 46;
 const SNAP_SIZE = 20;
 
+const convexHull = (points: Array<{ x: number; y: number }>) => {
+  if (points.length <= 2) return points;
+  const sorted = [...points].sort((left, right) => left.x - right.x || left.y - right.y);
+  const cross = (origin: { x: number; y: number }, left: { x: number; y: number }, right: { x: number; y: number }) =>
+    (left.x - origin.x) * (right.y - origin.y) - (left.y - origin.y) * (right.x - origin.x);
+  const half = (values: Array<{ x: number; y: number }>) => {
+    const result: Array<{ x: number; y: number }> = [];
+    values.forEach(point => {
+      while (result.length >= 2 && cross(result[result.length - 2], result[result.length - 1], point) <= 0) result.pop();
+      result.push(point);
+    });
+    return result;
+  };
+  return [...half(sorted).slice(0, -1), ...half([...sorted].reverse()).slice(0, -1)];
+};
+
+const boundaryPath = (points: Array<{ x: number; y: number }>) => {
+  if (points.length === 0) return '';
+  const padding = 70;
+  if (points.length === 1) {
+    const point = points[0];
+    return `M ${point.x - 110} ${point.y} Q ${point.x - 110} ${point.y - 76} ${point.x} ${point.y - 76} Q ${point.x + 110} ${point.y - 76} ${point.x + 110} ${point.y} Q ${point.x + 110} ${point.y + 76} ${point.x} ${point.y + 76} Q ${point.x - 110} ${point.y + 76} ${point.x - 110} ${point.y} Z`;
+  }
+  const hull = convexHull(points);
+  const center = hull.reduce((sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }), { x: 0, y: 0 });
+  center.x /= hull.length;
+  center.y /= hull.length;
+  const expanded = hull.map(point => {
+    const dx = point.x - center.x;
+    const dy = point.y - center.y;
+    const distance = Math.max(1, Math.hypot(dx, dy));
+    return { x: point.x + dx / distance * padding, y: point.y + dy / distance * padding };
+  });
+  return `${expanded.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')} Z`;
+};
+
 const editorConnectionPath = (source: ConstellationLayoutPosition, target: ConstellationLayoutPosition) => {
   const distance = Math.hypot(target.x - source.x, target.y - source.y);
   if (distance === 0) return straightConstellationPath(source, target);
@@ -84,6 +121,7 @@ function ConstellationLayoutEditor({
   map,
   parentMapName,
   skills,
+  topicGroups,
   positions,
   dirtySkillIds,
   selectedSkillId,
@@ -123,6 +161,33 @@ function ConstellationLayoutEditor({
   }, [onSelectionChange, selectedSkillIds]);
 
   const skillIds = useMemo(() => new Set(skills.map(skill => skill._id)), [skills]);
+  const embeddedTopicGroups = useMemo(() => {
+    if (map.scope !== 'discipline' || !topicGroups?.length) return [];
+    return topicGroups.filter(group => group.skills.length > 0).map(group => {
+      const gateway = group.gateway;
+      const gatewayIndex = gateway ? skills.findIndex(skill => skill._id === gateway._id) : -1;
+      const anchor = gateway
+        ? positions[gateway._id] || pointForConstellationSkill(gateway, Math.max(0, gatewayIndex), skills.length, map)
+        : { x: map.viewport.width / 2, y: map.viewport.height / 2 };
+      const sourcePoints = group.skills.map((skill, index) => pointForConstellationSkill(skill, index, group.skills.length, group.map));
+      const minX = Math.min(...sourcePoints.map(point => point.x));
+      const maxX = Math.max(...sourcePoints.map(point => point.x));
+      const minY = Math.min(...sourcePoints.map(point => point.y));
+      const maxY = Math.max(...sourcePoints.map(point => point.y));
+      const scale = sourcePoints.length <= 1 ? 1 : Math.min(0.36, 430 / Math.max(1, maxX - minX), 310 / Math.max(1, maxY - minY));
+      const center = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+      const childSkills = group.skills.map((skill, index) => ({
+        ...skill,
+        constellationPosition: {
+          x: anchor.x + (sourcePoints[index].x - center.x) * scale,
+          y: anchor.y + (sourcePoints[index].y - center.y) * scale
+        }
+      }));
+      const points = childSkills.map(skill => skill.constellationPosition!);
+      return { group, skills: childSkills, points, boundary: boundaryPath(points) };
+    });
+  }, [map, positions, skills, topicGroups]);
+  const isEmbeddedDiscipline = embeddedTopicGroups.length > 0;
   const connectionEdges = useMemo(() => {
     const result: Array<{ sourceId: string; targetId: string; special: boolean }> = [];
     const seen = new Set<string>();
@@ -356,7 +421,7 @@ function ConstellationLayoutEditor({
   } as CSSProperties;
 
   return (
-    <div className="constellation-layout-editor constellation-shell constellation-focus" style={themeStyle}>
+    <div className={`constellation-layout-editor constellation-shell constellation-focus ${isEmbeddedDiscipline ? 'is-embedded-discipline' : ''}`} style={themeStyle}>
       <header className="constellation-layout-simple-header">
         <div>
           <p>{parentMapName || (map.scope === 'discipline' ? 'Discipline' : 'Topic')}</p>
@@ -460,6 +525,44 @@ function ConstellationLayoutEditor({
                 r="5"
               />
             ))}
+            {isEmbeddedDiscipline && <g className="constellation-layout-embedded-topics">
+              {embeddedTopicGroups.map(({ group, skills: topicSkills, points, boundary }) => (
+                <g
+                  key={group.map._id}
+                  className="constellation-layout-embedded-topic"
+                  role="group"
+                  aria-label={`${group.map.name} topic, ${topicSkills.length} quests`}
+                  onDoubleClick={() => group.gateway && onActivateSkill?.(group.gateway._id)}
+                >
+                  <path className="constellation-layout-topic-boundary" d={boundary} vectorEffect="non-scaling-stroke" />
+                  <text className="constellation-layout-topic-eyebrow" x={Math.min(...points.map(point => point.x)) + 12} y={Math.min(...points.map(point => point.y)) - 94}>TOPIC · LEVEL {group.map.level || 1}</text>
+                  <text className="constellation-layout-topic-title" x={Math.min(...points.map(point => point.x)) + 12} y={Math.min(...points.map(point => point.y)) - 66}>{group.map.name}</text>
+                  <g className="constellation-lines constellation-layout-topic-lines" aria-hidden="true">
+                    {topicSkills.flatMap(source => (source.connections || []).flatMap(connection => {
+                      const target = topicSkills.find(skill => skill._id === connection.targetSkillId);
+                      if (!target || !source.constellationPosition || !target.constellationPosition) return [];
+                      return <path key={`${source._id}-${target._id}`} d={editorConnectionPath(source.constellationPosition, target.constellationPosition)} markerEnd={`url(#constellation-editor-${connection.connectionType === 'special' ? 'special-arrow' : 'arrow'}-${map._id})`} vectorEffect="non-scaling-stroke" />;
+                    }))}
+                  </g>
+                  {topicSkills.map(skill => {
+                    const point = skill.constellationPosition!;
+                    return <g
+                      key={skill._id}
+                      data-skill-id={skill._id}
+                      className={`constellation-node constellation-layout-embedded-node role-${skill.mapNodeRole || 'lesson'}`}
+                      transform={`translate(${point.x} ${point.y})`}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`${skill.constellationLabel || skill.title}, ${skill.mapNodeRole || 'lesson'}, in ${group.map.name}`}
+                      onDoubleClick={() => onActivateSkill?.(skill._id)}
+                      onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onActivateSkill?.(skill._id); } }}
+                    >
+                      <ConstellationNodeGlyph skill={skill} label={skill.constellationLabel || skill.title} labelOnLeft={point.x > map.viewport.width * 0.74} labelY={6} />
+                    </g>;
+                  })}
+                </g>
+              ))}
+            </g>}
             {selectionBox && (
               <rect
                 className="constellation-layout-marquee"

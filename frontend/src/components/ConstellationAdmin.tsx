@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, Download, ExternalLink, FileText, ImagePlus, Link2, MoreHorizontal, Pencil, Plus, Search, SlidersHorizontal, Sparkles, Tags, Trash2, X } from 'lucide-react';
 import axios from '../config/axios';
-import type { ConstellationMap, ConstellationScope, ConstellationSkill, ConstellationType, MapNodeRole } from './constellationTypes';
+import type { ConstellationMap, ConstellationScope, ConstellationSkill, ConstellationTopicGroup, ConstellationType, MapNodeRole } from './constellationTypes';
 import ConstellationLayoutEditor, { ConstellationLayoutPosition } from './ConstellationLayoutEditor';
 import { useModalAccessibility } from './modalAccessibility';
 import { applyMarkdownBold, applyMarkdownIndent } from './richTextEditing';
@@ -194,6 +194,17 @@ function ConstellationAdmin({
   const mapSkills = useMemo(() => skills
     .filter(skill => skill.constellationMapId === selectedMapId)
     .sort((a, b) => a.position - b.position), [skills, selectedMapId]);
+  const topicGroups = useMemo<ConstellationTopicGroup[]>(() => {
+    if (!selectedMap || selectedMap.scope !== 'discipline' || isMainConstellation) return [];
+    return maps
+      .filter(map => map.scope === 'topic' && map.parentMapId === selectedMap._id)
+      .sort((left, right) => left.displayOrder - right.displayOrder)
+      .map(map => ({
+        map,
+        gateway: mapSkills.find(skill => skill._id === map.gatewaySkillId) || null,
+        skills: skills.filter(skill => skill.constellationMapId === map._id && skill.isActive).sort((a, b) => a.position - b.position)
+      }));
+  }, [isMainConstellation, mapSkills, maps, selectedMap, skills]);
   const selectedSkill = mapSkills.find(skill => skill._id === selectedSkillId);
   const selectedSkills = useMemo(() => mapSkills.filter(skill => selectedSkillIds.includes(skill._id)), [mapSkills, selectedSkillIds]);
   const duplicateInfoLevelSkill = isMainConstellation
@@ -716,7 +727,8 @@ function ConstellationAdmin({
       if (skill) openSkillInfo(skill);
       return;
     }
-    const topicMap = maps.find(map => map.scope === 'topic' && map.gatewaySkillId === skillId);
+    const childSkill = skills.find(skill => skill._id === skillId);
+    const topicMap = maps.find(map => map.scope === 'topic' && (map.gatewaySkillId === skillId || map._id === childSkill?.constellationMapId));
     if (topicMap) {
       switchMap(topicMap._id);
       return;
@@ -1120,6 +1132,7 @@ function ConstellationAdmin({
             map={selectedMap}
             parentMapName={selectedMap.parentMapId ? maps.find(map => map._id === selectedMap.parentMapId)?.name : undefined}
             skills={mapSkills}
+            topicGroups={topicGroups}
             positions={draftPositions}
             dirtySkillIds={dirtySkillIds}
             selectedSkillId={selectedSkillId}

@@ -125,7 +125,7 @@ export default function StarLensDock({
   const outcomes = skill.nodePreview?.outcomes || [];
   const isMainQuest = workflow === 'main';
   const isTopicPath = workflow === 'topic';
-  const topicLevelLocked = isTopicPath && (skill.topicLevel || userLevel) > userLevel;
+  const topicLevelLocked = !isMainQuest && (skill.topicLevel || userLevel) > userLevel;
   const questLevel = skill.mainQuestLevel || 1;
   const mainQuestStatus = resolveMainQuestStatus({ questLevel, userLevel, pending });
 
@@ -387,6 +387,7 @@ export default function StarLensDock({
         : mainQuestStatus === 'current' ? 'Current quest' : 'Future level'
     : isTopicPath
       ? pending ? 'Pending review' : topicLevelLocked ? 'Locked' : unlocked ? 'Unlocked' : canUnlock ? 'Available' : 'Locked'
+    : topicLevelLocked ? 'Locked'
     : usesHamsterQuestWorkflow
       ? workflowLoading || !workflowData ? 'Syncing'
         : workflowData?.questCompleted ? 'Completed'
@@ -405,6 +406,8 @@ export default function StarLensDock({
           : !unlocked && !canUnlock
             ? 'Prerequisites required'
           : skill.nodePreview?.actionLabel || 'View Path'
+    : topicLevelLocked
+      ? `Unlocks at Level ${skill.topicLevel}`
     : usesHamsterQuestWorkflow
       ? workflowLoading ? 'Syncing review status'
         : workflowError ? 'Sync unavailable'
@@ -421,10 +424,13 @@ export default function StarLensDock({
     ? mainQuestStatus !== 'current' || !canUnlock
     : isTopicPath
       ? pending || topicLevelLocked || (!unlocked && !canUnlock)
+    : topicLevelLocked ? true
     : usesHamsterQuestWorkflow
       ? workflowLoading || !workflowData || Boolean(workflowError) || Boolean(workflowData.setupIssue) || Boolean(workflowData.questCompleted) || (!unlocked && !canUnlock)
       : completed || pending || (!unlocked && !canUnlock) || (unlocked && steps.length === 0);
-  const topicRequirement = isTopicPath
+  const topicRequirement = !isMainQuest && topicLevelLocked
+    ? `Reach Level ${skill.topicLevel} to start this Quest.`
+    : isTopicPath
     ? pending
       ? 'Approval is pending.'
       : topicLevelLocked
@@ -432,6 +438,8 @@ export default function StarLensDock({
         : !unlocked && !canUnlock
           ? 'Complete the required topics first.'
           : ''
+    : !isMainQuest && !unlocked && !canUnlock
+      ? 'Complete the prerequisite Quests first.'
     : '';
   const handleAction = () => {
     if (isTopicPath) {
@@ -556,7 +564,7 @@ export default function StarLensDock({
                   <button
                     type="button"
                     onClick={event => usesHamsterQuestWorkflow ? openSubmission(stepId, event.currentTarget) : onCompleteStep(stepId)}
-                    disabled={isDone || isPendingStep || (usesHamsterQuestWorkflow && (workflowLoading || !workflowData || Boolean(workflowError) || Boolean(workflowData.setupIssue))) || (!unlocked && !canUnlock) || (!usesHamsterQuestWorkflow && pending)}
+                    disabled={topicLevelLocked || isDone || isPendingStep || (usesHamsterQuestWorkflow && (workflowLoading || !workflowData || Boolean(workflowError) || Boolean(workflowData.setupIssue))) || (!unlocked && !canUnlock) || (!usesHamsterQuestWorkflow && pending)}
                   >{stepActionLabel}</button>
                 </div>
                 <div className="star-lens-dock__step-details">

@@ -36,6 +36,7 @@ export interface ISkill extends Document {
   externalSource?: 'office-quest' | 'hamquest' | 'star-master';
   externalQuestId?: string;
   legacyExternalQuestId?: string;
+  soundConsolidationSourceQuestId?: string;
   externalQuestContentHash?: string;
   externalQuestSyncedAt?: Date;
   subQuests?: Array<{
@@ -109,6 +110,7 @@ const SkillSchema = new Schema<ISkill>(
     externalSource: { type: String, enum: ['office-quest', 'hamquest', 'star-master'] },
     externalQuestId: { type: String },
     legacyExternalQuestId: { type: String },
+    soundConsolidationSourceQuestId: { type: String },
     externalQuestContentHash: { type: String },
     externalQuestSyncedAt: { type: Date },
     subQuests: [{

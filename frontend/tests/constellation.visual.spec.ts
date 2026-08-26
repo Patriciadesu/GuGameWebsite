@@ -401,7 +401,16 @@ const installApiFixtures = async (
         return json({ success: true, message: 'Constellation map deleted successfully' });
       }
       const selectedMap = allMaps.find(candidate => candidate._id === mapMatch[1]);
-      return json({ success: true, map: selectedMap, skills: mapSkills[mapMatch[1]] || [] });
+      const topicGroups = selectedMap?.scope === 'discipline'
+        ? allMaps
+          .filter(candidate => candidate.scope === 'topic' && candidate.parentMapId === selectedMap._id && candidate.constellationType !== 'main')
+          .map(topic => ({
+            map: topic,
+            gateway: (mapSkills[selectedMap._id] || []).find(candidate => candidate._id === topic.gatewaySkillId) || null,
+            skills: (mapSkills[topic._id] || []).map(candidate => ({ ...candidate, topicLevel: topic.level || 1 }))
+          }))
+        : [];
+      return json({ success: true, map: selectedMap, skills: mapSkills[mapMatch[1]] || [], topicGroups });
     }
     if (path === '/api/guilds') return json({ success: true, guilds: [] });
     if (path === '/api/users') return json({ success: true, users: [] });
@@ -437,39 +446,31 @@ test('player constellation states render without overflow', async ({ page }) => 
   await page.screenshot({ path: '/tmp/constellation-visual/player-overview.png', fullPage: true });
 
   await page.getByRole('button', { name: /Game Art/ }).click();
-  const disciplineCanvas = page.getByRole('group', { name: 'Game Art constellation map' });
-  await expect(disciplineCanvas.locator('.constellation-discipline-layer .constellation-node')).toHaveCount(5);
-  await expect(disciplineCanvas.getByRole('button', { name: /2D Art/ })).toBeVisible();
-  await expect(disciplineCanvas.getByRole('button', { name: /3D Modeling/ })).toBeVisible();
-  await expect(disciplineCanvas.getByRole('button', { name: /Animation/ })).toBeVisible();
-  await expect(disciplineCanvas.getByRole('button', { name: /Materials/ })).toBeVisible();
-  await expect(disciplineCanvas.getByRole('button', { name: /VFX/ })).toBeVisible();
-  const modelingNode = disciplineCanvas.locator('.constellation-node').filter({ hasText: '3D Modeling' });
-  await modelingNode.click();
-  const topicLens = page.getByLabel('3D Modeling topic path info');
-  await expect(topicLens).toBeVisible();
-  await expect(topicLens).toContainText('Topic Path');
-  await expect(page.locator('.constellation-info-panel')).toHaveCount(0);
-  await page.screenshot({ path: '/tmp/constellation-visual/player-gateway-preview.png', fullPage: true });
+  const questBoard = page.getByRole('list', { name: 'Game Art quest groups' });
+  const modelingCluster = questBoard.getByRole('listitem').filter({ hasText: '3D Modeling' });
+  const clusterMap = modelingCluster.getByRole('group', { name: '3D Modeling, 11 quests' });
+  await expect(modelingCluster).toBeVisible();
+  await expect(clusterMap.locator('.discipline-topic-quest-layer .constellation-node')).toHaveCount(11);
+  await expect(clusterMap.getByRole('button', { name: /Blender Setup/ })).toBeVisible();
+  await expect(clusterMap.getByRole('button', { name: /Cinematic/ })).toBeVisible();
+  await expect(modelingCluster.locator('.discipline-topic-boundary')).toHaveAttribute('d', /^M /);
+  await expect(page.getByRole('button', { name: 'View Path' })).toHaveCount(0);
+  await page.screenshot({ path: '/tmp/constellation-visual/player-discipline-board-without-lens.png', fullPage: true });
+
+  const firstQuest = clusterMap.locator('.constellation-node').filter({ hasText: 'Blender Setup' });
+  await firstQuest.locator('.constellation-node-star').click();
+  await expect(page.getByLabel('Blender Setup quest details')).toBeVisible();
+  await page.screenshot({ path: '/tmp/constellation-visual/player-discipline-board.png', fullPage: true });
 
   await page.locator('.topbar-brand').click({ position: { x: 3, y: 3 } });
   await expect(page.locator('#star-lens-dock')).toHaveCount(0);
-  await expect(modelingNode).not.toHaveAttribute('aria-expanded', 'true');
-  await modelingNode.click();
+  await expect(firstQuest).not.toHaveAttribute('aria-expanded', 'true');
 
-  await page.getByRole('button', { name: 'View Path' }).click();
-  await expect(page.locator('.skill-constellation-panel .constellation-focus')).toHaveClass(/is-topic-active/);
-  await expect(page.locator('.constellation-topic-layer')).toBeVisible();
-  await expect(page.locator('.constellation-anchor')).toHaveCount(0);
-  await page.waitForTimeout(650);
-
-  const connectionPaths = await page.locator('.constellation-lines path').evaluateAll(paths => (
+  const connectionPaths = await clusterMap.locator('.constellation-lines path').evaluateAll(paths => (
     paths.map(path => path.getAttribute('d') || '')
   ));
   expect(connectionPaths.length).toBeGreaterThan(0);
   expect(connectionPaths.every(path => /^M [\d.-]+ [\d.-]+ L [\d.-]+ [\d.-]+$/.test(path))).toBe(true);
-
-  await page.screenshot({ path: '/tmp/constellation-visual/player-topic.png', fullPage: true });
 
   const overflow = await page.locator('.skill-constellation-panel .constellation-shell').evaluate(element => ({
     clientWidth: element.clientWidth,
@@ -734,10 +735,10 @@ test('dark theme keeps player and editor surfaces consistently dark', async ({ p
   await page.screenshot({ path: '/tmp/constellation-visual/dark-main-quest-star-lens.png', fullPage: true });
 
   await page.getByRole('button', { name: /Game Art/ }).click();
-  await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
-  await expect(page.getByLabel('3D Modeling topic path info')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'View Path' })).toBeVisible();
-  await page.screenshot({ path: '/tmp/constellation-visual/dark-player-preview.png', fullPage: true });
+  const darkQuest = page.locator('.discipline-topic-quest-layer .constellation-node').filter({ hasText: 'Blender Setup' });
+  await darkQuest.locator('.constellation-node-star').click();
+  await expect(page.getByLabel('Blender Setup quest details')).toBeVisible();
+  await page.screenshot({ path: '/tmp/constellation-visual/dark-player-discipline-board.png', fullPage: true });
 
   await page.goto('admin');
   await page.getByRole('button', { name: 'Main Quest' }).click();
@@ -760,8 +761,7 @@ test('player topic refreshes imported quests when the window regains focus', asy
   await expect(skillConstellations).toBeVisible();
   await skillConstellations.scrollIntoViewIfNeeded();
   await skillConstellations.getByRole('button', { name: /Game Art/ }).click();
-  await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
-  await page.getByRole('button', { name: 'View Path' }).click();
+  const modelingCluster = page.getByRole('listitem').filter({ hasText: '3D Modeling' });
 
   const importedQuest = skill(
     '700000000000000000000010',
@@ -784,8 +784,8 @@ test('player topic refreshes imported quests when the window regains focus', asy
 
   try {
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await expect(page.locator('.constellation-topic-layer').getByText('Newly Imported Quest', { exact: true })).toBeVisible();
-    await expect(page.locator('.skill-constellation-panel .constellation-focus')).toHaveClass(/is-topic-active/);
+    await expect(modelingCluster.getByRole('button', { name: 'Newly Imported Quest available' })).toBeVisible();
+    await expect(page.locator('.skill-constellation-panel .constellation-focus')).toHaveClass(/is-discipline-board/);
   } finally {
     topicSkills.splice(topicSkills.findIndex(candidate => candidate._id === importedQuest._id), 1);
     allSkills.splice(allSkills.findIndex(candidate => candidate._id === importedQuest._id), 1);
@@ -793,46 +793,36 @@ test('player topic refreshes imported quests when the window regains focus', asy
 });
 
 test('player sees next-level topics but cannot enter them early', async ({ page }) => {
-  const materials = gameArtSkills.find(candidate => candidate.title === 'Materials')!;
-  materials.topicLevel = 2;
+  const originalLevel = topicMap.level;
+  topicMap.level = 2;
   try {
     await installApiFixtures(page);
     await page.goto('mainmenu');
     await page.getByRole('button', { name: /Game Art/ }).click();
-    const canvas = page.getByRole('group', { name: 'Game Art constellation map' });
-    const gatedTopic = canvas.locator('[data-skill-id="400000000000000000000003"]');
-    await expect(gatedTopic).toHaveClass(/is-level-gated/);
-    await expect(gatedTopic.locator('.constellation-level-fog')).toHaveCount(0);
-    await expect(gatedTopic.locator('.constellation-node-label')).toHaveCSS('opacity', '1');
+    const cluster = page.getByRole('listitem').filter({ hasText: '3D Modeling' });
+    const gatedQuest = cluster.locator('[data-skill-id="600000000000000000000001"]');
+    await expect(cluster).toHaveClass(/is-level-locked/);
+    await expect(gatedQuest).toHaveClass(/is-level-gated/);
+    await expect(gatedQuest.locator('.constellation-level-fog')).toHaveCount(0);
+    await expect(cluster.getByRole('button', { name: 'Blender Setup locked' })).toBeVisible();
     await page.screenshot({ path: '/tmp/constellation-visual/level-gated-without-fog.png', fullPage: true });
-    await canvas.getByRole('button', { name: /Materials/ }).click();
-    const topicLens = page.getByLabel('Materials topic path info');
-    await expect(topicLens).toContainText('Reach Level 2 to enter this topic.');
-    await expect(topicLens.getByRole('button', { name: 'Unlocks at Level 2' })).toBeDisabled();
+    await gatedQuest.press('Enter');
+    const questLens = page.getByLabel('Blender Setup quest details');
+    await expect(questLens).toContainText('Reach Level 2 to start this Quest.');
+    await expect(questLens.getByRole('button', { name: 'Unlocks at Level 2' })).toBeDisabled();
   } finally {
-    delete materials.topicLevel;
+    topicMap.level = originalLevel;
   }
 });
 
-test('player sees the next two connected topics when every topic shares the current level', async ({ page }) => {
-  const originalUnlocked = [...gameArtSkills];
-  const soundRoot = skill('410000000000000000000001', 'Sound001', gameArtMap._id, 280, 220, 'topic-gateway', ['410000000000000000000002']);
-  const soundNext = skill('410000000000000000000002', '3D Sound', gameArtMap._id, 650, 420, 'topic-gateway', ['410000000000000000000003']);
-  const soundNextNext = skill('410000000000000000000003', 'Audio Mixer', gameArtMap._id, 1020, 620, 'topic-gateway', ['410000000000000000000004']);
-  const soundBeyondWindow = skill('410000000000000000000004', 'Final Mix', gameArtMap._id, 1320, 760, 'topic-gateway');
-  gameArtSkills.splice(0, gameArtSkills.length, soundRoot, soundNext, soundNextNext, soundBeyondWindow);
-  try {
-    await installApiFixtures(page);
-    await page.goto('mainmenu');
-    await page.getByRole('button', { name: /Game Art/ }).click();
-    const discipline = page.locator('.constellation-discipline-layer');
-    await expect(discipline.getByText('Sound001', { exact: true })).toBeVisible();
-    await expect(discipline.getByText('3D Sound', { exact: true })).toBeVisible();
-    await expect(discipline.getByText('Audio Mixer', { exact: true })).toBeVisible();
-    await expect(discipline.getByText('Final Mix', { exact: true })).toHaveCount(0);
-  } finally {
-    gameArtSkills.splice(0, gameArtSkills.length, ...originalUnlocked);
-  }
+test('player sees every Quest in a Topic boundary without a gateway window', async ({ page }) => {
+  await installApiFixtures(page);
+  await page.goto('mainmenu');
+  await page.getByRole('button', { name: /Game Art/ }).click();
+  const cluster = page.getByRole('listitem').filter({ hasText: '3D Modeling' });
+  await expect(cluster.locator('.constellation-node')).toHaveCount(topicSkills.length);
+  await expect(cluster.locator('.discipline-topic-boundary')).toBeVisible();
+  await expect(page.getByLabel('3D Modeling topic path info')).toHaveCount(0);
 });
 
 test('mobile constellation uses one-map paging and Star Lens sheet', async ({ page }) => {
@@ -840,10 +830,11 @@ test('mobile constellation uses one-map paging and Star Lens sheet', async ({ pa
   await installApiFixtures(page);
   await page.goto('mainmenu');
   await page.getByRole('button', { name: /Game Art/ }).click();
-  await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
-  const topicLens = page.getByRole('dialog', { name: '3D Modeling topic path info' });
-  await expect(topicLens).toBeVisible();
-  await expect(topicLens.getByRole('button', { name: 'View Path' })).toBeVisible();
+  const quest = page.locator('.discipline-topic-quest-layer .constellation-node').filter({ hasText: 'Blender Setup' });
+  await quest.press('Enter');
+  const questLens = page.getByRole('dialog', { name: 'Blender Setup quest details' });
+  await expect(questLens).toBeVisible();
+  await expect(questLens.getByRole('button', { name: 'Start journey' })).toBeVisible();
   await page.waitForTimeout(250);
   await page.screenshot({ path: '/tmp/constellation-visual/player-mobile.png', fullPage: true });
 });
@@ -854,17 +845,14 @@ test('empty topic explains that no quests are available yet', async ({ page }) =
     await installApiFixtures(page);
     await page.goto('mainmenu');
     await page.getByRole('button', { name: /Game Art/ }).click();
-    await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
-    await page.getByRole('button', { name: 'View Path' }).click();
-
-    await expect(page.getByText('No quests here yet')).toBeVisible();
-    await expect(page.getByText('This topic is ready for its first quest.')).toBeVisible();
+    await expect(page.getByText('No quests published in this Discipline yet')).toBeVisible();
+    await expect(page.getByText('Quest groups will appear here automatically when their Topic is published.')).toBeVisible();
   } finally {
     topicSkills.push(...savedSkills);
   }
 });
 
-test('player can explore a constellation with keyboard, camera controls, and browser-style back navigation', async ({ page }) => {
+test.skip('v1.0.0 topic camera navigation is retired in v1.0.1', async ({ page }) => {
   await installApiFixtures(page);
   await page.goto('mainmenu');
   const skillFrame = page.locator('.skill-constellation-panel .constellation-shell');
@@ -939,6 +927,24 @@ test('player can explore a constellation with keyboard, camera controls, and bro
   await page.goForward();
   await expect(page.locator('.skill-constellation-panel .constellation-focus')).toHaveClass(/is-topic-active/);
   await expect(page.getByRole('heading', { name: '3D Modeling' })).toBeVisible();
+});
+
+test('player can explore Discipline Quest groups with keyboard and browser-style back navigation', async ({ page }) => {
+  await installApiFixtures(page);
+  await page.goto('mainmenu');
+  await page.getByRole('button', { name: /Game Art/ }).click();
+  const questNode = page.getByRole('group', { name: '3D Modeling, 11 quests' })
+    .getByRole('button', { name: /Blender Setup/ });
+  await questNode.focus();
+  await questNode.press('Enter');
+  await expect(page.getByLabel('Blender Setup quest details')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByLabel('Blender Setup quest details')).toHaveCount(0);
+  await expect(questNode).toBeFocused();
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect(page.getByRole('heading', { name: 'Skill Constellations' }).first()).toBeVisible();
+  await page.goForward();
+  await expect(page.getByRole('heading', { name: 'Game Art' })).toBeVisible();
 });
 
 test('admin constellation workspace exposes map and node ownership', async ({ page }) => {
@@ -1834,12 +1840,10 @@ test('@audit progression roles and path semantics remain independently readable'
   await installApiFixtures(page);
   await page.goto('mainmenu');
   await page.getByRole('button', { name: /Game Art/ }).click();
-  await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
-  await page.getByRole('button', { name: 'View Path' }).click();
-  await expect(page.locator('.constellation-topic-layer')).toBeVisible();
-  await page.waitForTimeout(650);
+  const questLayer = page.locator('.discipline-topic-quest-layer');
+  await expect(questLayer).toBeVisible();
 
-  const nodeSemantics = await page.locator('.constellation-topic-layer .constellation-node').evaluateAll(nodes => (
+  const nodeSemantics = await questLayer.locator('.constellation-node').evaluateAll(nodes => (
     nodes.map(node => ({
       label: node.getAttribute('aria-label'),
       className: node.getAttribute('class'),
@@ -1847,7 +1851,7 @@ test('@audit progression roles and path semantics remain independently readable'
       starPath: node.querySelector('.constellation-node-star')?.getAttribute('d') || ''
     }))
   ));
-  const connections = await page.locator('.constellation-topic-layer .constellation-lines path').evaluateAll(paths => (
+  const connections = await questLayer.locator('.constellation-lines path').evaluateAll(paths => (
     paths.map(path => ({
       markerEnd: path.getAttribute('marker-end'),
       className: path.getAttribute('class'),
@@ -1875,7 +1879,7 @@ test('@audit progression roles and path semantics remain independently readable'
   await page.screenshot({ path: `/tmp/constellation-audit/${browserName}-role-and-path-semantics.png`, fullPage: true });
 });
 
-test('@audit mobile topic Star Lens preserves touch controls', async ({ page, browserName }) => {
+test('@audit mobile Discipline Quest Star Lens preserves touch controls', async ({ page, browserName }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await installApiFixtures(page);
   await page.goto('mainmenu');
@@ -1883,33 +1887,27 @@ test('@audit mobile topic Star Lens preserves touch controls', async ({ page, br
 
   const backBox = await page.getByRole('button', { name: 'Back' }).boundingBox();
   const skillPanel = page.locator('.skill-constellation-panel');
-  const zoomBoxes = await skillPanel.locator('.constellation-camera-controls button').evaluateAll(buttons => (
-    buttons.map(button => {
-      const bounds = button.getBoundingClientRect();
-      return { width: bounds.width, height: bounds.height };
-    })
-  ));
-  const modelingNode = page.locator('.constellation-node').filter({ hasText: '3D Modeling' });
-  await modelingNode.click();
-  const topicLens = page.getByRole('dialog', { name: '3D Modeling topic path info' });
-  await expect(topicLens).toBeVisible();
+  const modelingNode = page.locator('.discipline-topic-quest-layer .constellation-node').filter({ hasText: 'Blender Setup' });
+  await modelingNode.press('Enter');
+  const questLens = page.getByRole('dialog', { name: 'Blender Setup quest details' });
+  await expect(questLens).toBeVisible();
   await page.waitForTimeout(220);
 
   const nodeBox = await modelingNode.boundingBox();
   const hitTargetBox = await modelingNode.locator('.constellation-node-hit-target').boundingBox();
-  const panelBox = await topicLens.boundingBox();
-  const labelBoxes = await page.locator('.constellation-discipline-layer .constellation-node-label').evaluateAll(labels => (
+  const panelBox = await questLens.boundingBox();
+  const labelBoxes = await page.locator('.discipline-topic-quest-layer .constellation-node-label').evaluateAll(labels => (
     labels.map(label => {
       const bounds = label.getBoundingClientRect();
       return { text: label.textContent, width: bounds.width, height: bounds.height };
     })
   ));
-  const cameraControlsDisplay = await skillPanel.locator('.constellation-camera-controls').evaluate(element => getComputedStyle(element).display);
-  const panelButtons = await topicLens.getByRole('button').evaluateAll(buttons => buttons.map(button => ({
+  const cameraControlCount = await skillPanel.locator('.constellation-camera-controls').count();
+  const panelButtons = await questLens.getByRole('button').evaluateAll(buttons => buttons.map(button => ({
     text: button.textContent?.trim() || '',
     ariaLabel: button.getAttribute('aria-label') || ''
   })));
-  const viewPathBox = await topicLens.getByRole('button', { name: 'View Path' }).boundingBox();
+  const primaryActionBox = await questLens.getByRole('button', { name: 'Start journey' }).boundingBox();
 
   await recordAudit(browserName, 'mobile-spatial-context', {
     viewport: { width: 390, height: 844 },
@@ -1918,16 +1916,16 @@ test('@audit mobile topic Star Lens preserves touch controls', async ({ page, br
     previewPanelBox: panelBox,
     labelBoxes,
     backTarget: backBox,
-    zoomTargets: zoomBoxes,
-    allPrimaryTargetsAtLeast44: Boolean(backBox && backBox.width >= 44 && backBox.height >= 44 && zoomBoxes.every(box => box.width >= 44 && box.height >= 44)),
-    cameraControlsDisplay,
+    allPrimaryTargetsAtLeast44: Boolean(backBox && backBox.width >= 44 && backBox.height >= 44),
+    cameraControlCount,
     panelButtons,
     hasExplicitCloseControl: panelButtons.some(button => /close|dismiss/i.test(`${button.text} ${button.ariaLabel}`))
   });
   expect(panelBox?.width).toBe(390);
   expect(Boolean(hitTargetBox && hitTargetBox.width >= 44 && hitTargetBox.height >= 44)).toBe(true);
-  expect(Boolean(viewPathBox && viewPathBox.y >= 0 && viewPathBox.y + viewPathBox.height <= 844)).toBe(true);
-  expect(Boolean(backBox && backBox.width >= 44 && backBox.height >= 44 && zoomBoxes.every(box => box.width >= 44 && box.height >= 44))).toBe(true);
+  expect(Boolean(primaryActionBox && primaryActionBox.y >= 0 && primaryActionBox.y + primaryActionBox.height <= 844)).toBe(true);
+  expect(Boolean(backBox && backBox.width >= 44 && backBox.height >= 44)).toBe(true);
+  expect(cameraControlCount).toBe(0);
   expect(panelButtons.some(button => /close|dismiss/i.test(`${button.text} ${button.ariaLabel}`))).toBe(true);
   await page.screenshot({ path: `/tmp/constellation-audit/${browserName}-mobile-spatial-context.png`, fullPage: true });
 });
@@ -1958,7 +1956,7 @@ test('@audit locked visuals remain readable and 200 percent zoom keeps navigatio
   expect(contrast).toBeGreaterThanOrEqual(3);
 });
 
-test('@audit camera manipulation, restoration, and reduced motion', async ({ page, browserName }) => {
+test.skip('v1.0.0 topic camera manipulation is retired in v1.0.1', async ({ page, browserName }) => {
   await installApiFixtures(page);
   await page.goto('mainmenu');
   const skillConstellations = page.getByLabel('Skill Constellations');
@@ -2029,6 +2027,25 @@ test('@audit camera manipulation, restoration, and reduced motion', async ({ pag
   expect(reducedMotion.delay.split(',').every(value => value.trim() === '0s')).toBe(true);
 });
 
+test('@audit Discipline board removes hidden camera state and respects reduced motion', async ({ page, browserName }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await installApiFixtures(page);
+  await page.goto('mainmenu');
+  await page.getByRole('button', { name: /Game Art/ }).click();
+  const board = page.getByRole('list', { name: 'Game Art quest groups' });
+  const boundary = board.locator('.discipline-topic-boundary');
+  const before = await boundary.getAttribute('d');
+  await board.hover();
+  await page.mouse.wheel(0, 400);
+  const after = await boundary.getAttribute('d');
+  const cameraControlCount = await page.locator('.skill-constellation-panel .constellation-camera-controls').count();
+  const transitionDuration = await board.locator('.constellation-node-star').first().evaluate(element => getComputedStyle(element).transitionDuration);
+  await recordAudit(browserName, 'discipline-board-motion', { before, after, cameraControlCount, transitionDuration });
+  expect(after).toBe(before);
+  expect(cameraControlCount).toBe(0);
+  expect(Number.parseFloat(transitionDuration)).toBeLessThanOrEqual(0.001);
+});
+
 test('@audit keyboard semantics, focus restoration, and main navigation', async ({ page, browserName }) => {
   await installApiFixtures(page);
   await page.goto('mainmenu');
@@ -2041,13 +2058,13 @@ test('@audit keyboard semantics, focus restoration, and main navigation', async 
   })));
   const duplicateConstellationHeadings = await page.getByRole('heading', { name: 'Skill Constellations' }).count();
   await page.getByRole('button', { name: /Game Art/ }).click();
-  const modelingNode = page.getByRole('group', { name: 'Game Art constellation map' }).getByRole('button', { name: /3D Modeling/ });
+  const modelingNode = page.getByRole('group', { name: '3D Modeling, 11 quests' }).getByRole('button', { name: /Blender Setup/ });
   const nodeAccessibleName = await modelingNode.getAttribute('aria-label');
   await modelingNode.focus();
   await modelingNode.press('Enter');
-  await page.getByRole('button', { name: 'View Path' }).click();
-  await page.getByRole('button', { name: 'Back' }).click();
-  await expect(page.getByRole('heading', { name: 'Game Art' })).toBeVisible();
+  await expect(page.getByLabel('Blender Setup quest details')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByLabel('Blender Setup quest details')).toHaveCount(0);
   const focusAfterBack = await page.evaluate(() => ({
     tagName: document.activeElement?.tagName,
     ariaLabel: document.activeElement?.getAttribute('aria-label'),
@@ -2059,14 +2076,14 @@ test('@audit keyboard semantics, focus restoration, and main navigation', async 
     mainDestinationsKeyboardOperable: mainDestinations.every(item => ['BUTTON', 'A'].includes(item.tagName) || (item.role === 'button' && item.tabIndex >= 0)),
     duplicateConstellationHeadings,
     nodeAccessibleName,
-    nodeNameIncludesRole: /lesson|boss|capstone|topic/i.test(nodeAccessibleName || ''),
+    nodeNameIncludesRole: /lesson|boss|capstone/i.test(nodeAccessibleName || ''),
     focusAfterBack,
-    focusReturnedToGateway: /3D Modeling/i.test(`${focusAfterBack.ariaLabel || ''} ${focusAfterBack.text || ''}`)
+    focusReturnedToQuest: /Blender Setup/i.test(`${focusAfterBack.ariaLabel || ''} ${focusAfterBack.text || ''}`)
   });
   expect(mainDestinations.every(item => ['BUTTON', 'A'].includes(item.tagName) || (item.role === 'button' && item.tabIndex >= 0))).toBe(true);
   expect(duplicateConstellationHeadings).toBe(1);
-  expect(/topic/i.test(nodeAccessibleName || '')).toBe(true);
-  expect(/3D Modeling/i.test(`${focusAfterBack.ariaLabel || ''} ${focusAfterBack.text || ''}`)).toBe(true);
+  expect(/lesson/i.test(nodeAccessibleName || '')).toBe(true);
+  expect(/Blender Setup/i.test(`${focusAfterBack.ariaLabel || ''} ${focusAfterBack.text || ''}`)).toBe(true);
 });
 
 test('@audit admin dirty-exit and modal keyboard protection', async ({ page, browserName }) => {
@@ -2170,25 +2187,23 @@ test('@audit pending and locked progression states remain explainable', async ({
       }
     }))
   }));
-  const priorPrerequisites = gameArtSkills[3].prerequisites;
-  gameArtSkills[3].prerequisites = ['ffffffffffffffffffffffff'];
+  const lockedQuest = topicSkills[3];
+  const priorPrerequisites = lockedQuest.prerequisites;
+  lockedQuest.prerequisites = ['ffffffffffffffffffffffff'];
 
   try {
     await page.goto('mainmenu');
     await page.getByRole('button', { name: /Game Art/ }).click();
-    const lockedGateway = page.locator('.constellation-node').filter({ hasText: 'Animation' });
-    await lockedGateway.click();
-    const lockedPanel = page.getByLabel('Animation topic path info');
+    const lockedNode = page.locator('.discipline-topic-quest-layer .constellation-node').filter({ hasText: 'Painting' });
+    await lockedNode.press('Enter');
+    const lockedPanel = page.getByLabel('Painting quest details');
     await expect(lockedPanel).toBeVisible();
     const lockedPanelText = await lockedPanel.innerText();
     const lockedActions = await lockedPanel.getByRole('button').allTextContents();
-    const lockedActionDisabled = await lockedPanel.getByRole('button', { name: 'Prerequisites required' }).isDisabled();
+    const lockedActionDisabled = await lockedPanel.locator('.star-lens-dock__action').isDisabled();
 
     await lockedPanel.getByRole('button', { name: 'Close quest dock' }).click();
-    await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
-    await page.getByRole('button', { name: 'View Path' }).click();
-    await expect(page.locator('.constellation-topic-layer')).toBeVisible();
-    const pendingNode = page.locator('.constellation-topic-layer .constellation-node').filter({ hasText: 'Blender Basic' });
+    const pendingNode = page.locator('.discipline-topic-quest-layer .constellation-node').filter({ hasText: 'Blender Basic' });
     const pendingSemantics = await pendingNode.evaluate(node => ({
       className: node.getAttribute('class'),
       ariaLabel: node.getAttribute('aria-label'),
@@ -2207,11 +2222,11 @@ test('@audit pending and locked progression states remain explainable', async ({
     expect(lockedActionDisabled).toBe(true);
     expect(/pending/i.test(`${pendingSemantics.className} ${pendingSemantics.ariaLabel} ${pendingSemantics.text}`)).toBe(true);
   } finally {
-    gameArtSkills[3].prerequisites = priorPrerequisites;
+    lockedQuest.prerequisites = priorPrerequisites;
   }
 });
 
-test('@audit topic viewport owns its focused map geometry', async ({ page, browserName }) => {
+test.skip('v1.0.0 focused Topic viewport is retired in v1.0.1', async ({ page, browserName }) => {
   const priorViewport = topicMap.viewport;
   topicMap.viewport = { width: 900, height: 1400, minZoom: 0.6, maxZoom: 1.4 };
   try {
@@ -2270,9 +2285,7 @@ test('@audit topic quest Star Lens exposes steps and restores keyboard focus', a
     await installApiFixtures(page);
     await page.goto('mainmenu');
     await page.getByRole('button', { name: /Game Art/ }).click();
-    await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
-    await page.getByRole('button', { name: 'View Path' }).click();
-    const origin = page.locator('.constellation-topic-layer .constellation-node').filter({ hasText: 'Blender Setup' });
+    const origin = page.locator('.discipline-topic-quest-layer .constellation-node').filter({ hasText: 'Blender Setup' });
     await origin.focus();
     await origin.press('Enter');
 
@@ -2329,9 +2342,7 @@ test('topic quest Star Lens renders manually entered bold markdown', async ({ pa
     await installApiFixtures(page);
     await page.goto('mainmenu');
     await page.getByRole('button', { name: /Game Art/ }).click();
-    await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
-    await page.getByRole('button', { name: 'View Path' }).click();
-    await page.locator('.constellation-topic-layer .constellation-node').filter({ hasText: 'Blender Setup' }).click();
+    await page.locator('.discipline-topic-quest-layer .constellation-node').filter({ hasText: 'Blender Setup' }).press('Enter');
 
     const starLens = page.getByLabel('Blender Setup quest details');
     await expect(starLens.locator('.star-lens-dock__summary strong')).toHaveText('Blender Setup');
@@ -2359,9 +2370,7 @@ test('mobile topic quest Star Lens keeps cover and step cards readable', async (
     await installApiFixtures(page);
     await page.goto('mainmenu');
     await page.getByRole('button', { name: /Game Art/ }).click();
-    await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
-    await page.getByRole('button', { name: 'View Path' }).click();
-    await page.locator('.constellation-topic-layer .constellation-node').filter({ hasText: 'Blender Setup' }).click();
+    await page.locator('.discipline-topic-quest-layer .constellation-node').filter({ hasText: 'Blender Setup' }).press('Enter');
 
     const starLens = page.getByRole('dialog', { name: 'Blender Setup quest details' });
     await expect(starLens.locator('.star-lens-dock__art img')).toBeVisible();
@@ -2435,16 +2444,16 @@ test('@audit overview scales from four to six disciplines across viewports', asy
 });
 
 test('@audit preview media failure has a meaningful fallback', async ({ page, browserName }) => {
-  const preview = gameArtSkills[1].nodePreview as typeof gameArtSkills[1]['nodePreview'] & { imageUrl?: string };
-  const priorImageUrl = preview.imageUrl;
-  preview.imageUrl = 'http://localhost:3099/audit-broken-preview.png';
+  const target = topicSkills[0];
+  const priorPreview = target.nodePreview;
+  target.nodePreview = { summary: target.description, outcomes: [], actionLabel: 'Open Quest', imageUrl: 'http://localhost:3099/audit-broken-preview.png' };
   try {
     await installApiFixtures(page);
     await page.route('http://localhost:3099/audit-broken-preview.png', route => route.fulfill({ status: 404, body: '' }));
     await page.goto('mainmenu');
     await page.getByRole('button', { name: /Game Art/ }).click();
-    await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
-    const media = page.getByLabel('3D Modeling preview');
+    await page.locator('.discipline-topic-quest-layer .constellation-node').filter({ hasText: 'Blender Setup' }).press('Enter');
+    const media = page.getByLabel('Blender Setup preview');
     await expect(media).toBeVisible();
     const mediaState = await media.evaluate(element => {
       const image = element.querySelector('img');
@@ -2463,12 +2472,11 @@ test('@audit preview media failure has a meaningful fallback', async ({ page, br
     expect(Boolean(mediaState.text || mediaState.ariaLabel || (mediaState.naturalWidth || 0) > 0)).toBe(true);
     await page.screenshot({ path: `/tmp/constellation-audit/${browserName}-preview-media-failure.png`, fullPage: true });
   } finally {
-    if (priorImageUrl) preview.imageUrl = priorImageUrl;
-    else delete preview.imageUrl;
+    target.nodePreview = priorPreview;
   }
 });
 
-test('@audit topic loading blocks conflicting map manipulation', async ({ page, browserName }) => {
+test.skip('v1.0.0 Topic loading camera lock is retired in v1.0.1', async ({ page, browserName }) => {
   await installApiFixtures(page);
   await page.route(/\/api\/constellation-maps\?.*gatewaySkillId=/, async route => {
     await new Promise(resolve => setTimeout(resolve, 700));
@@ -2567,9 +2575,7 @@ test('@audit HamsterQuest Step flow exposes hints, validates proof, and restores
 
     await page.goto('mainmenu');
     await page.getByRole('button', { name: /Game Art/ }).click();
-    await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
-    await page.getByRole('button', { name: 'View Path' }).click();
-    await page.locator('.constellation-topic-layer .constellation-node').filter({ hasText: 'Blender Setup' }).click();
+    await page.locator('.discipline-topic-quest-layer .constellation-node').filter({ hasText: 'Blender Setup' }).press('Enter');
 
     const starLens = page.getByLabel('Blender Setup quest details');
     const submitButton = starLens.getByRole('button', { name: 'Submit', exact: true });
@@ -2662,9 +2668,7 @@ test('@audit mobile HamsterQuest dialog traps focus and only closes its own laye
     }));
     await page.goto('mainmenu');
     await page.getByRole('button', { name: /Game Art/ }).click();
-    await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
-    await page.getByRole('button', { name: 'View Path' }).click();
-    await page.locator('.constellation-topic-layer .constellation-node').filter({ hasText: 'Blender Setup' }).click();
+    await page.locator('.discipline-topic-quest-layer .constellation-node').filter({ hasText: 'Blender Setup' }).press('Enter');
 
     const starLens = page.getByRole('dialog', { name: 'Blender Setup quest details' });
     const submitButton = starLens.getByRole('button', { name: 'Submit', exact: true });
@@ -2736,9 +2740,7 @@ test('@audit HamsterQuest setup and rejection states explain the next action', a
     }));
     await page.goto('mainmenu');
     await page.getByRole('button', { name: /Game Art/ }).click();
-    await page.locator('.constellation-node').filter({ hasText: '3D Modeling' }).click();
-    await page.getByRole('button', { name: 'View Path' }).click();
-    await page.locator('.constellation-topic-layer .constellation-node').filter({ hasText: 'Blender Setup' }).click();
+    await page.locator('.discipline-topic-quest-layer .constellation-node').filter({ hasText: 'Blender Setup' }).press('Enter');
 
     const starLens = page.getByLabel('Blender Setup quest details');
     await expect(starLens).toContainText('Join at least one active HamsterQuest House before submitting.');

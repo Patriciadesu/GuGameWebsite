@@ -2541,13 +2541,43 @@ app.get('/api/constellation-maps/:id', requireAuth, async (req: Request, res: Re
       });
     }
     const hydratedSkills = await hydrateSkillsFromStarMaster(visibleSkills);
+    let topicGroups: Array<{ map: any; gateway: any | null; skills: any[] }> = [];
+    if (map.constellationType !== 'main' && map.scope === 'discipline') {
+      const topicMaps = await ConstellationMap.find({
+        parentMapId: map._id,
+        scope: 'topic',
+        ...(isAdmin ? {} : { isActive: true })
+      }).sort({ displayOrder: 1, _id: 1 }).lean();
+      const topicSkills = topicMaps.length > 0
+        ? await Skill.find({
+          constellationMapId: { $in: topicMaps.map(topic => topic._id) },
+          ...(isAdmin ? {} : { isActive: true })
+        }).sort({ constellationMapId: 1, layer: 1, position: 1, _id: 1 }).lean()
+        : [];
+      const hydratedTopicSkills = await hydrateSkillsFromStarMaster(topicSkills);
+      const presentedTopicSkills = presentSkillsForUser(hydratedTopicSkills, {
+        role: req.user!.role,
+        unlockedSkills: req.user!.state?.unlockedSkills
+      });
+      const gatewaysById = new Map(hydratedSkills.map(skill => [skill._id.toString(), skill]));
+      topicGroups = topicMaps.map(topic => ({
+        map: topic,
+        gateway: topic.gatewaySkillId
+          ? gatewaysById.get(topic.gatewaySkillId.toString()) || null
+          : null,
+        skills: presentedTopicSkills
+          .filter(skill => skill.constellationMapId?.toString() === topic._id.toString())
+          .map(skill => ({ ...skill, topicLevel: topic.level || 1 }))
+      }));
+    }
     res.json({
       success: true,
       map,
       skills: presentSkillsForUser(hydratedSkills, {
         role: req.user!.role,
         unlockedSkills: req.user!.state?.unlockedSkills
-      })
+      }),
+      topicGroups
     });
   } catch (error) {
     sendConstellationError(res, error, 'Failed to fetch constellation map');

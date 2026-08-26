@@ -84,3 +84,9 @@ export interface ConstellationSkill {
     hasArrowhead: boolean;
   }>;
 }
+
+export interface ConstellationTopicGroup {
+  map: ConstellationMap;
+  gateway?: ConstellationSkill | null;
+  skills: ConstellationSkill[];
+}

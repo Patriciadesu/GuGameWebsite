@@ -95,29 +95,52 @@ const boundaryPathFor = (points: Point[]): string => {
   return `${expanded.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')} Z`;
 };
 
-const normalizeTopicGroup = (group: ConstellationTopicGroup): MapDetail => {
+const placeTopicGroupInDiscipline = (
+  group: ConstellationTopicGroup,
+  discipline: ConstellationMap,
+  anchor: Point
+): MapDetail => {
   const sourcePoints = group.skills.map((skill, index) =>
     pointForSkill(skill, index, group.skills.length, group.map)
   );
-  const minX = sourcePoints.length ? Math.min(...sourcePoints.map(point => point.x)) : 0;
-  const maxX = sourcePoints.length ? Math.max(...sourcePoints.map(point => point.x)) : 0;
-  const minY = sourcePoints.length ? Math.min(...sourcePoints.map(point => point.y)) : 0;
-  const maxY = sourcePoints.length ? Math.max(...sourcePoints.map(point => point.y)) : 0;
-  const width = maxX - minX;
-  const height = maxY - minY;
-  const scales = [width > 0 ? 610 / width : Infinity, height > 0 ? 430 / height : Infinity];
-  const scale = sourcePoints.length <= 1 ? 1 : Math.min(2.2, ...scales);
+  const minX = Math.min(...sourcePoints.map(point => point.x));
+  const maxX = Math.max(...sourcePoints.map(point => point.x));
+  const minY = Math.min(...sourcePoints.map(point => point.y));
+  const maxY = Math.max(...sourcePoints.map(point => point.y));
+  const width = Math.max(1, maxX - minX);
+  const height = Math.max(1, maxY - minY);
+  const scale = sourcePoints.length === 1
+    ? 1
+    : Math.min(0.36, 430 / width, 310 / height);
   const center = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+  const rawPoints = sourcePoints.map(point => ({
+    x: anchor.x + (point.x - center.x) * scale,
+    y: anchor.y + (point.y - center.y) * scale
+  }));
+  const placedBounds = {
+    minX: Math.min(...rawPoints.map(point => point.x)),
+    maxX: Math.max(...rawPoints.map(point => point.x)),
+    minY: Math.min(...rawPoints.map(point => point.y)),
+    maxY: Math.max(...rawPoints.map(point => point.y))
+  };
+  const padding = 118;
+  const shiftX = placedBounds.minX < padding
+    ? padding - placedBounds.minX
+    : placedBounds.maxX > discipline.viewport.width - padding
+      ? discipline.viewport.width - padding - placedBounds.maxX
+      : 0;
+  const shiftY = placedBounds.minY < padding
+    ? padding - placedBounds.minY
+    : placedBounds.maxY > discipline.viewport.height - padding
+      ? discipline.viewport.height - padding - placedBounds.maxY
+      : 0;
   return {
-    map: {
-      ...group.map,
-      viewport: { ...group.map.viewport, width: 900, height: 700 }
-    },
+    map: discipline,
     skills: group.skills.map((skill, index) => ({
       ...skill,
       constellationPosition: {
-        x: 450 + (sourcePoints[index].x - center.x) * scale,
-        y: 370 + (sourcePoints[index].y - center.y) * scale
+        x: rawPoints[index].x + shiftX,
+        y: rawPoints[index].y + shiftY
       }
     }))
   };
@@ -807,7 +830,13 @@ function ConstellationTree({
     : { x: 0, y: 0 };
   const topicClusters = (selectedDiscipline.topicGroups || [])
     .filter(group => group.skills.length > 0)
-    .map(group => ({ group, detail: normalizeTopicGroup(group) }));
+    .map(group => {
+      const gatewayIndex = selectedDiscipline.skills.findIndex(skill => skill._id === group.gateway?._id);
+      const anchor = group.gateway
+        ? pointForSkill(group.gateway, Math.max(0, gatewayIndex), selectedDiscipline.skills.length, selectedDiscipline.map)
+        : { x: selectedDiscipline.map.viewport.width / 2, y: selectedDiscipline.map.viewport.height / 2 };
+      return { group, detail: placeTopicGroupInDiscipline(group, selectedDiscipline.map, anchor) };
+    });
   return (
     <section
       className={`constellation-shell constellation-focus ${directMap ? 'is-main-quest-rail' : 'is-discipline-board'}`}
@@ -944,64 +973,82 @@ function ConstellationTree({
             <span>{directMap ? 'Add the first level-up quest in Main Quest Editor.' : 'This topic is ready for its first quest.'}</span>
           </div>
         )}
-      </div> : <div className="discipline-quest-board" role="list" aria-label={`${activeMap?.name} quest groups`}>
-        {topicClusters.map(({ group, detail }, clusterIndex) => {
+      </div> : <div className="constellation-canvas-wrap discipline-quest-board" ref={canvasWrapRef}>
+        <div className="constellation-camera-controls" aria-label="Map view controls">
+          <button type="button" onClick={() => setCamera(current => ({ ...current, zoom: Math.min((activeMap?.viewport.maxZoom || 3), current.zoom * 1.2) }))} title="Zoom in" aria-label="Zoom in"><ZoomIn aria-hidden="true" /></button>
+          <button type="button" onClick={resetCamera} title="Reset view" aria-label="Reset view"><RotateCcw aria-hidden="true" /></button>
+          <button type="button" onClick={() => setCamera(current => ({ ...current, zoom: Math.max((activeMap?.viewport.minZoom || 0.3), current.zoom * 0.8) }))} title="Zoom out" aria-label="Zoom out"><ZoomOut aria-hidden="true" /></button>
+        </div>
+        <svg
+          ref={canvasRef}
+          className="constellation-canvas discipline-constellation-canvas"
+          viewBox={`0 0 ${mapWidth} ${mapHeight}`}
+          role="list"
+          aria-label={`${activeMap?.name} constellation; all topic quests`}
+          onPointerDown={(event) => {
+            if ((event.target as Element).closest('.constellation-node')) return;
+            dragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+            setIsDirectManipulating(true);
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            const drag = dragRef.current;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            const bounds = event.currentTarget.getBoundingClientRect();
+            const unitX = mapWidth / Math.max(1, bounds.width);
+            const unitY = mapHeight / Math.max(1, bounds.height);
+            setCamera(current => ({
+              ...current,
+              x: current.x + (event.clientX - drag.x) * unitX,
+              y: current.y + (event.clientY - drag.y) * unitY
+            }));
+            dragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+          }}
+          onPointerUp={() => { dragRef.current = null; setIsDirectManipulating(false); }}
+          onPointerCancel={() => { dragRef.current = null; setIsDirectManipulating(false); }}
+        >
+          <defs>
+            <pattern id={`${idPrefix}-discipline-grid`} width="54" height="54" patternUnits="userSpaceOnUse">
+              <circle cx="2" cy="2" r="1.6" fill="var(--constellation-border)" opacity="0.52" />
+            </pattern>
+            <marker id={`${idPrefix}-discipline-arrow`} className="constellation-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 Z" />
+            </marker>
+          </defs>
+          <rect width={mapWidth} height={mapHeight} fill="var(--constellation-bg)" pointerEvents="none" />
+          <rect width={mapWidth} height={mapHeight} fill={`url(#${idPrefix}-discipline-grid)`} pointerEvents="none" />
+          <g
+            className={`constellation-camera ${isDirectManipulating ? 'is-direct-manipulation' : ''}`}
+            transform={`translate(${camera.x} ${camera.y}) scale(${camera.zoom})`}
+          >
+          {topicClusters.map(({ group, detail }) => {
           const points = detail.skills.map((skill, index) =>
             pointForSkill(skill, index, detail.skills.length, detail.map)
           );
           const boundaryPath = boundaryPathFor(points);
           const levelLocked = (group.map.level || 1) > userLevel;
-          const isDense = detail.skills.length > 6;
-          return <article
-            className={`discipline-topic-cluster ${isDense ? 'is-dense' : ''} ${levelLocked ? 'is-level-locked' : ''}`}
+          const labelPoint = {
+            x: Math.min(...points.map(point => point.x)) + 16,
+            y: Math.min(...points.map(point => point.y)) - 104
+          };
+          return <g
+            className={`discipline-topic-cluster ${levelLocked ? 'is-level-locked' : ''}`}
             key={group.map._id}
             role="listitem"
-            aria-labelledby={`${idPrefix}-cluster-${group.map._id}`}
+            aria-label={`${group.map.name}, Level ${group.map.level || 1}, ${detail.skills.length} ${detail.skills.length === 1 ? 'quest' : 'quests'}`}
           >
-            <header className="discipline-topic-cluster__header">
-              <div>
-                <span>Quest group · Level {group.map.level || 1}</span>
-                <h3 id={`${idPrefix}-cluster-${group.map._id}`}>{group.map.name}</h3>
-              </div>
-              <strong>{detail.skills.length} {detail.skills.length === 1 ? 'Quest' : 'Quests'}</strong>
-            </header>
-            <svg
-              className="discipline-topic-cluster__map"
-              viewBox="0 0 900 700"
-              role="group"
-              aria-label={`${group.map.name}, ${detail.skills.length} quests`}
-              preserveAspectRatio="xMidYMid meet"
-            >
-              <defs>
-                <filter id={`${idPrefix}-cluster-glow-${clusterIndex}`} x="-80%" y="-80%" width="260%" height="260%">
-                  <feGaussianBlur stdDeviation="6" result="blur" />
-                  <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-                </filter>
-                <marker id={`${idPrefix}-cluster-arrow-${clusterIndex}`} className="constellation-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 Z" />
-                </marker>
-              </defs>
-              <path className="discipline-topic-boundary" d={boundaryPath} vectorEffect="non-scaling-stroke" />
-              {renderMapLayer(detail, {
-                className: 'discipline-topic-quest-layer',
-                markerId: `${idPrefix}-cluster-arrow-${clusterIndex}`,
-                onNodeClick: (skill, interaction, trigger) => onOpenSkill(skill, interaction, trigger)
-              })}
-            </svg>
-            {isDense && <ol className="discipline-topic-quest-index" aria-label={`${group.map.name} Quest index`}>
-              {detail.skills.map(skill => {
-                const skillStatus = statusForSkill(skill);
-                return <li key={`index-${skill._id}`}>
-                  <button type="button" onClick={event => onOpenSkill(skill, 'pointer', event.currentTarget)}>
-                    <i className={`is-${skillStatus}`} aria-hidden="true" />
-                    <span>{labelForSkill(skill)}</span>
-                    <small>{skillStatus}</small>
-                  </button>
-                </li>;
-              })}
-            </ol>}
-          </article>;
+            <path className="discipline-topic-boundary" d={boundaryPath} vectorEffect="non-scaling-stroke" />
+            <text className="discipline-topic-boundary__eyebrow" x={labelPoint.x} y={labelPoint.y}>TOPIC · LEVEL {group.map.level || 1}</text>
+            <text className="discipline-topic-boundary__title" x={labelPoint.x} y={labelPoint.y + 31}>{group.map.name}</text>
+            {renderMapLayer(detail, {
+              className: 'discipline-topic-quest-layer',
+              markerId: `${idPrefix}-discipline-arrow`,
+              onNodeClick: (skill, interaction, trigger) => onOpenSkill(skill, interaction, trigger)
+            })}
+          </g>;
         })}
+          </g>
+        </svg>
         {topicClusters.length === 0 && <div className="discipline-board-empty" role="status">
           <strong>No quests published in this Discipline yet</strong>
           <span>Quest groups will appear here automatically when their Topic is published.</span>

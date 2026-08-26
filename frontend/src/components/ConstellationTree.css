@@ -1202,164 +1202,60 @@
 .is-discipline-board { min-height: 0; }
 
 .discipline-quest-board {
-  display: grid;
+  position: relative;
   min-height: 0;
-  padding: 16px;
-  overflow-y: auto;
-  align-content: start;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  background:
-    linear-gradient(color-mix(in srgb, var(--constellation-border) 16%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in srgb, var(--constellation-border) 16%, transparent) 1px, transparent 1px),
-    var(--constellation-bg);
-  background-size: 32px 32px;
-  scrollbar-gutter: stable;
 }
 
-.discipline-topic-cluster {
-  position: relative;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--constellation-text);
-  background: color-mix(in srgb, var(--constellation-surface) 88%, transparent);
-  border: 1px solid color-mix(in srgb, var(--constellation-border) 80%, transparent);
-  border-radius: 12px;
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--constellation-text) 8%, transparent);
-}
-
-.discipline-topic-cluster.is-dense {
-  display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(260px, .65fr);
-  grid-column: 1 / -1;
-  align-items: center;
-}
-
-.discipline-topic-cluster.is-dense .discipline-topic-cluster__header { grid-column: 1 / -1; }
-.discipline-topic-cluster.is-dense .discipline-topic-cluster__map { grid-column: 1; }
-
-.discipline-topic-cluster__header {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  min-height: 70px;
-  padding: 13px 16px 8px;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.discipline-topic-cluster__header span {
-  display: block;
-  margin-bottom: 2px;
-  color: var(--constellation-unlocked);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-}
-
-.discipline-topic-cluster__header h3 {
-  margin: 0;
-  color: var(--constellation-text);
-  font-family: Georgia, "Noto Sans Thai", serif;
-  font-size: 21px;
-  font-weight: 600;
-  line-height: 1.2;
-}
-
-.discipline-topic-cluster__header strong {
-  flex: 0 0 auto;
-  padding: 5px 8px;
-  color: var(--constellation-muted);
-  background: color-mix(in srgb, var(--constellation-border) 18%, transparent);
-  border: 1px solid color-mix(in srgb, var(--constellation-border) 70%, transparent);
-  border-radius: 999px;
-  font-size: 11px;
-}
-
-.discipline-topic-cluster__map {
-  display: block;
-  width: 100%;
-  aspect-ratio: 900 / 700;
-  margin-top: -12px;
-  overflow: visible;
-}
+.discipline-constellation-canvas { cursor: grab; }
+.discipline-constellation-canvas:active { cursor: grabbing; }
 
 .discipline-topic-boundary {
-  fill: color-mix(in srgb, var(--constellation-unlocked) 5%, var(--constellation-surface));
+  fill: color-mix(in srgb, var(--constellation-unlocked) 4%, transparent);
   stroke: color-mix(in srgb, var(--constellation-unlocked) 72%, var(--constellation-border));
-  stroke-width: 2;
+  stroke-width: 2.5;
   stroke-dasharray: 8 7;
   stroke-linejoin: round;
   filter: drop-shadow(0 0 8px color-mix(in srgb, var(--constellation-unlocked) 18%, transparent));
   pointer-events: none;
 }
 
+.discipline-topic-boundary__eyebrow {
+  fill: var(--constellation-unlocked);
+  font-family: "Noto Sans Thai", sans-serif;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  paint-order: stroke;
+  stroke: var(--constellation-bg);
+  stroke-width: 8px;
+}
+
+.discipline-topic-boundary__title {
+  fill: var(--constellation-text);
+  font-family: Georgia, "Noto Sans Thai", serif;
+  font-size: 34px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--constellation-bg);
+  stroke-width: 10px;
+}
+
 .discipline-topic-quest-layer .constellation-node-label {
-  font-size: 25px;
-  stroke: var(--constellation-surface);
-  stroke-width: 7px;
+  font-size: 22px;
+  stroke: var(--constellation-bg);
+  stroke-width: 8px;
 }
 
 .discipline-topic-quest-layer .constellation-lines path { stroke-width: 2.5; }
 .discipline-topic-quest-layer .constellation-node-star { filter: drop-shadow(0 2px 5px color-mix(in srgb, var(--constellation-text) 20%, transparent)); }
-.discipline-topic-cluster.is-dense .discipline-topic-quest-layer .constellation-node-label,
-.discipline-topic-cluster.is-dense .discipline-topic-quest-layer .constellation-node-kicker { opacity: 0; }
-.discipline-topic-cluster.is-dense .discipline-topic-quest-layer .constellation-node:hover .constellation-node-label,
-.discipline-topic-cluster.is-dense .discipline-topic-quest-layer .constellation-node:hover .constellation-node-kicker,
-.discipline-topic-cluster.is-dense .discipline-topic-quest-layer .constellation-node:focus-visible .constellation-node-label,
-.discipline-topic-cluster.is-dense .discipline-topic-quest-layer .constellation-node:focus-visible .constellation-node-kicker { opacity: 1; }
 .discipline-topic-cluster.is-level-locked .discipline-topic-boundary { stroke: var(--constellation-locked); filter: none; }
-.discipline-topic-cluster.is-level-locked .discipline-topic-cluster__header span { color: var(--constellation-locked); }
-
-.discipline-topic-quest-index {
-  display: grid;
-  max-height: 520px;
-  margin: 0;
-  padding: 12px 14px 18px 4px;
-  overflow-y: auto;
-  align-content: start;
-  gap: 5px;
-  list-style: none;
-}
-
-.discipline-topic-quest-index button {
-  display: grid;
-  width: 100%;
-  min-height: 44px;
-  padding: 7px 9px;
-  align-items: center;
-  grid-template-columns: 10px minmax(0, 1fr) auto;
-  gap: 8px;
-  color: var(--constellation-text);
-  background: color-mix(in srgb, var(--constellation-surface) 82%, transparent);
-  border: 1px solid color-mix(in srgb, var(--constellation-border) 72%, transparent);
-  border-radius: 7px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.discipline-topic-quest-index button:hover,
-.discipline-topic-quest-index button:focus-visible {
-  background: color-mix(in srgb, var(--constellation-unlocked) 8%, var(--constellation-surface));
-  border-color: var(--constellation-unlocked);
-  outline: 0;
-}
-
-.discipline-topic-quest-index i { width: 8px; height: 8px; background: var(--constellation-locked); transform: rotate(45deg); }
-.discipline-topic-quest-index i.is-unlocked { background: var(--constellation-unlocked); }
-.discipline-topic-quest-index i.is-available { background: var(--constellation-available); }
-.discipline-topic-quest-index i.is-pending { background: var(--constellation-capstone); }
-.discipline-topic-quest-index span { min-width: 0; overflow-wrap: anywhere; font-size: 13px; font-weight: 700; }
-.discipline-topic-quest-index small { color: var(--constellation-muted); font-size: 9px; text-transform: uppercase; }
+.discipline-topic-cluster.is-level-locked .discipline-topic-boundary__eyebrow { fill: var(--constellation-locked); }
 
 .discipline-board-empty {
   display: grid;
   min-height: 280px;
   padding: 24px;
   place-content: center;
-  grid-column: 1 / -1;
   gap: 6px;
   color: var(--constellation-muted);
   text-align: center;
@@ -1408,24 +1304,9 @@
   }
   .skill-constellation-panel .constellation-overview-pager { min-height: 52px; }
   .skill-constellation-panel .constellation-canvas { height: clamp(360px, 58svh, 480px); flex-basis: clamp(360px, 58svh, 480px); }
-  .discipline-quest-board {
-    padding: 10px;
-    overflow: visible;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 10px;
-  }
-  .discipline-topic-cluster__header { min-height: 62px; padding: 11px 12px 6px; }
-  .discipline-topic-cluster__header h3 { font-size: 18px; }
-  .discipline-topic-cluster__map { margin-top: -8px; }
-  .discipline-topic-quest-layer .constellation-node-label { font-size: 28px; }
-  .discipline-topic-cluster.is-dense { display: block; }
-  .discipline-topic-quest-index { max-height: none; padding: 0 10px 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .discipline-topic-quest-index button { grid-template-columns: 10px minmax(0, 1fr); }
-  .discipline-topic-quest-index small { display: none; }
-}
-
-@media (max-width: 460px) {
-  .discipline-topic-quest-index { grid-template-columns: minmax(0, 1fr); }
+  .discipline-topic-boundary__eyebrow { font-size: 24px; }
+  .discipline-topic-boundary__title { font-size: 36px; }
+  .discipline-topic-quest-layer .constellation-node-label { font-size: 27px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

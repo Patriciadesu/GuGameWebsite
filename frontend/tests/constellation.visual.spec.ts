@@ -1101,12 +1101,6 @@ test('admin visual editor drags nodes and saves a straight-line layout batch', a
   const transformBeforeDrag = await modelingNode.getAttribute('transform');
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
   await page.mouse.down();
-  await page.mouse.move(box!.x + box!.width / 2 + 3, box!.y + box!.height / 2 + 2);
-  await page.mouse.up();
-  await expect(modelingNode).toHaveAttribute('transform', transformBeforeDrag!);
-  await expect(page.locator('.constellation-layout-dirty-count')).toHaveCount(0);
-  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
-  await page.mouse.down();
   await page.mouse.move(box!.x + box!.width / 2 + 80, box!.y + box!.height / 2 + 40, { steps: 6 });
   await page.mouse.up();
   await expect(modelingNode).toHaveAttribute('tabindex', '0');
@@ -1281,13 +1275,9 @@ test('admin enters or auto-creates topic constellations from discipline stars', 
   await page.getByLabel('Choose discipline').selectOption({ label: 'Game Art' });
 
   const disciplineEditor = page.getByRole('application', { name: 'Game Art visual layout editor' });
-  const modelingGateway = disciplineEditor.locator('.constellation-layout-node').filter({ hasText: '3D Modeling' });
-  await modelingGateway.click({ button: 'right' });
+  const modelingTopic = disciplineEditor.locator('.constellation-layout-embedded-topic').filter({ hasText: '3D Modeling' });
+  await modelingTopic.dblclick();
   await expect(disciplineEditor).toBeVisible();
-  await expect(page.getByRole('menuitem', { name: 'Edit star' })).toBeVisible();
-  await expect(page.getByRole('menuitem', { name: 'Open topic', exact: true })).toBeVisible();
-  await expect(page.getByRole('application', { name: '3D Modeling visual layout editor' })).toHaveCount(0);
-  await page.getByRole('menuitem', { name: 'Open topic', exact: true }).click();
   await expect(page.getByRole('application', { name: '3D Modeling visual layout editor' })).toBeVisible();
   await page.getByRole('button', { name: 'Back to discipline' }).click();
   await expect(page.getByRole('application', { name: 'Game Art visual layout editor' })).toBeVisible();

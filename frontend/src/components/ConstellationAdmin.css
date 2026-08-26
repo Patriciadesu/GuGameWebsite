@@ -199,8 +199,12 @@
 .constellation-layout-editor .constellation-link-star { fill: var(--constellation-surface); stroke: var(--constellation-line); stroke-width: 2; }
 .constellation-layout-node { cursor: move; }
 
-.constellation-layout-editor.is-embedded-discipline .constellation-layout-embedded-topic { cursor: pointer; }
-.constellation-layout-editor.is-embedded-discipline .constellation-layout-nodes { opacity: 0; }
+.constellation-layout-editor.is-embedded-discipline .constellation-layout-embedded-topic { cursor: pointer; pointer-events: bounding-box; }
+.constellation-layout-editor.is-embedded-discipline .constellation-layout-nodes,
+.constellation-layout-editor.is-embedded-discipline .constellation-layout-nodes * { opacity: 0; pointer-events: none; }
+.constellation-layout-editor.is-embedded-discipline .constellation-layout-embedded-topic,
+.constellation-layout-editor.is-embedded-discipline .constellation-layout-topic-title,
+.constellation-layout-editor.is-embedded-discipline .constellation-layout-topic-eyebrow { user-select: none; }
 .constellation-layout-editor.is-embedded-discipline .constellation-layout-lines,
 .constellation-layout-editor.is-embedded-discipline > .constellation-layout-canvas-wrap .constellation-link-star { opacity: 0; }
 .constellation-layout-topic-boundary {

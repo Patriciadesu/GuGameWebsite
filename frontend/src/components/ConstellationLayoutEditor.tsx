@@ -458,6 +458,8 @@ function ConstellationLayoutEditor({
   ) => {
     if (disabled) return;
     event.stopPropagation();
+    event.preventDefault();
+    event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId);
     const moveChild = Boolean(childSkillId && embeddedSelection?.topicMapId === topicMapId && embeddedSelection.skillId === childSkillId);
     setEmbeddedSelection({ topicMapId, skillId: moveChild ? childSkillId : undefined });
     const startPositions = Object.fromEntries(groupSkills.map(skill => [skill._id, skill.constellationPosition!])) as Record<string, ConstellationLayoutPosition>;
@@ -619,6 +621,14 @@ function ConstellationLayoutEditor({
                   aria-label={`${group.map.name} topic, ${topicSkills.length} quests`}
                   onPointerDown={event => startEmbeddedDrag(event, group.map._id, topicSkills, group.gateway)}
                   onDoubleClick={() => group.gateway && onActivateSkill?.(group.gateway._id)}
+                  onContextMenu={event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (group.gateway) {
+                      onSelectSkill(group.gateway._id);
+                      onContextMenuSkill?.(group.gateway._id, event.clientX, event.clientY);
+                    }
+                  }}
                 >
                   <path className="constellation-layout-topic-boundary" d={boundary} vectorEffect="non-scaling-stroke" />
                   <text className="constellation-layout-topic-eyebrow" x={Math.min(...points.map(point => point.x)) + 12} y={Math.min(...points.map(point => point.y)) - 94}>TOPIC · LEVEL {group.map.level || 1}</text>
@@ -642,6 +652,12 @@ function ConstellationLayoutEditor({
                       aria-label={`${skill.constellationLabel || skill.title}, ${skill.mapNodeRole || 'lesson'}, in ${group.map.name}`}
                       onPointerDown={event => startEmbeddedDrag(event, group.map._id, topicSkills, group.gateway, skill._id)}
                       onDoubleClick={() => onActivateSkill?.(skill._id)}
+                      onContextMenu={event => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        onSelectSkill(skill._id);
+                        onContextMenuSkill?.(skill._id, event.clientX, event.clientY);
+                      }}
                       onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onActivateSkill?.(skill._id); } }}
                     >
                       <ConstellationNodeGlyph skill={skill} label={skill.constellationLabel || skill.title} labelOnLeft={point.x > map.viewport.width * 0.74} labelY={6} />

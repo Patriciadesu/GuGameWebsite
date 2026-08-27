@@ -216,10 +216,7 @@ const convexHull = (points: Array<{ x: number; y: number }>) => {
 
 const boundaryPath = (points: Array<{ x: number; y: number }>) => {
   if (points.length === 0) return '';
-  // The guide image already provides visual breathing room around the stars.
-  // Keep the topic outline inside that image instead of expanding a second,
-  // larger hull beyond the SVG silhouette.
-  const padding = 18;
+  const padding = 70;
   if (points.length === 1) {
     const point = points[0];
     return `M ${point.x - 110} ${point.y} Q ${point.x - 110} ${point.y - 76} ${point.x} ${point.y - 76} Q ${point.x + 110} ${point.y - 76} ${point.x + 110} ${point.y} Q ${point.x + 110} ${point.y + 76} ${point.x} ${point.y + 76} Q ${point.x - 110} ${point.y + 76} ${point.x - 110} ${point.y} Z`;

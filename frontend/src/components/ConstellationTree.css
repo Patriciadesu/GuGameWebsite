@@ -1253,7 +1253,15 @@
 .constellation-topic-layer.is-svg-guide .constellation-node-label,
 .constellation-mini-layer.is-svg-guide .constellation-node-label,
 .discipline-topic-quest-layer.is-svg-guide .constellation-node-label {
-  font-size: 16px;
+  display: none;
+}
+
+/* The guide itself is the map. Keep dense quest titles inside Star Lens so
+   they cannot visually leave the silhouette or collide with nearby stars. */
+.constellation-topic-layer.is-svg-guide .constellation-node-kicker,
+.constellation-mini-layer.is-svg-guide .constellation-node-kicker,
+.discipline-topic-quest-layer.is-svg-guide .constellation-node-kicker {
+  display: none;
 }
 
 .discipline-topic-quest-layer .constellation-lines path { stroke-width: 2.5; }

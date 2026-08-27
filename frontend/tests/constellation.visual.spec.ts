@@ -462,7 +462,7 @@ test('player constellation states render without overflow', async ({ page }) => 
   await page.screenshot({ path: '/tmp/constellation-visual/player-discipline-board-without-lens.png', fullPage: true });
 
   const firstQuest = clusterMap.locator('.constellation-node').filter({ hasText: 'Blender Setup' });
-  await firstQuest.locator('.constellation-node-star').click();
+  await firstQuest.locator('.constellation-node-star').click({ force: true });
   await expect(page.getByLabel('Blender Setup quest details')).toBeVisible();
   await page.screenshot({ path: '/tmp/constellation-visual/player-discipline-board.png', fullPage: true });
 

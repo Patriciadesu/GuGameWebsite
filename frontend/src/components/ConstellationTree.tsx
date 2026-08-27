@@ -104,36 +104,35 @@ const placeTopicGroupInDiscipline = (
   const sourcePoints = group.skills.map((skill, index) =>
     pointForSkill(skill, index, group.skills.length, group.map)
   );
-  const minX = Math.min(...sourcePoints.map(point => point.x));
-  const maxX = Math.max(...sourcePoints.map(point => point.x));
-  const minY = Math.min(...sourcePoints.map(point => point.y));
-  const maxY = Math.max(...sourcePoints.map(point => point.y));
-  const width = Math.max(1, maxX - minX);
-  const height = Math.max(1, maxY - minY);
+  // Transform the SVG and its stars from the same source viewport. Scaling
+  // only the star bounds distorts the guide and makes valid connections look
+  // as if they leave the silhouette on the Discipline board.
+  const sourceWidth = Math.max(1, group.map.viewport.width);
+  const sourceHeight = Math.max(1, group.map.viewport.height);
   const scale = sourcePoints.length === 1
     ? 1
-    : Math.min(0.46, 560 / width, 400 / height);
-  const center = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+    : Math.min(0.46, 560 / sourceWidth, 400 / sourceHeight);
+  const center = { x: sourceWidth / 2, y: sourceHeight / 2 };
   const rawPoints = sourcePoints.map(point => ({
     x: anchor.x + (point.x - center.x) * scale,
     y: anchor.y + (point.y - center.y) * scale
   }));
-  const placedBounds = {
-    minX: Math.min(...rawPoints.map(point => point.x)),
-    maxX: Math.max(...rawPoints.map(point => point.x)),
-    minY: Math.min(...rawPoints.map(point => point.y)),
-    maxY: Math.max(...rawPoints.map(point => point.y))
+  const guideBounds = {
+    minX: anchor.x - sourceWidth * scale / 2,
+    maxX: anchor.x + sourceWidth * scale / 2,
+    minY: anchor.y - sourceHeight * scale / 2,
+    maxY: anchor.y + sourceHeight * scale / 2
   };
-  const padding = 118;
-  const shiftX = placedBounds.minX < padding
-    ? padding - placedBounds.minX
-    : placedBounds.maxX > discipline.viewport.width - padding
-      ? discipline.viewport.width - padding - placedBounds.maxX
+  const padding = 78;
+  const shiftX = guideBounds.minX < padding
+    ? padding - guideBounds.minX
+    : guideBounds.maxX > discipline.viewport.width - padding
+      ? discipline.viewport.width - padding - guideBounds.maxX
       : 0;
-  const shiftY = placedBounds.minY < padding
-    ? padding - placedBounds.minY
-    : placedBounds.maxY > discipline.viewport.height - padding
-      ? discipline.viewport.height - padding - placedBounds.maxY
+  const shiftY = guideBounds.minY < padding
+    ? padding - guideBounds.minY
+    : guideBounds.maxY > discipline.viewport.height - padding
+      ? discipline.viewport.height - padding - guideBounds.maxY
       : 0;
   return {
     map: {
@@ -144,10 +143,10 @@ const placeTopicGroupInDiscipline = (
       }
     },
     svgGuideBounds: {
-      x: placedBounds.minX + shiftX - 54,
-      y: placedBounds.minY + shiftY - 54,
-      width: Math.max(160, placedBounds.maxX - placedBounds.minX + 108),
-      height: Math.max(160, placedBounds.maxY - placedBounds.minY + 108)
+      x: guideBounds.minX + shiftX,
+      y: guideBounds.minY + shiftY,
+      width: sourceWidth * scale,
+      height: sourceHeight * scale
     },
     skills: group.skills.map((skill, index) => ({
       ...skill,
@@ -1049,10 +1048,7 @@ function ConstellationTree({
           const points = detail.skills.map((skill, index) =>
             pointForSkill(skill, index, detail.skills.length, detail.map)
           );
-          const boundaryPath = boundaryPathFor(
-            points,
-            group.map.visualTheme?.backgroundAssetUrl ? 18 : undefined
-          );
+          const boundaryPath = boundaryPathFor(points);
           const levelLocked = (group.map.level || 1) > userLevel;
           const labelPoint = {
             x: Math.min(...points.map(point => point.x)) + 16,

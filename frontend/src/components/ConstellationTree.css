@@ -391,6 +391,7 @@
 
 .constellation-node-core { fill: currentColor; }
 .constellation-node-quest-image { pointer-events: none; }
+.constellation-map-svg-guide { filter: brightness(0) invert(1); pointer-events: none; }
 .constellation-node-image-ring { fill: none; stroke: var(--constellation-surface); stroke-width: 3; pointer-events: none; }
 .constellation-node-hit-target { fill: transparent; pointer-events: all; }
 

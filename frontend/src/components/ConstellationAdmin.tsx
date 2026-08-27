@@ -1172,6 +1172,22 @@ function ConstellationAdmin({
                 setBusy(false);
               }
             }}
+            onVisualChange={async (mapId, backgroundAssetUrl) => {
+              try {
+                setBusy(true);
+                const currentMap = maps.find(candidate => candidate._id === mapId);
+                if (!currentMap) return;
+                await axios.patch(`/api/constellation-maps/${mapId}`, {
+                  visualTheme: { ...currentMap.visualTheme, backgroundAssetUrl }
+                });
+                await refreshMaps();
+                setEditorNotice('SVG constellation guide saved.');
+              } catch (requestError: any) {
+                setError(requestError.response?.data?.error || 'Unable to save the SVG constellation guide.');
+              } finally {
+                setBusy(false);
+              }
+            }}
             embeddedTopicDirtyCount={dirtyTopicPositionIds.size}
             embeddedTopicResetRevision={topicPositionResetRevision}
             positions={draftPositions}

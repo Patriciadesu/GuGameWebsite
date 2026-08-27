@@ -21,6 +21,7 @@ interface ConstellationLayoutEditorProps {
   topicGroups?: ConstellationTopicGroup[];
   onEmbeddedTopicPositionChange?: (topicMapId: string, skillId: string, position: ConstellationLayoutPosition) => void;
   onEmbeddedTopicVisualChange?: (topicMapId: string, backgroundAssetUrl: string) => void;
+  onVisualChange?: (mapId: string, backgroundAssetUrl: string) => void;
   embeddedTopicDirtyCount?: number;
   embeddedTopicResetRevision?: number;
   positions: Record<string, ConstellationLayoutPosition>;
@@ -128,6 +129,7 @@ function ConstellationLayoutEditor({
   topicGroups,
   onEmbeddedTopicPositionChange,
   onEmbeddedTopicVisualChange,
+  onVisualChange,
   embeddedTopicDirtyCount = 0,
   embeddedTopicResetRevision = 0,
   positions,
@@ -466,7 +468,9 @@ function ConstellationLayoutEditor({
       if (topic) onEmbeddedTopicPositionChange?.(topic.map._id, skill._id, next[index]);
       else onPositionChange(skill._id, next[index]);
     });
-    if (topic) onEmbeddedTopicVisualChange?.(topic.map._id, `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgText)))}`);
+    const backgroundAssetUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgText)))}`;
+    if (topic) onEmbeddedTopicVisualChange?.(topic.map._id, backgroundAssetUrl);
+    else onVisualChange?.(map._id, backgroundAssetUrl);
   };
   const autoStyleSelection = () => {
     const nextPositions = autoStyleConstellation(skills, [...selectedSkillIds], positions, map);
@@ -553,7 +557,7 @@ function ConstellationLayoutEditor({
         </div>
         <div className="constellation-layout-simple-actions">
           {selectedSkillIds.size > 1 && <span className="constellation-layout-selection-count">{selectedSkillIds.size} selected</span>}
-          <button type="button" className="constellation-admin-secondary" disabled={disabled || (selectedSkillIds.size < 2 && !selectedTopicGroup)} onClick={() => selectedTopicGroup ? fileInputRef.current?.click() : autoStyleSelection()} title={selectedTopicGroup ? 'Arrange this star cluster from an SVG constellation guide' : 'Arrange selected stars from their connections'}><Sparkles size={15} aria-hidden="true" /> Auto Layout</button>
+          <button type="button" className="constellation-admin-secondary" disabled={disabled || (selectedSkillIds.size < 2 && !selectedTopicGroup)} onClick={() => (selectedTopicGroup || map.scope === 'topic') ? fileInputRef.current?.click() : autoStyleSelection()} title={(selectedTopicGroup || map.scope === 'topic') ? 'Arrange this star cluster from an SVG constellation guide' : 'Arrange selected stars from their connections'}><Sparkles size={15} aria-hidden="true" /> Auto Layout</button>
           <input ref={fileInputRef} type="file" accept=".svg,image/svg+xml" hidden onChange={event => { const file = event.target.files?.[0]; if (file) void arrangeFromSvg(file); event.currentTarget.value = ''; }} />
           {hasUnsavedChanges && <span className="constellation-layout-dirty-count is-dirty">Unsaved</span>}
           <button type="button" className="constellation-admin-secondary" disabled={disabled || !hasUnsavedChanges} onClick={onCancel}><RotateCcw size={15} aria-hidden="true" /> Cancel</button>

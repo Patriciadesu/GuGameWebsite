@@ -18,6 +18,7 @@ const theme = {
 };
 
 const viewport = { width: 1600, height: 900, minZoom: 0.3, maxZoom: 3 };
+const armSilhouetteGuide = 'data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iaXNvLTg4NTktMSI/Pg0KPCEtLSBVcGxvYWRlZCB0bzogU1ZHIFJlcG8sIHd3dy5zdmdyZXBvLmNvbSwgR2VuZXJhdG9yOiBTVkcgUmVwbyBNaXhlciBUb29scyAtLT4NCjxzdmcgaGVpZ2h0PSI4MDBweCIgd2lkdGg9IjgwMHB4IiB2ZXJzaW9uPSIxLjEiIGlkPSJDYXBhXzEiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgeG1sbnM6eGxpbms9Imh0dHA6Ly93d3d3LnczLm9yZy8xOTk5L3hsaW5rIiANCgl2aWV3Qm94PSIwIDAgNTAuNDYzIDUwLjQ2MyIgeG1sOnNwYWNlPSJwcmVzZXJ2ZSI+DQo8Zz4NCgk8Zz4NCgkJPHBhdGggc3R5bGU9ImZpbGw6IzAxMDAwMjsiIGQ9Ik00Ny45MjMsMjkuNjk0YzAuMDIxLTAuNjAxLTAuNTE2LTEuMDYzLTAuOTAxLTEuNTE1Yy0wLjY3Ni0yLjczMy0yLjAxNi01Ljg2NC0zLjk2MS04Ljk3MQ0KCQkJQzM5Ljk0MiwxNC4yMywzMS42ODgsNi4yMDQsMjguNTUzLDQuOTY2Yy0wLjE1OC0wLjA2Mi0wLjI5OS0wLjA5Ny0wLjQyOS0wLjEyNmMtMC4zMTMtMS4wMTMtMC40NzktMS43MDgtMS42OTgtMi41MjENCgkJCWMtMy4zNTQtMi4yMzYtNy4wOTktMi44NjYtOS41NzgtMS44NDNjLTIuNDgxLDEuMDIzLTMuODU5LDYuNjg3LTEuMTksOC42MjVjMi41NDYsMS44NTcsNy41ODMtMS44ODgsOS4xOTUsMC41MDkNCgkJCWMxLjYwOSwyLjM5NiwzLjM4NiwxMC4zNzQsNi4zMzgsMTUuNDczYy0wLjc0Ni0wLjEwMi0xLjUxNC0wLjE1Ni0yLjMwNy0wLjE1NmMtMy40MDYsMC02LjQ2NywwLjk5OC04LjYzLDIuNTkzDQoJCQljLTEuODUtMi44ODctNS4wOC00LjgwNi04Ljc2NC00LjgwNmMtMy44MiwwLTcuMTQxLDIuMDY0LTguOTUsNS4xM3YyMi42MTloNC44NzlsMS4wNDItMS44NDkNCgkJCWMzLjM1NC0xLjI4Nyw3LjMyLTQuNjA3LDEwLjA3Ni04LjE0N0MyOS41NTEsNDQuNzg5LDQ3LjY3NiwzNi43ODksNDcuOTIzLDI5LjY5NHoiLz4NCgk8L2c+DQo8L2c+DQo8L3N2Zz4=';
 const map = (id: string, name: string, slug: string, displayOrder: number) => ({
   _id: id,
   name,
@@ -128,7 +129,8 @@ const topicMap = {
   ...map('500000000000000000000001', '3D Modeling', 'game-art-3d-modeling', 0),
   scope: 'topic',
   parentMapId: gameArtMap._id,
-  gatewaySkillId: '400000000000000000000002'
+  gatewaySkillId: '400000000000000000000002',
+  visualTheme: { ...theme, backgroundAssetUrl: armSilhouetteGuide }
 };
 
 const topicSkills = [
@@ -453,6 +455,8 @@ test('player constellation states render without overflow', async ({ page }) => 
   await expect(clusterMap.locator('.discipline-topic-quest-layer .constellation-node')).toHaveCount(11);
   await expect(clusterMap.getByRole('button', { name: /Blender Setup/ })).toBeVisible();
   await expect(clusterMap.getByRole('button', { name: /Cinematic/ })).toBeVisible();
+  const svgGuide = clusterMap.locator('.constellation-map-svg-guide');
+  await expect(svgGuide).toHaveCount(1);
   await expect(modelingCluster.locator('.discipline-topic-boundary')).toHaveAttribute('d', /^M /);
   await expect(page.getByRole('button', { name: 'View Path' })).toHaveCount(0);
   await page.screenshot({ path: '/tmp/constellation-visual/player-discipline-board-without-lens.png', fullPage: true });
@@ -1193,8 +1197,11 @@ test('admin creates a star with inferred map ownership and cancels keyboard move
 
   await page.getByLabel('Choose discipline').selectOption({ label: 'Game Art' });
   await page.getByRole('application', { name: 'Game Art visual layout editor' })
-    .locator('.constellation-layout-node').filter({ hasText: '3D Modeling' }).dblclick();
+    .locator('.constellation-layout-embedded-topic').filter({ hasText: '3D Modeling' })
+    .dispatchEvent('pointerdown', { detail: 2, button: 0, pointerId: 1, clientX: 400, clientY: 400 });
   const editor = page.getByRole('application', { name: '3D Modeling visual layout editor' });
+  await expect(editor.locator('.constellation-layout-map-background')).toHaveCount(1);
+  await page.screenshot({ path: '/tmp/constellation-visual/admin-blender-svg-guide.png', fullPage: true });
   const firstStar = editor.locator('.constellation-layout-node').first();
   await firstStar.focus();
   await firstStar.press(' ');

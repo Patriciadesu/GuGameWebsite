@@ -634,6 +634,16 @@ function ConstellationLayoutEditor({
             </defs>
             <rect width={map.viewport.width} height={map.viewport.height} fill="var(--constellation-bg)" pointerEvents="none" />
             <rect width={map.viewport.width} height={map.viewport.height} fill={`url(#constellation-admin-grid-${map._id})`} pointerEvents="none" />
+            {map.scope === 'topic' && map.visualTheme?.backgroundAssetUrl && <image
+              className="constellation-layout-map-background"
+              href={map.visualTheme.backgroundAssetUrl}
+              x="0"
+              y="0"
+              width={map.viewport.width}
+              height={map.viewport.height}
+              preserveAspectRatio="xMidYMid meet"
+              pointerEvents="none"
+            />}
             <g className="constellation-lines constellation-layout-lines" aria-hidden="true">
               {visualEdges.map(edge => (
                 <path
@@ -661,7 +671,14 @@ function ConstellationLayoutEditor({
                   className="constellation-layout-embedded-topic"
                   role="group"
                   aria-label={`${group.map.name} topic, ${topicSkills.length} quests`}
-                  onPointerDown={event => startEmbeddedDrag(event, group.map._id, topicSkills, group.gateway)}
+                  onPointerDown={event => {
+                    if (event.detail === 2 && group.gateway) {
+                      event.stopPropagation();
+                      onActivateSkill?.(group.gateway._id);
+                      return;
+                    }
+                    startEmbeddedDrag(event, group.map._id, topicSkills, group.gateway);
+                  }}
                   onDoubleClick={() => group.gateway && onActivateSkill?.(group.gateway._id)}
                   onContextMenu={event => {
                     event.preventDefault();

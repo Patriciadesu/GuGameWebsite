@@ -36,6 +36,7 @@ interface MapDetail {
   map: ConstellationMap;
   skills: ConstellationSkill[];
   topicGroups?: ConstellationTopicGroup[];
+  svgGuideBounds?: { x: number; y: number; width: number; height: number };
 }
 
 interface Camera {
@@ -135,7 +136,19 @@ const placeTopicGroupInDiscipline = (
       ? discipline.viewport.height - padding - placedBounds.maxY
       : 0;
   return {
-    map: discipline,
+    map: {
+      ...discipline,
+      visualTheme: {
+        ...discipline.visualTheme,
+        backgroundAssetUrl: group.map.visualTheme?.backgroundAssetUrl
+      }
+    },
+    svgGuideBounds: {
+      x: placedBounds.minX + shiftX - 54,
+      y: placedBounds.minY + shiftY - 54,
+      width: Math.max(160, placedBounds.maxX - placedBounds.minX + 108),
+      height: Math.max(160, placedBounds.maxY - placedBounds.minY + 108)
+    },
     skills: group.skills.map((skill, index) => ({
       ...skill,
       constellationPosition: {
@@ -630,10 +643,10 @@ function ConstellationTree({
         {detail.map.visualTheme?.backgroundAssetUrl && <image
           className="constellation-map-svg-guide"
           href={detail.map.visualTheme.backgroundAssetUrl}
-          x="0"
-          y="0"
-          width={detail.map.viewport.width}
-          height={detail.map.viewport.height}
+          x={detail.svgGuideBounds?.x || 0}
+          y={detail.svgGuideBounds?.y || 0}
+          width={detail.svgGuideBounds?.width || detail.map.viewport.width}
+          height={detail.svgGuideBounds?.height || detail.map.viewport.height}
           preserveAspectRatio="xMidYMid meet"
           opacity="0.72"
           pointerEvents="none"

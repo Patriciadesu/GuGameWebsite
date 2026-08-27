@@ -217,6 +217,8 @@
 }
 .constellation-layout-topic-background { opacity: 0.58; mix-blend-mode: multiply; pointer-events: none; }
 :root[data-theme="dark"] .constellation-layout-topic-background { filter: brightness(0) invert(1); mix-blend-mode: screen; }
+.constellation-layout-map-background { opacity: 0.42; mix-blend-mode: multiply; pointer-events: none; }
+:root[data-theme="dark"] .constellation-layout-map-background { filter: brightness(0) invert(1); mix-blend-mode: screen; }
 .constellation-layout-topic-eyebrow {
   fill: var(--constellation-unlocked);
   font: 800 18px/1 "Noto Sans Thai", sans-serif;

@@ -112,7 +112,7 @@ const placeTopicGroupInDiscipline = (
   const height = Math.max(1, maxY - minY);
   const scale = sourcePoints.length === 1
     ? 1
-    : Math.min(0.36, 430 / width, 310 / height);
+    : Math.min(0.46, 560 / width, 400 / height);
   const center = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
   const rawPoints = sourcePoints.map(point => ({
     x: anchor.x + (point.x - center.x) * scale,
@@ -639,7 +639,7 @@ function ConstellationTree({
 
     return (
       <g transform={`translate(${options.offsetX || 0} ${options.offsetY || 0}) scale(${options.scale || 1})`}>
-       <g className={options.className}>
+      <g className={`${options.className} ${detail.map.visualTheme?.backgroundAssetUrl ? 'is-svg-guide' : ''}`}>
         {detail.map.visualTheme?.backgroundAssetUrl && <image
           className="constellation-map-svg-guide"
           href={detail.map.visualTheme.backgroundAssetUrl}

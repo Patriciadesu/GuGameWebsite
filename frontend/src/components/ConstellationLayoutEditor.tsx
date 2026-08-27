@@ -119,6 +119,25 @@ const chooseGuidePoints = (candidates: SvgGuidePoint[], count: number) => {
 };
 
 const questOrderForGuide = (skills: ConstellationSkill[]) => {
+  // A guide is a visual reading order, so explicit Main numbers take priority
+  // over the connection graph. This keeps Main 1, Main 2, Main 3... aligned
+  // with the spatial path instead of letting branch insertion reorder them.
+  const numbered = skills.map((skill, index) => {
+    const label = skill.constellationLabel || skill.title;
+    const match = label.match(/\bmain\s*([0-9]+)\b/i);
+    return { skill, index, number: match ? Number(match[1]) : null };
+  });
+  const numberedCount = numbered.filter(item => item.number !== null).length;
+  if (numberedCount >= 2) {
+    return [...numbered]
+      .sort((left, right) => {
+        if (left.number === null) return 1;
+        if (right.number === null) return -1;
+        return left.number - right.number || left.index - right.index;
+      })
+      .map(item => item.skill);
+  }
+
   const skillIds = new Set(skills.map(skill => skill._id));
   const incoming = new Map(skills.map(skill => [skill._id, 0]));
   skills.forEach(skill => skill.connections?.forEach(connection => {
@@ -167,7 +186,9 @@ const coloredSvgGuidePoints = async (svgDataUrl: string, viewBox: [number, numbe
           if (opacityAt(x + sampleX, y + sampleY) >= 40) covered += 1;
         }
       }
-      if (covered < 4) continue;
+      // Keep stars away from transparent/edge pixels. A node placed on the
+      // silhouette edge makes its connection line appear to escape the guide.
+      if (covered < 7) continue;
       candidates.push({ x, y, density: covered / 9 });
     }
   }

@@ -1248,6 +1248,14 @@
   stroke-width: 8px;
 }
 
+/* SVG guides are dense visual maps: keep quest names readable without
+   letting one long title cover the next star or leave the guide bounds. */
+.constellation-topic-layer.is-svg-guide .constellation-node-label,
+.constellation-mini-layer.is-svg-guide .constellation-node-label,
+.discipline-topic-quest-layer.is-svg-guide .constellation-node-label {
+  font-size: 16px;
+}
+
 .discipline-topic-quest-layer .constellation-lines path { stroke-width: 2.5; }
 .discipline-topic-quest-layer .constellation-node-star { filter: drop-shadow(0 2px 5px color-mix(in srgb, var(--constellation-text) 20%, transparent)); }
 .discipline-topic-cluster.is-level-locked .discipline-topic-boundary { stroke: var(--constellation-locked); filter: none; }

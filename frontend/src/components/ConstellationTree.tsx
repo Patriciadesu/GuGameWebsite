@@ -68,9 +68,9 @@ const convexHull = (points: Point[]): Point[] => {
   return [...lower.slice(0, -1), ...upper.slice(0, -1)];
 };
 
-const boundaryPathFor = (points: Point[]): string => {
+const boundaryPathFor = (points: Point[], paddingOverride?: number): string => {
   if (points.length === 0) return '';
-  const padding = 82;
+  const padding = paddingOverride ?? 82;
   if (points.length === 1) {
     const [{ x, y }] = points;
     return `M ${x - 132} ${y} Q ${x - 132} ${y - 92} ${x} ${y - 92} Q ${x + 132} ${y - 92} ${x + 132} ${y} Q ${x + 132} ${y + 92} ${x} ${y + 92} Q ${x - 132} ${y + 92} ${x - 132} ${y} Z`;
@@ -1049,7 +1049,10 @@ function ConstellationTree({
           const points = detail.skills.map((skill, index) =>
             pointForSkill(skill, index, detail.skills.length, detail.map)
           );
-          const boundaryPath = boundaryPathFor(points);
+          const boundaryPath = boundaryPathFor(
+            points,
+            group.map.visualTheme?.backgroundAssetUrl ? 18 : undefined
+          );
           const levelLocked = (group.map.level || 1) > userLevel;
           const labelPoint = {
             x: Math.min(...points.map(point => point.x)) + 16,

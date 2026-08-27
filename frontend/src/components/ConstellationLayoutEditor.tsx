@@ -216,7 +216,10 @@ const convexHull = (points: Array<{ x: number; y: number }>) => {
 
 const boundaryPath = (points: Array<{ x: number; y: number }>) => {
   if (points.length === 0) return '';
-  const padding = 70;
+  // The guide image already provides visual breathing room around the stars.
+  // Keep the topic outline inside that image instead of expanding a second,
+  // larger hull beyond the SVG silhouette.
+  const padding = 18;
   if (points.length === 1) {
     const point = points[0];
     return `M ${point.x - 110} ${point.y} Q ${point.x - 110} ${point.y - 76} ${point.x} ${point.y - 76} Q ${point.x + 110} ${point.y - 76} ${point.x + 110} ${point.y} Q ${point.x + 110} ${point.y + 76} ${point.x} ${point.y + 76} Q ${point.x - 110} ${point.y + 76} ${point.x - 110} ${point.y} Z`;
@@ -322,7 +325,7 @@ function ConstellationLayoutEditor({
       const maxX = Math.max(...sourcePoints.map(point => point.x));
       const minY = Math.min(...sourcePoints.map(point => point.y));
       const maxY = Math.max(...sourcePoints.map(point => point.y));
-      const scale = sourcePoints.length <= 1 ? 1 : Math.min(0.36, 430 / Math.max(1, maxX - minX), 310 / Math.max(1, maxY - minY));
+      const scale = sourcePoints.length <= 1 ? 1 : Math.min(0.46, 560 / Math.max(1, maxX - minX), 400 / Math.max(1, maxY - minY));
       const center = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
       const childSkills = group.skills.map((skill, index) => ({
         ...skill,

@@ -1,6 +1,6 @@
 {
   "name": "gugame-backend",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "description": "Backend API for GuGame",
   "main": "dist/server.js",
   "scripts": {

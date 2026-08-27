@@ -65,6 +65,79 @@ interface SelectionBox {
 const NODE_MARGIN = 46;
 const SNAP_SIZE = 20;
 
+interface SvgGuidePoint {
+  x: number;
+  y: number;
+  density: number;
+}
+
+const encodeSvgDataUrl = (svgText: string) => `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgText)))}`;
+
+const loadSvgImage = (source: string) => new Promise<HTMLImageElement>((resolve, reject) => {
+  const image = new Image();
+  image.onload = () => resolve(image);
+  image.onerror = () => reject(new Error('Unable to render SVG guide.'));
+  image.src = source;
+});
+
+const chooseGuidePoints = (candidates: SvgGuidePoint[], count: number) => {
+  if (candidates.length === 0 || count <= 0) return [];
+  const center = candidates.reduce((sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }), { x: 0, y: 0 });
+  center.x /= candidates.length;
+  center.y /= candidates.length;
+  const selected = [candidates.reduce((nearest, point) => (
+    Math.hypot(point.x - center.x, point.y - center.y) < Math.hypot(nearest.x - center.x, nearest.y - center.y) ? point : nearest
+  ), candidates[0])];
+  while (selected.length < Math.min(count, candidates.length)) {
+    let best: SvgGuidePoint | null = null;
+    let bestScore = -1;
+    candidates.forEach(candidate => {
+      const nearestDistance = Math.min(...selected.map(point => Math.hypot(candidate.x - point.x, candidate.y - point.y)));
+      const score = nearestDistance * (0.45 + candidate.density);
+      if (score > bestScore) {
+        best = candidate;
+        bestScore = score;
+      }
+    });
+    if (!best) break;
+    selected.push(best);
+  }
+  return selected;
+};
+
+const coloredSvgGuidePoints = async (svgDataUrl: string, viewBox: [number, number, number, number], count: number) => {
+  const [, , viewBoxWidth, viewBoxHeight] = viewBox;
+  const width = 640;
+  const height = Math.max(120, Math.round(width * viewBoxHeight / Math.max(1, viewBoxWidth)));
+  const image = await loadSvgImage(svgDataUrl);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return [];
+  context.drawImage(image, 0, 0, width, height);
+  const pixels = context.getImageData(0, 0, width, height).data;
+  const opacityAt = (x: number, y: number) => pixels[(y * width + x) * 4 + 3];
+  const candidates: SvgGuidePoint[] = [];
+  for (let y = 10; y < height - 10; y += 5) {
+    for (let x = 10; x < width - 10; x += 5) {
+      if (opacityAt(x, y) < 40) continue;
+      let covered = 0;
+      for (let sampleY = -8; sampleY <= 8; sampleY += 8) {
+        for (let sampleX = -8; sampleX <= 8; sampleX += 8) {
+          if (opacityAt(x + sampleX, y + sampleY) >= 40) covered += 1;
+        }
+      }
+      if (covered < 4) continue;
+      candidates.push({ x, y, density: covered / 9 });
+    }
+  }
+  return chooseGuidePoints(candidates, count).map(point => ({
+    x: viewBox[0] + point.x / width * viewBoxWidth,
+    y: viewBox[1] + point.y / height * viewBoxHeight
+  }));
+};
+
 const convexHull = (points: Array<{ x: number; y: number }>) => {
   if (points.length <= 2) return points;
   const sorted = [...points].sort((left, right) => left.x - right.x || left.y - right.y);
@@ -442,7 +515,7 @@ function ConstellationLayoutEditor({
   const arrangeFromSvg = async (file: File) => {
     if (!file.name.toLowerCase().endsWith('.svg')) return;
     const topic = selectedTopicGroup;
-    const targetSkills = topic?.skills || (selectedSkillIds.size > 1 ? skills.filter(skill => selectedSkillIds.has(skill._id)) : []);
+    const targetSkills = topic?.skills || (map.scope === 'topic' ? skills : skills.filter(skill => selectedSkillIds.has(skill._id)));
     const targetMap = topic?.map || map;
     if (targetSkills.length < 2) return;
     const svgText = await file.text();
@@ -451,24 +524,35 @@ function ConstellationLayoutEditor({
     const root = document.documentElement;
     const viewBox = (root.getAttribute('viewBox') || `0 0 ${targetMap.viewport.width} ${targetMap.viewport.height}`).trim().split(/[ ,]+/).map(Number);
     const [vx, vy, vw, vh] = viewBox.length === 4 && viewBox.every(Number.isFinite) ? viewBox : [0, 0, targetMap.viewport.width, targetMap.viewport.height];
-    const points = [...document.querySelectorAll<SVGGraphicsElement>('[data-star], circle, ellipse, rect')].map(element => {
+    const svgDataUrl = encodeSvgDataUrl(svgText);
+    const markerPoints = [...document.querySelectorAll<SVGGraphicsElement>('[data-star], circle, ellipse, rect')].map(element => {
       const x = Number(element.getAttribute('cx') ?? element.getAttribute('x') ?? 0) + Number(element.getAttribute('width') || 0) / 2;
       const y = Number(element.getAttribute('cy') ?? element.getAttribute('y') ?? 0) + Number(element.getAttribute('height') || 0) / 2;
       return { x, y };
     }).filter(point => Number.isFinite(point.x) && Number.isFinite(point.y));
+    let points = markerPoints;
+    try {
+      const coloredPoints = await coloredSvgGuidePoints(svgDataUrl, [vx, vy, vw, vh], targetSkills.length);
+      if (coloredPoints.length >= Math.min(2, targetSkills.length)) points = coloredPoints;
+    } catch {
+      // Fall back to explicit guide markers and finally to a safe spread when rendering fails.
+    }
     while (points.length < targetSkills.length) {
       const index = points.length;
       points.push({ x: vx + vw * (0.18 + 0.64 * (index / Math.max(1, targetSkills.length - 1))), y: vy + vh * (0.5 + ((index % 3) - 1) * 0.18) });
     }
+    const imageScale = Math.min(targetMap.viewport.width / vw, targetMap.viewport.height / vh);
+    const imageOffsetX = (targetMap.viewport.width - vw * imageScale) / 2;
+    const imageOffsetY = (targetMap.viewport.height - vh * imageScale) / 2;
     const next = points.slice(0, targetSkills.length).map(point => ({
-      x: Math.round(Math.max(NODE_MARGIN, Math.min(targetMap.viewport.width - NODE_MARGIN, (point.x - vx) / vw * targetMap.viewport.width)) / SNAP_SIZE) * SNAP_SIZE,
-      y: Math.round(Math.max(NODE_MARGIN, Math.min(targetMap.viewport.height - NODE_MARGIN, (point.y - vy) / vh * targetMap.viewport.height)) / SNAP_SIZE) * SNAP_SIZE
+      x: Math.round(Math.max(NODE_MARGIN, Math.min(targetMap.viewport.width - NODE_MARGIN, imageOffsetX + (point.x - vx) * imageScale)) / SNAP_SIZE) * SNAP_SIZE,
+      y: Math.round(Math.max(NODE_MARGIN, Math.min(targetMap.viewport.height - NODE_MARGIN, imageOffsetY + (point.y - vy) * imageScale)) / SNAP_SIZE) * SNAP_SIZE
     }));
     targetSkills.forEach((skill, index) => {
       if (topic) onEmbeddedTopicPositionChange?.(topic.map._id, skill._id, next[index]);
       else onPositionChange(skill._id, next[index]);
     });
-    const backgroundAssetUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgText)))}`;
+    const backgroundAssetUrl = svgDataUrl;
     if (topic) onEmbeddedTopicVisualChange?.(topic.map._id, backgroundAssetUrl);
     else onVisualChange?.(map._id, backgroundAssetUrl);
   };
@@ -557,7 +641,7 @@ function ConstellationLayoutEditor({
         </div>
         <div className="constellation-layout-simple-actions">
           {selectedSkillIds.size > 1 && <span className="constellation-layout-selection-count">{selectedSkillIds.size} selected</span>}
-          <button type="button" className="constellation-admin-secondary" disabled={disabled || (selectedSkillIds.size < 2 && !selectedTopicGroup)} onClick={() => (selectedTopicGroup || map.scope === 'topic') ? fileInputRef.current?.click() : autoStyleSelection()} title={(selectedTopicGroup || map.scope === 'topic') ? 'Arrange this star cluster from an SVG constellation guide' : 'Arrange selected stars from their connections'}><Sparkles size={15} aria-hidden="true" /> Auto Layout</button>
+          <button type="button" className="constellation-admin-secondary" disabled={disabled || (selectedSkillIds.size < 2 && !selectedTopicGroup && map.scope !== 'topic')} onClick={() => (selectedTopicGroup || map.scope === 'topic') ? fileInputRef.current?.click() : autoStyleSelection()} title={(selectedTopicGroup || map.scope === 'topic') ? 'Arrange this star cluster from an SVG constellation guide' : 'Arrange selected stars from their connections'}><Sparkles size={15} aria-hidden="true" /> Auto Layout</button>
           <input ref={fileInputRef} type="file" accept=".svg,image/svg+xml" hidden onChange={event => { const file = event.target.files?.[0]; if (file) void arrangeFromSvg(file); event.currentTarget.value = ''; }} />
           {hasUnsavedChanges && <span className="constellation-layout-dirty-count is-dirty">Unsaved</span>}
           <button type="button" className="constellation-admin-secondary" disabled={disabled || !hasUnsavedChanges} onClick={onCancel}><RotateCcw size={15} aria-hidden="true" /> Cancel</button>

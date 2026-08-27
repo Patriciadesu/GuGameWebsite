@@ -1631,6 +1631,26 @@ test('auto style arranges only the selected constellation group as a saveable dr
   ]);
 });
 
+test('SVG auto layout samples the colored silhouette and keeps stars on the guide', async ({ page }) => {
+  await installApiFixtures(page);
+  await page.goto('admin');
+  await page.getByRole('button', { name: /Constellation Editor/ }).click();
+  await page.getByLabel('Choose discipline').selectOption({ label: 'Game Art' });
+  await page.getByRole('application', { name: 'Game Art visual layout editor' })
+    .locator('.constellation-layout-embedded-topic').filter({ hasText: '3D Modeling' })
+    .dispatchEvent('pointerdown', { detail: 2, button: 0, pointerId: 1, clientX: 400, clientY: 400 });
+  const editor = page.getByRole('application', { name: '3D Modeling visual layout editor' });
+  await expect(page.getByRole('button', { name: 'Auto Layout' })).toBeEnabled();
+  await page.locator('.constellation-layout-editor input[type="file"]').setInputFiles({
+    name: 'arm-muscles-silhouette.svg',
+    mimeType: 'image/svg+xml',
+    buffer: Buffer.from(armSilhouetteGuide.split(',')[1], 'base64')
+  });
+  await expect(page.getByText('Unsaved', { exact: true })).toBeVisible();
+  await expect(editor.locator('.constellation-layout-map-background')).toHaveCount(1);
+  await page.screenshot({ path: '/tmp/constellation-visual/admin-blender-svg-auto-layout.png', fullPage: true });
+});
+
 test('admin creates branching connections between topic gateways in a discipline', async ({ page }) => {
   const changes: Array<{ method: string; sourceId: string; targetId: string }> = [];
   await installApiFixtures(page, undefined, undefined, undefined, undefined, (method, sourceId, targetId) => {

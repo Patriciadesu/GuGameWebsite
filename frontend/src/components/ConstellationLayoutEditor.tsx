@@ -102,7 +102,46 @@ const chooseGuidePoints = (candidates: SvgGuidePoint[], count: number) => {
     if (!best) break;
     selected.push(best);
   }
-  return selected;
+  const ordered: SvgGuidePoint[] = [];
+  const remaining = [...selected];
+  const start = remaining.reduce((top, point) => point.y < top.y || (point.y === top.y && point.x < top.x) ? point : top, remaining[0]);
+  ordered.push(start);
+  remaining.splice(remaining.indexOf(start), 1);
+  while (remaining.length > 0) {
+    const previous = ordered[ordered.length - 1];
+    const next = remaining.reduce((nearest, point) => (
+      Math.hypot(point.x - previous.x, point.y - previous.y) < Math.hypot(nearest.x - previous.x, nearest.y - previous.y) ? point : nearest
+    ), remaining[0]);
+    ordered.push(next);
+    remaining.splice(remaining.indexOf(next), 1);
+  }
+  return ordered;
+};
+
+const questOrderForGuide = (skills: ConstellationSkill[]) => {
+  const skillIds = new Set(skills.map(skill => skill._id));
+  const incoming = new Map(skills.map(skill => [skill._id, 0]));
+  skills.forEach(skill => skill.connections?.forEach(connection => {
+    if (skillIds.has(connection.targetSkillId)) incoming.set(connection.targetSkillId, (incoming.get(connection.targetSkillId) || 0) + 1);
+  }));
+  const queue = skills.filter(skill => incoming.get(skill._id) === 0);
+  const ordered: ConstellationSkill[] = [];
+  const visited = new Set<string>();
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current._id)) continue;
+    visited.add(current._id);
+    ordered.push(current);
+    current.connections?.forEach(connection => {
+      if (!skillIds.has(connection.targetSkillId)) return;
+      incoming.set(connection.targetSkillId, (incoming.get(connection.targetSkillId) || 1) - 1);
+      if (incoming.get(connection.targetSkillId) === 0) {
+        const next = skills.find(skill => skill._id === connection.targetSkillId);
+        if (next) queue.push(next);
+      }
+    });
+  }
+  return [...ordered, ...skills.filter(skill => !visited.has(skill._id))];
 };
 
 const coloredSvgGuidePoints = async (svgDataUrl: string, viewBox: [number, number, number, number], count: number) => {
@@ -515,7 +554,7 @@ function ConstellationLayoutEditor({
   const arrangeFromSvg = async (file: File) => {
     if (!file.name.toLowerCase().endsWith('.svg')) return;
     const topic = selectedTopicGroup;
-    const targetSkills = topic?.skills || (map.scope === 'topic' ? skills : skills.filter(skill => selectedSkillIds.has(skill._id)));
+    const targetSkills = questOrderForGuide(topic?.skills || (map.scope === 'topic' ? skills : skills.filter(skill => selectedSkillIds.has(skill._id))));
     const targetMap = topic?.map || map;
     if (targetSkills.length < 2) return;
     const svgText = await file.text();

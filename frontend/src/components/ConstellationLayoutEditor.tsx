@@ -71,6 +71,12 @@ interface SvgGuidePoint {
   density: number;
 }
 
+interface SvgGuideRouteState {
+  point: SvgGuidePoint;
+  previous?: string;
+  distance: number;
+}
+
 const encodeSvgDataUrl = (svgText: string) => `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgText)))}`;
 
 const loadSvgImage = (source: string) => new Promise<HTMLImageElement>((resolve, reject) => {
@@ -116,6 +122,90 @@ const chooseGuidePoints = (candidates: SvgGuidePoint[], count: number) => {
     remaining.splice(remaining.indexOf(next), 1);
   }
   return ordered;
+};
+
+const guidePointKey = (point: SvgGuidePoint) => `${point.x}:${point.y}`;
+
+const segmentStaysOnGuide = (
+  source: SvgGuidePoint,
+  target: SvgGuidePoint,
+  opacityAt: (x: number, y: number) => number
+) => {
+  const distance = Math.hypot(target.x - source.x, target.y - source.y);
+  const samples = Math.max(2, Math.ceil(distance / 3));
+  for (let index = 1; index < samples; index += 1) {
+    const progress = index / samples;
+    const x = Math.round(source.x + (target.x - source.x) * progress);
+    const y = Math.round(source.y + (target.y - source.y) * progress);
+    if (opacityAt(x, y) < 40) return false;
+  }
+  return true;
+};
+
+// Trace a route through the opaque pixels instead of scattering nodes by
+// distance. The resulting node sequence follows the guide's shape and every
+// straight connection is checked against the guide before it is accepted.
+const chooseGuidePathPoints = (
+  candidates: SvgGuidePoint[],
+  count: number,
+  opacityAt: (x: number, y: number) => number
+) => {
+  if (candidates.length === 0 || count <= 0) return [];
+  const byKey = new Map(candidates.map(point => [guidePointKey(point), point]));
+  const start = candidates.reduce((top, point) => (
+    point.y < top.y || (point.y === top.y && point.x < top.x) ? point : top
+  ), candidates[0]);
+  const queue = [start];
+  const visited = new Map<string, SvgGuideRouteState>([
+    [guidePointKey(start), { point: start, distance: 0 }]
+  ]);
+  let cursor = 0;
+  let end = start;
+  while (cursor < queue.length) {
+    const current = queue[cursor++];
+    const currentState = visited.get(guidePointKey(current))!;
+    if (currentState.distance > visited.get(guidePointKey(end))!.distance) end = current;
+    for (const offsetX of [-5, 0, 5]) {
+      for (const offsetY of [-5, 0, 5]) {
+        if (offsetX === 0 && offsetY === 0) continue;
+        const next = byKey.get(`${current.x + offsetX}:${current.y + offsetY}`);
+        if (!next || visited.has(guidePointKey(next))) continue;
+        visited.set(guidePointKey(next), {
+          point: next,
+          previous: guidePointKey(current),
+          distance: currentState.distance + 1
+        });
+        queue.push(next);
+      }
+    }
+  }
+
+  const route: SvgGuidePoint[] = [];
+  let routeKey: string | undefined = guidePointKey(end);
+  while (routeKey) {
+    const state: SvgGuideRouteState = visited.get(routeKey)!;
+    route.push(state.point);
+    routeKey = state.previous;
+  }
+  route.reverse();
+  if (route.length < count) return chooseGuidePoints(candidates, count);
+
+  const selected = [route[0]];
+  let previousIndex = 0;
+  for (let slot = 1; slot < count; slot += 1) {
+    const idealIndex = Math.round((route.length - 1) * slot / (count - 1));
+    const remainingSlots = count - slot - 1;
+    const possible = route
+      .map((point, index) => ({ point, index }))
+      .filter(({ index }) => index > previousIndex && route.length - 1 - index >= remainingSlots)
+      .filter(({ point }) => segmentStaysOnGuide(selected[selected.length - 1], point, opacityAt))
+      .sort((left, right) => Math.abs(left.index - idealIndex) - Math.abs(right.index - idealIndex));
+    const next = possible[0];
+    if (!next) return chooseGuidePoints(candidates, count);
+    selected.push(next.point);
+    previousIndex = next.index;
+  }
+  return selected;
 };
 
 const questOrderForGuide = (skills: ConstellationSkill[]) => {
@@ -192,7 +282,7 @@ const coloredSvgGuidePoints = async (svgDataUrl: string, viewBox: [number, numbe
       candidates.push({ x, y, density: covered / 9 });
     }
   }
-  return chooseGuidePoints(candidates, count).map(point => ({
+  return chooseGuidePathPoints(candidates, count, opacityAt).map(point => ({
     x: viewBox[0] + point.x / width * viewBoxWidth,
     y: viewBox[1] + point.y / height * viewBoxHeight
   }));

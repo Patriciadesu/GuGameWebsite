@@ -474,7 +474,7 @@ test('player constellation states render without overflow', async ({ page }) => 
     paths.map(path => path.getAttribute('d') || '')
   ));
   expect(connectionPaths.length).toBeGreaterThan(0);
-  expect(connectionPaths.every(path => /^M [\d.-]+ [\d.-]+ L [\d.-]+ [\d.-]+$/.test(path))).toBe(true);
+  expect(connectionPaths.every(path => /^M [\d.-]+ [\d.-]+(?: L [\d.-]+ [\d.-]+)+$/.test(path))).toBe(true);
 
   const overflow = await page.locator('.skill-constellation-panel .constellation-shell').evaluate(element => ({
     clientWidth: element.clientWidth,

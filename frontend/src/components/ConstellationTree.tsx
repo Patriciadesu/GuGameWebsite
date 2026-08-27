@@ -9,6 +9,7 @@ import {
   pointForConstellationSkill as pointForSkill,
   straightConstellationPath as pathBetween
 } from './constellationVisuals';
+import { buildSvgGuideRoutes } from './constellationSvgPathfinding';
 import './ConstellationTree.css';
 
 interface ConstellationTreeProps {
@@ -218,6 +219,7 @@ function ConstellationTree({
   const [camera, setCamera] = useState<Camera>({ zoom: 1, x: 0, y: 0 });
   const [overviewIndex, setOverviewIndex] = useState(0);
   const [isDirectManipulating, setIsDirectManipulating] = useState(false);
+  const [svgGuideRoutes, setSvgGuideRoutes] = useState<Record<string, string>>({});
   const dragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const canvasRef = useRef<SVGSVGElement | null>(null);
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
@@ -339,6 +341,45 @@ function ConstellationTree({
   activeTheme.lockedColor = readableLockedColor(activeTheme.backgroundColor, activeTheme.lockedColor);
   const unlockedSet = useMemo(() => new Set(unlockedSkillIds), [unlockedSkillIds]);
   const pendingSet = useMemo(() => new Set(pendingSkillIds), [pendingSkillIds]);
+  const topicClusters = (selectedDiscipline?.topicGroups || [])
+    .filter(group => group.skills.length > 0)
+    .map(group => {
+      const gatewayIndex = selectedDiscipline!.skills.findIndex(skill => skill._id === group.gateway?._id);
+      const anchor = group.gateway
+        ? pointForSkill(group.gateway, Math.max(0, gatewayIndex), selectedDiscipline!.skills.length, selectedDiscipline!.map)
+        : { x: selectedDiscipline!.map.viewport.width / 2, y: selectedDiscipline!.map.viewport.height / 2 };
+      return { group, detail: placeTopicGroupInDiscipline(group, selectedDiscipline!.map, anchor) };
+    });
+  const svgRouteKey = [...topicClusters.map(cluster => cluster.detail), ...(topicDetail ? [topicDetail] : [])]
+    .map(detail => `${detail.map._id}:${detail.skills.map(skill => `${skill._id}:${skill.constellationPosition?.x || 0}:${skill.constellationPosition?.y || 0}:${(skill.connections || []).map(connection => connection.targetSkillId).join(',')}`).join(';')}`)
+    .join('|');
+  useEffect(() => {
+    let cancelled = false;
+    const details = [...topicClusters.map(cluster => cluster.detail), ...(topicDetail ? [topicDetail] : [])]
+      .filter(detail => detail.map.visualTheme?.backgroundAssetUrl);
+    if (details.length === 0) {
+      setSvgGuideRoutes({});
+      return () => { cancelled = true; };
+    }
+    void Promise.all(details.map(async detail => {
+      const bounds = detail.svgGuideBounds || { x: 0, y: 0, width: detail.map.viewport.width, height: detail.map.viewport.height };
+      const nodes = detail.skills.map((skill, index) => {
+        const point = pointForSkill(skill, index, detail.skills.length, detail.map);
+        return { id: skill._id, x: point.x, y: point.y };
+      });
+      const skillIds = new Set(detail.skills.map(skill => skill._id));
+      const edges = detail.skills.flatMap(skill => (skill.connections || [])
+        .filter(connection => skillIds.has(connection.targetSkillId))
+        .map(connection => ({ sourceId: skill._id, targetId: connection.targetSkillId })));
+      const routes = await buildSvgGuideRoutes(detail.map.visualTheme.backgroundAssetUrl!, bounds, nodes, edges);
+      return Object.fromEntries(Object.entries(routes).map(([key, path]) => [`${detail.map._id}:${key}`, path]));
+    })).then(results => {
+      if (!cancelled) setSvgGuideRoutes(Object.assign({}, ...results));
+    }).catch(() => {
+      if (!cancelled) setSvgGuideRoutes({});
+    });
+    return () => { cancelled = true; };
+  }, [svgRouteKey]);
 
   useEffect(() => {
     if (!directMap || !selectedDiscipline) return;
@@ -657,7 +698,7 @@ function ConstellationTree({
             <path
               key={`${source._id}-${connection.targetSkillId}`}
               className={`is-${connectionStatus} is-${connection.connectionType}`}
-              d={pathBetween(sourcePoint, targetPoint)}
+              d={svgGuideRoutes[`${detail.map._id}:${source._id}:${connection.targetSkillId}`] || pathBetween(sourcePoint, targetPoint)}
               markerEnd={connection.hasArrowhead ? `url(#${options.markerId || `${idPrefix}-arrow`})` : undefined}
               vectorEffect="non-scaling-stroke"
             />
@@ -851,15 +892,6 @@ function ConstellationTree({
   const disciplineContextOffset = gatewayPoint && topicDetail
     ? { x: mapWidth / 2 - gatewayPoint.x, y: mapHeight / 2 - gatewayPoint.y }
     : { x: 0, y: 0 };
-  const topicClusters = (selectedDiscipline.topicGroups || [])
-    .filter(group => group.skills.length > 0)
-    .map(group => {
-      const gatewayIndex = selectedDiscipline.skills.findIndex(skill => skill._id === group.gateway?._id);
-      const anchor = group.gateway
-        ? pointForSkill(group.gateway, Math.max(0, gatewayIndex), selectedDiscipline.skills.length, selectedDiscipline.map)
-        : { x: selectedDiscipline.map.viewport.width / 2, y: selectedDiscipline.map.viewport.height / 2 };
-      return { group, detail: placeTopicGroupInDiscipline(group, selectedDiscipline.map, anchor) };
-    });
   return (
     <section
       className={`constellation-shell constellation-focus ${directMap ? 'is-main-quest-rail' : 'is-discipline-board'}`}

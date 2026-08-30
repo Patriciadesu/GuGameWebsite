@@ -9,7 +9,7 @@ import {
   pointForConstellationSkill as pointForSkill,
   straightConstellationPath as pathBetween
 } from './constellationVisuals';
-import { buildSvgGuideRoutes } from './constellationSvgPathfinding';
+import { buildSvgGuideOutline, buildSvgGuideRoutes } from './constellationSvgPathfinding';
 import './ConstellationTree.css';
 
 interface ConstellationTreeProps {
@@ -227,6 +227,7 @@ function ConstellationTree({
   const [overviewIndex, setOverviewIndex] = useState(0);
   const [isDirectManipulating, setIsDirectManipulating] = useState(false);
   const [svgGuideRoutes, setSvgGuideRoutes] = useState<Record<string, string>>({});
+  const [svgGuideOutlines, setSvgGuideOutlines] = useState<Record<string, string>>({});
   const dragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const canvasRef = useRef<SVGSVGElement | null>(null);
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
@@ -384,6 +385,21 @@ function ConstellationTree({
       if (!cancelled) setSvgGuideRoutes(Object.assign({}, ...results));
     }).catch(() => {
       if (!cancelled) setSvgGuideRoutes({});
+    });
+    return () => { cancelled = true; };
+  }, [svgRouteKey]);
+  useEffect(() => {
+    let cancelled = false;
+    const details = [...topicClusters.map(cluster => cluster.detail), ...(topicDetail ? [topicDetail] : [])]
+      .filter(detail => detail.map.visualTheme?.backgroundAssetUrl);
+    void Promise.all(details.map(async detail => {
+      const bounds = detail.svgGuideBounds || { x: 0, y: 0, width: detail.map.viewport.width, height: detail.map.viewport.height };
+      const path = await buildSvgGuideOutline(detail.map.visualTheme.backgroundAssetUrl!, bounds);
+      return [detail.map._id, path] as const;
+    })).then(entries => {
+      if (!cancelled) setSvgGuideOutlines(Object.fromEntries(entries));
+    }).catch(() => {
+      if (!cancelled) setSvgGuideOutlines({});
     });
     return () => { cancelled = true; };
   }, [svgRouteKey]);
@@ -1088,7 +1104,7 @@ function ConstellationTree({
             pointForSkill(skill, index, detail.skills.length, detail.map)
           );
           const boundaryPath = detail.svgGuideBounds
-            ? guideBoundaryPath(detail.svgGuideBounds)
+            ? (svgGuideOutlines[detail.map._id] || guideBoundaryPath(detail.svgGuideBounds))
             : boundaryPathFor(points);
           const levelLocked = (group.map.level || 1) > userLevel;
           const labelPoint = {

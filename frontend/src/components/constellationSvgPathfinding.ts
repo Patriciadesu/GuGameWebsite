@@ -109,3 +109,39 @@ export const buildSvgGuideRoutes = async (
   });
   return routes;
 };
+
+// Extract the visible silhouette as small edge segments. Keeping the segments
+// separate preserves concave corners and holes; a convex hull would turn every
+// unique guide into the same generic polygon.
+export const buildSvgGuideOutline = async (assetUrl: string, bounds: SvgGuideBounds) => {
+  const image = await loadImage(assetUrl);
+  // 180px is enough to preserve the silhouette while keeping the SVG path
+  // light enough for an editor that may contain several topic groups.
+  const size = 180;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return '';
+  context.drawImage(image, 0, 0, size, size);
+  const alpha = context.getImageData(0, 0, size, size).data;
+  const walkable = (x: number, y: number) => x >= 0 && x < size && y >= 0 && y < size && alpha[(y * size + x) * 4 + 3] >= 40;
+  const imageScale = Math.min(bounds.width / image.width, bounds.height / image.height);
+  const imageWidth = image.width * imageScale;
+  const imageHeight = image.height * imageScale;
+  const imageX = bounds.x + (bounds.width - imageWidth) / 2;
+  const imageY = bounds.y + (bounds.height - imageHeight) / 2;
+  const toWorldX = (x: number) => imageX + x / size * imageWidth;
+  const toWorldY = (y: number) => imageY + y / size * imageHeight;
+  const segments: string[] = [];
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      if (!walkable(x, y)) continue;
+      if (!walkable(x, y - 1)) segments.push(`M ${toWorldX(x)} ${toWorldY(y)} L ${toWorldX(x + 1)} ${toWorldY(y)}`);
+      if (!walkable(x + 1, y)) segments.push(`M ${toWorldX(x + 1)} ${toWorldY(y)} L ${toWorldX(x + 1)} ${toWorldY(y + 1)}`);
+      if (!walkable(x, y + 1)) segments.push(`M ${toWorldX(x + 1)} ${toWorldY(y + 1)} L ${toWorldX(x)} ${toWorldY(y + 1)}`);
+      if (!walkable(x - 1, y)) segments.push(`M ${toWorldX(x)} ${toWorldY(y + 1)} L ${toWorldX(x)} ${toWorldY(y)}`);
+    }
+  }
+  return segments.join(' ');
+};

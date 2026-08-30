@@ -8,6 +8,7 @@ import {
 } from './constellationVisuals';
 import './ConstellationTree.css';
 import { autoStyleConstellation } from './constellationAutoLayout';
+import { buildSvgGuideOutline } from './constellationSvgPathfinding';
 
 export interface ConstellationLayoutPosition {
   x: number;
@@ -381,6 +382,7 @@ function ConstellationLayoutEditor({
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(new Set());
   const [embeddedSelection, setEmbeddedSelection] = useState<{ topicMapId: string; skillId?: string } | null>(null);
   const [embeddedPositions, setEmbeddedPositions] = useState<Record<string, ConstellationLayoutPosition>>({});
+  const [embeddedGuideOutlines, setEmbeddedGuideOutlines] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -464,6 +466,19 @@ function ConstellationLayoutEditor({
     } : undefined;
     return { ...group, skills: nextSkills, points, guideBounds, boundary: guideBounds ? guideBoundaryPath(guideBounds) : boundaryPath(points) };
   }), [embeddedPositions, embeddedTopicGroups]);
+  useEffect(() => {
+    let cancelled = false;
+    const guideGroups = visibleEmbeddedTopicGroups.filter(group => group.guideBounds && group.group.map.visualTheme?.backgroundAssetUrl);
+    void Promise.all(guideGroups.map(async group => [
+      group.group.map._id,
+      await buildSvgGuideOutline(group.group.map.visualTheme!.backgroundAssetUrl!, group.guideBounds!)
+    ] as const)).then(entries => {
+      if (!cancelled) setEmbeddedGuideOutlines(Object.fromEntries(entries));
+    }).catch(() => {
+      if (!cancelled) setEmbeddedGuideOutlines({});
+    });
+    return () => { cancelled = true; };
+  }, [visibleEmbeddedTopicGroups]);
   const connectionEdges = useMemo(() => {
     const result: Array<{ sourceId: string; targetId: string; special: boolean }> = [];
     const seen = new Set<string>();
@@ -962,7 +977,7 @@ function ConstellationLayoutEditor({
                     preserveAspectRatio="xMidYMid meet"
                     pointerEvents="none"
                   />}
-                  <path className="constellation-layout-topic-boundary" d={boundary} vectorEffect="non-scaling-stroke" />
+                  <path className="constellation-layout-topic-boundary" d={embeddedGuideOutlines[group.map._id] || boundary} vectorEffect="non-scaling-stroke" />
                   <text className="constellation-layout-topic-eyebrow" x={Math.min(...points.map(point => point.x)) + 12} y={Math.min(...points.map(point => point.y)) - 94}>TOPIC · LEVEL {group.map.level || 1}</text>
                   <text className="constellation-layout-topic-title" x={Math.min(...points.map(point => point.x)) + 12} y={Math.min(...points.map(point => point.y)) - 66}>{group.map.name}</text>
                   <g className="constellation-lines constellation-layout-topic-lines" aria-hidden="true">

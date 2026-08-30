@@ -215,8 +215,17 @@ function ConstellationAdmin({
           .sort((a, b) => a.position - b.position)
       }));
   }, [draftTopicPositions, isMainConstellation, mapSkills, maps, selectedMap, skills]);
-  const selectedSkill = mapSkills.find(skill => skill._id === selectedSkillId);
-  const selectedSkills = useMemo(() => mapSkills.filter(skill => selectedSkillIds.includes(skill._id)), [mapSkills, selectedSkillIds]);
+  // A Discipline editor renders its topic Stars inline. Treat those embedded
+  // Stars as first-class selections too, otherwise their Inspector/context
+  // actions resolve only against the gateway Stars on the Discipline.
+  const selectableSkills = useMemo(() => {
+    const candidates = selectedMap?.scope === 'discipline' && !isMainConstellation
+      ? [...mapSkills, ...topicGroups.flatMap(group => group.skills)]
+      : mapSkills;
+    return [...new Map(candidates.map(skill => [skill._id, skill])).values()];
+  }, [isMainConstellation, mapSkills, selectedMap?.scope, topicGroups]);
+  const selectedSkill = selectableSkills.find(skill => skill._id === selectedSkillId);
+  const selectedSkills = useMemo(() => selectableSkills.filter(skill => selectedSkillIds.includes(skill._id)), [selectableSkills, selectedSkillIds]);
   const duplicateInfoLevelSkill = isMainConstellation
     ? mapSkills.find(skill => skill._id !== selectedSkillId && (skill.mainQuestLevel || 1) === Math.max(1, Math.floor(infoMainQuestLevel)))
     : undefined;
@@ -240,29 +249,52 @@ function ConstellationAdmin({
   const inspectorAdvanced = sharedValue(selectedSkills.map(skill => skill.isAdvancedLocked === true));
   const inspectorLabel = sharedValue(selectedSkills.map(skill => skill.constellationLabel || ''));
   const selectedTopicMaps = !isMainConstellation && selectedMap?.scope === 'discipline'
-    ? selectedSkills.map(skill => maps.find(map => map.scope === 'topic' && map.gatewaySkillId === skill._id)).filter((map): map is ConstellationMap => Boolean(map))
+    ? selectedSkills.map(skill => maps.find(map => map.scope === 'topic' && (map.gatewaySkillId === skill._id || map._id === skill.constellationMapId))).filter((map): map is ConstellationMap => Boolean(map))
     : [];
   const inspectorLevel = isMainConstellation ? undefined : selectedMap?.scope === 'topic'
     ? selectedMap.level || 1
     : selectedTopicMaps.length === selectedSkills.length
       ? sharedValue(selectedTopicMaps.map(map => map.level || 1))
       : undefined;
-  const inspectorX = sharedValue(selectedSkills.map(skill => Math.round(draftPositions[skill._id]?.x || 0)));
-  const inspectorY = sharedValue(selectedSkills.map(skill => Math.round(draftPositions[skill._id]?.y || 0)));
+  const inspectorPosition = (skill: ConstellationSkill) => (
+    skill.constellationMapId === selectedMapId
+      ? draftPositions[skill._id] || skill.constellationPosition
+      : draftTopicPositions[skill._id] || skill.constellationPosition
+  );
+  const inspectorX = sharedValue(selectedSkills.map(skill => Math.round(inspectorPosition(skill)?.x || 0)));
+  const inspectorY = sharedValue(selectedSkills.map(skill => Math.round(inspectorPosition(skill)?.y || 0)));
 
   const updateSelectedPositionAxis = (axis: 'x' | 'y', rawValue: string) => {
     if (!selectedMap || !rawValue.trim()) return;
     const numericValue = Number(rawValue);
     if (!Number.isFinite(numericValue)) return;
-    const limit = axis === 'x' ? selectedMap.viewport.width : selectedMap.viewport.height;
-    const value = Math.max(46, Math.min(limit - 46, Math.round(numericValue)));
-    setDraftPositions(current => ({
-      ...current,
-      ...Object.fromEntries(selectedSkills.map(skill => [skill._id, {
-        ...(current[skill._id] || skill.constellationPosition || { x: 0, y: 0 }),
-        [axis]: value
-      }]))
-    }));
+    const directSkills = selectedSkills.filter(skill => skill.constellationMapId === selectedMapId);
+    const embeddedSkills = selectedSkills.filter(skill => skill.constellationMapId !== selectedMapId);
+    if (directSkills.length > 0) {
+      const limit = axis === 'x' ? selectedMap.viewport.width : selectedMap.viewport.height;
+      const value = Math.max(46, Math.min(limit - 46, Math.round(numericValue)));
+      setDraftPositions(current => ({
+        ...current,
+        ...Object.fromEntries(directSkills.map(skill => [skill._id, {
+          ...(current[skill._id] || skill.constellationPosition || { x: 0, y: 0 }),
+          [axis]: value
+        }]))
+      }));
+    }
+    if (embeddedSkills.length > 0) {
+      setDraftTopicPositions(current => ({
+        ...current,
+        ...Object.fromEntries(embeddedSkills.map(skill => {
+          const topic = maps.find(map => map._id === skill.constellationMapId);
+          const limit = axis === 'x' ? topic?.viewport.width || selectedMap.viewport.width : topic?.viewport.height || selectedMap.viewport.height;
+          const value = Math.max(46, Math.min(limit - 46, Math.round(numericValue)));
+          return [skill._id, {
+            ...(current[skill._id] || skill.constellationPosition || { x: 0, y: 0 }),
+            [axis]: value
+          }];
+        }))
+      }));
+    }
   };
 
   useEffect(() => {
@@ -555,10 +587,12 @@ function ConstellationAdmin({
     try {
       setBusy(true);
       setError('');
-      await axios.patch(`/api/constellation-maps/${selectedMap._id}/skills/batch`, {
-        skillIds: selectedSkills.map(skill => skill._id),
-        changes
+      const selectionsByMap = new Map<string, string[]>();
+      selectedSkills.forEach(skill => {
+        if (!skill.constellationMapId) return;
+        selectionsByMap.set(skill.constellationMapId, [...(selectionsByMap.get(skill.constellationMapId) || []), skill._id]);
       });
+      await Promise.all([...selectionsByMap].map(([mapId, skillIds]) => axios.patch(`/api/constellation-maps/${mapId}/skills/batch`, { skillIds, changes })));
       await onSkillsChanged();
     } catch (requestError: any) {
       setError(requestErrorMessage(requestError, 'Unable to update selected stars.'));
@@ -690,7 +724,7 @@ function ConstellationAdmin({
 
   const toggleConnection = async (sourceId: string, targetId: string) => {
     if (sourceId === targetId) return;
-    const source = mapSkills.find(skill => skill._id === sourceId);
+    const source = selectableSkills.find(skill => skill._id === sourceId);
     if (!source) return;
     const exists = source.connections?.some(connection => connection.targetSkillId === targetId);
     try {
@@ -1010,7 +1044,7 @@ function ConstellationAdmin({
         title: infoTitle.trim(),
         description: infoDescription.trim() || infoTitle.trim(),
         ...(isMainConstellation ? { mainQuestLevel: Math.max(1, Math.floor(infoMainQuestLevel)) } : {}),
-        ...((selectedMap?.scope === 'topic' || isMainConstellation) ? { mapNodeRole: infoRole } : {}),
+        ...((maps.find(map => map._id === editingSkill.constellationMapId)?.scope === 'topic' || isMainConstellation) ? { mapNodeRole: infoRole } : {}),
         constellationLabel: infoLabel.trim() || null,
         nodePreview: {
           imageUrl: infoImageUrl.trim() || undefined,
@@ -1029,7 +1063,7 @@ function ConstellationAdmin({
           type: step.type.trim() || 'ImageNote'
         }))
       });
-      if (selectedMap?.scope === 'discipline' && !isMainConstellation) {
+      if (selectedMap?.scope === 'discipline' && !isMainConstellation && editingSkill.constellationMapId === selectedMap._id) {
         const linkedTopic = maps.find(map => map.scope === 'topic' && map.gatewaySkillId === editingSkill._id);
         if (linkedTopic) {
           const response = await axios.patch(`/api/constellation-maps/${linkedTopic._id}`, { level: normalizedTopicLevel });
@@ -1243,7 +1277,7 @@ function ConstellationAdmin({
       ) : <div className="constellation-admin-simple-empty"><div><strong>No {rootLabelLower}s yet</strong><span>Create the first top-level constellation to begin.</span><button type="button" className="constellation-admin-primary" onClick={() => openModal('map')}><Plus size={17} aria-hidden="true" /> Create first {rootLabelLower}</button></div></div>}
 
       {starContextMenu && (() => {
-        const skill = mapSkills.find(candidate => candidate._id === starContextMenu.skillId);
+        const skill = selectableSkills.find(candidate => candidate._id === starContextMenu.skillId);
         if (!skill) return null;
         return <div ref={starContextMenuRef} className="constellation-star-context-menu" role="menu" aria-label={`${skill.constellationLabel || skill.title} actions`} style={{ left: starContextMenu.x, top: starContextMenu.y }} onKeyDown={event => {
           const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled])'));

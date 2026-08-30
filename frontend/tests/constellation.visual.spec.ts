@@ -1283,9 +1283,9 @@ test('admin enters or auto-creates topic constellations from discipline stars', 
   await page.getByLabel('Choose discipline').selectOption({ label: 'Game Art' });
 
   const disciplineEditor = page.getByRole('application', { name: 'Game Art visual layout editor' });
-  const modelingTopic = disciplineEditor.locator('.constellation-layout-embedded-topic').filter({ hasText: '3D Modeling' });
-  await modelingTopic.dblclick();
-  await expect(disciplineEditor).toBeVisible();
+  // The gateway Star is the deliberate affordance for entering a topic.
+  // (The cluster itself is still draggable, and its Stars stay editable.)
+  await disciplineEditor.locator('.constellation-layout-node').filter({ hasText: '3D Modeling' }).dblclick();
   await expect(page.getByRole('application', { name: '3D Modeling visual layout editor' })).toBeVisible();
   await page.getByRole('button', { name: 'Back to discipline' }).click();
   await expect(page.getByRole('application', { name: 'Game Art visual layout editor' })).toBeVisible();
@@ -1297,6 +1297,30 @@ test('admin enters or auto-creates topic constellations from discipline stars', 
   expect(createdTopic?.gatewaySkillId).toBe('400000000000000000000003');
   expect(createdTopic?.isActive).toBe(false);
   await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('admin can inspect and edit embedded topic stars from the discipline editor', async ({ page }) => {
+  await installApiFixtures(page);
+  await page.goto('admin');
+  await page.getByRole('button', { name: /Constellation Editor/ }).click();
+  await page.getByLabel('Choose discipline').selectOption({ label: 'Game Art' });
+
+  const editor = page.getByRole('application', { name: 'Game Art visual layout editor' });
+  const embeddedStar = editor.locator('.constellation-layout-embedded-topic')
+    .filter({ hasText: '3D Modeling' })
+    .locator('[data-skill-id="600000000000000000000001"]');
+  await embeddedStar.click();
+  const inspector = page.getByLabel('Star Inspector');
+  await expect(inspector).toContainText('Blender Setup');
+  await inspector.getByText('Edit full details').click();
+  await expect(page.getByRole('dialog', { name: /Edit (star|quest)/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Close editor' }).click();
+
+  await embeddedStar.locator('.constellation-node-hit-target').click({ button: 'right' });
+  const menu = page.getByRole('menu', { name: /Blender Setup actions/ });
+  await expect(menu).toBeVisible();
+  await menu.getByRole('menuitem', { name: /Edit (star|quest)/ }).click();
+  await expect(page.getByRole('dialog', { name: /Edit (star|quest)/ })).toBeVisible();
 });
 
 test('admin keeps new maps draft and exposes publish and delete actions', async ({ page }) => {

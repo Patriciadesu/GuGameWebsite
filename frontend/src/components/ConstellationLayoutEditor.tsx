@@ -776,8 +776,16 @@ function ConstellationLayoutEditor({
     childSkillId?: string
   ) => {
     if (disabled) return;
+    // A cluster's artwork can sit underneath a Star. Treat a double click on
+    // either surface as opening that cluster, rather than starting a drag on
+    // the Star that happened to be under the pointer.
+    if (event.detail === 2 && gateway) {
+      event.stopPropagation();
+      event.preventDefault();
+      onActivateSkill?.(gateway._id);
+      return;
+    }
     event.stopPropagation();
-    event.preventDefault();
     event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId);
     const moveChild = Boolean(childSkillId && embeddedSelection?.topicMapId === topicMapId && embeddedSelection.skillId === childSkillId);
     setEmbeddedSelection({ topicMapId, skillId: moveChild ? childSkillId : undefined });
@@ -950,6 +958,7 @@ function ConstellationLayoutEditor({
                   role="group"
                   aria-label={`${group.map.name} topic, ${topicSkills.length} quests`}
                   onPointerDown={event => {
+                    if (event.button === 2) return;
                     if (event.detail === 2 && group.gateway) {
                       event.stopPropagation();
                       onActivateSkill?.(group.gateway._id);
@@ -963,6 +972,7 @@ function ConstellationLayoutEditor({
                     event.stopPropagation();
                     if (group.gateway) {
                       onSelectSkill(group.gateway._id);
+                      onSelectionChange?.([group.gateway._id]);
                       onContextMenuSkill?.(group.gateway._id, event.clientX, event.clientY);
                     }
                   }}
@@ -997,12 +1007,21 @@ function ConstellationLayoutEditor({
                       role="button"
                       tabIndex={0}
                       aria-label={`${skill.constellationLabel || skill.title}, ${skill.mapNodeRole || 'lesson'}, in ${group.map.name}`}
-                      onPointerDown={event => startEmbeddedDrag(event, group.map._id, topicSkills, group.gateway, skill._id)}
-                      onDoubleClick={() => onActivateSkill?.(skill._id)}
+                      onPointerDown={event => {
+                        onSelectSkill(skill._id);
+                        onSelectionChange?.([skill._id]);
+                        if (event.button === 2) return;
+                        startEmbeddedDrag(event, group.map._id, topicSkills, group.gateway, skill._id);
+                      }}
+                      onDoubleClick={event => {
+                        event.stopPropagation();
+                        onActivateSkill?.(group.gateway?._id || skill._id);
+                      }}
                       onContextMenu={event => {
                         event.preventDefault();
                         event.stopPropagation();
                         onSelectSkill(skill._id);
+                        onSelectionChange?.([skill._id]);
                         onContextMenuSkill?.(skill._id, event.clientX, event.clientY);
                       }}
                       onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onActivateSkill?.(skill._id); } }}

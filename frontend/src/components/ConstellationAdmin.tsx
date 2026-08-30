@@ -195,7 +195,13 @@ function ConstellationAdmin({
   const disciplineMaps = maps.filter(map => map.scope === 'discipline');
   const mapSkills = useMemo(() => skills
     .filter(skill => skill.constellationMapId === selectedMapId)
-    .sort((a, b) => a.position - b.position), [skills, selectedMapId]);
+    // Topic drafts previously flowed into the embedded Discipline canvas
+    // only. Opening that same Topic before Save then read stale server
+    // positions, making a successful Auto Layout appear to jump backwards.
+    .map(skill => draftTopicPositions[skill._id]
+      ? { ...skill, constellationPosition: draftTopicPositions[skill._id] }
+      : skill)
+    .sort((a, b) => a.position - b.position), [draftTopicPositions, skills, selectedMapId]);
   const topicGroups = useMemo<ConstellationTopicGroup[]>(() => {
     if (!selectedMap || selectedMap.scope !== 'discipline' || isMainConstellation) return [];
     return maps

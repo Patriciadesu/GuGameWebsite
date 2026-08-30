@@ -41,6 +41,12 @@ export const bakedBoundaryTransform = (boundary: BakedSvgGuideBoundary, destinat
 };
 
 const imageCache = new Map<string, Promise<HTMLImageElement>>();
+interface SvgGuideMask {
+  width: number;
+  height: number;
+  walkable: Uint8Array;
+}
+const routeMaskCache = new Map<string, Promise<SvgGuideMask>>();
 const loadImage = (source: string) => {
   const cached = imageCache.get(source);
   if (cached) return cached;
@@ -58,6 +64,31 @@ const loadImage = (source: string) => {
 export const getSvgGuideImageSize = async (assetUrl: string) => {
   const image = await loadImage(assetUrl);
   return { width: image.naturalWidth || image.width, height: image.naturalHeight || image.height };
+};
+
+const loadRouteMask = async (assetUrl: string) => {
+  const cached = routeMaskCache.get(assetUrl);
+  if (cached) return cached;
+  const request = loadImage(assetUrl).then(image => {
+    // Preserve the guide's aspect ratio. A square raster was stretching the
+    // 1200×700 constellation art, producing bad routes while doing ~40% more
+    // pixel work than necessary.
+    const width = 360;
+    const height = Math.max(120, Math.round(width * image.height / Math.max(1, image.width)));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) throw new Error('Unable to prepare SVG guide mask.');
+    context.drawImage(image, 0, 0, width, height);
+    const alpha = context.getImageData(0, 0, width, height).data;
+    const walkable = new Uint8Array(width * height);
+    for (let index = 0; index < walkable.length; index += 1) walkable[index] = alpha[index * 4 + 3] >= 40 ? 1 : 0;
+    return { width, height, walkable };
+  });
+  routeMaskCache.set(assetUrl, request);
+  request.catch(() => routeMaskCache.delete(assetUrl));
+  return request;
 };
 
 const nearestWalkable = (x: number, y: number, width: number, height: number, walkable: (x: number, y: number) => boolean) => {
@@ -81,16 +112,10 @@ export const buildSvgGuideRoutes = async (
   nodes: SvgGuideRouteNode[],
   edges: SvgGuideRouteEdge[]
 ) => {
-  const image = await loadImage(assetUrl);
-  const rasterSize = 360;
-  const canvas = document.createElement('canvas');
-  canvas.width = rasterSize;
-  canvas.height = rasterSize;
-  const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (!context) return {};
-  context.drawImage(image, 0, 0, rasterSize, rasterSize);
-  const alpha = context.getImageData(0, 0, rasterSize, rasterSize).data;
-  const walkable = (x: number, y: number) => alpha[(y * rasterSize + x) * 4 + 3] >= 40;
+  const [image, mask] = await Promise.all([loadImage(assetUrl), loadRouteMask(assetUrl)]);
+  const rasterWidth = mask.width;
+  const rasterHeight = mask.height;
+  const walkable = (x: number, y: number) => mask.walkable[y * rasterWidth + x] === 1;
   const imageScale = Math.min(bounds.width / image.width, bounds.height / image.height);
   const imageWidth = image.width * imageScale;
   const imageHeight = image.height * imageScale;
@@ -104,28 +129,28 @@ export const buildSvgGuideRoutes = async (
     const target = nodeById.get(edge.targetId);
     if (!source || !target) return;
     const toRaster = (point: SvgGuideRouteNode) => ({
-      x: (point.x - imageX) / Math.max(1, imageWidth) * rasterSize,
-      y: (point.y - imageY) / Math.max(1, imageHeight) * rasterSize
+      x: (point.x - imageX) / Math.max(1, imageWidth) * rasterWidth,
+      y: (point.y - imageY) / Math.max(1, imageHeight) * rasterHeight
     });
-    const start = nearestWalkable(toRaster(source).x, toRaster(source).y, rasterSize, rasterSize, walkable);
-    const end = nearestWalkable(toRaster(target).x, toRaster(target).y, rasterSize, rasterSize, walkable);
+    const start = nearestWalkable(toRaster(source).x, toRaster(source).y, rasterWidth, rasterHeight, walkable);
+    const end = nearestWalkable(toRaster(target).x, toRaster(target).y, rasterWidth, rasterHeight, walkable);
     if (!start || !end) return;
-    const startIndex = start.y * rasterSize + start.x;
-    const endIndex = end.y * rasterSize + end.x;
-    const previous = new Int32Array(rasterSize * rasterSize).fill(-1);
+    const startIndex = start.y * rasterWidth + start.x;
+    const endIndex = end.y * rasterWidth + end.x;
+    const previous = new Int32Array(rasterWidth * rasterHeight).fill(-1);
     const queue = [startIndex];
     previous[startIndex] = startIndex;
     for (let cursor = 0; cursor < queue.length && previous[endIndex] === -1; cursor += 1) {
       const current = queue[cursor];
-      const x = current % rasterSize;
-      const y = Math.floor(current / rasterSize);
+      const x = current % rasterWidth;
+      const y = Math.floor(current / rasterWidth);
       for (const offsetX of [-1, 0, 1]) {
         for (const offsetY of [-1, 0, 1]) {
           if (offsetX === 0 && offsetY === 0) continue;
           const nextX = x + offsetX;
           const nextY = y + offsetY;
-          const nextIndex = nextY * rasterSize + nextX;
-          if (nextX < 0 || nextX >= rasterSize || nextY < 0 || nextY >= rasterSize || previous[nextIndex] !== -1 || !walkable(nextX, nextY)) continue;
+          const nextIndex = nextY * rasterWidth + nextX;
+          if (nextX < 0 || nextX >= rasterWidth || nextY < 0 || nextY >= rasterHeight || previous[nextIndex] !== -1 || !walkable(nextX, nextY)) continue;
           previous[nextIndex] = current;
           queue.push(nextIndex);
         }
@@ -134,13 +159,13 @@ export const buildSvgGuideRoutes = async (
     if (previous[endIndex] === -1) return;
     const path: Array<{ x: number; y: number }> = [];
     for (let current = endIndex; current !== startIndex; current = previous[current]) {
-      path.push({ x: current % rasterSize, y: Math.floor(current / rasterSize) });
+      path.push({ x: current % rasterWidth, y: Math.floor(current / rasterWidth) });
     }
     path.push(start);
     path.reverse();
     const worldPoints = path.filter((_, index) => index % 5 === 0 || index === path.length - 1).map(point => ({
-      x: imageX + point.x / rasterSize * imageWidth,
-      y: imageY + point.y / rasterSize * imageHeight
+      x: imageX + point.x / rasterWidth * imageWidth,
+      y: imageY + point.y / rasterHeight * imageHeight
     }));
     routes[`${edge.sourceId}:${edge.targetId}`] = worldPoints.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
   });

@@ -874,9 +874,11 @@ function ConstellationAdmin({
         topicChanges.set(skill.constellationMapId, nodes);
       });
       await Promise.all([...topicChanges].map(([topicMapId, nodes]) => axios.patch(`/api/constellation-maps/${topicMapId}/layout`, { nodes })));
+      await onSkillsChanged();
+      // Keep the in-canvas draft until fresh server state has arrived. Clearing
+      // it first briefly rendered the old layout and felt like a failed save.
       setDraftTopicPositions({});
       setTopicPositionResetRevision(current => current + 1);
-      await onSkillsChanged();
     } catch (requestError: any) {
       setError(requestError.response?.data?.error || 'Unable to save star positions. Your changes are still here.');
     } finally {
@@ -1238,6 +1240,9 @@ function ConstellationAdmin({
                 setBusy(true);
                 const topicMap = maps.find(candidate => candidate._id === topicMapId);
                 if (!topicMap) return;
+                setMaps(current => current.map(candidate => candidate._id === topicMapId
+                  ? { ...candidate, visualTheme: { ...candidate.visualTheme, ...visual } }
+                  : candidate));
                 await axios.patch(`/api/constellation-maps/${topicMapId}`, {
                   visualTheme: { ...topicMap.visualTheme, ...visual }
                 });
@@ -1254,6 +1259,9 @@ function ConstellationAdmin({
                 setBusy(true);
                 const currentMap = maps.find(candidate => candidate._id === mapId);
                 if (!currentMap) return;
+                setMaps(current => current.map(candidate => candidate._id === mapId
+                  ? { ...candidate, visualTheme: { ...candidate.visualTheme, ...visual } }
+                  : candidate));
                 await axios.patch(`/api/constellation-maps/${mapId}`, {
                   visualTheme: { ...currentMap.visualTheme, ...visual }
                 });

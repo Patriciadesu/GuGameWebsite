@@ -708,6 +708,8 @@ function ConstellationTree({
     return `${Math.round(left)} ${Math.round(top)} ${Math.round(width)} ${Math.round(height)}`;
   };
 
+  const isAstralOverview = disciplineMaps.some(map => ['Game Art', 'System'].includes(map.name));
+
   const renderMapLayer = (
     detail: MapDetail,
     options: {
@@ -862,7 +864,23 @@ function ConstellationTree({
 
   if (!selectedDiscipline && !directMap) {
     return (
-      <section className={`constellation-shell constellation-overview ${compactOverview ? 'is-compact-overview' : ''}`} aria-labelledby={`${idPrefix}-title`}>
+      <section
+        className={`constellation-shell constellation-overview ${compactOverview ? 'is-compact-overview' : ''} ${isAstralOverview ? 'is-astral-fantasy' : ''}`}
+        style={isAstralOverview ? {
+          '--constellation-bg': astralFantasyTheme.backgroundColor,
+          '--constellation-surface': astralFantasyTheme.surfaceColor,
+          '--constellation-text': astralFantasyTheme.textColor,
+          '--constellation-muted': astralFantasyTheme.mutedTextColor,
+          '--constellation-border': astralFantasyTheme.borderColor,
+          '--constellation-line': astralFantasyTheme.lineColor,
+          '--constellation-unlocked': astralFantasyTheme.unlockedColor,
+          '--constellation-available': astralFantasyTheme.availableColor,
+          '--constellation-locked': astralFantasyTheme.lockedColor,
+          '--constellation-boss': astralFantasyTheme.bossColor,
+          '--constellation-capstone': astralFantasyTheme.capstoneColor
+        } as CSSProperties : undefined}
+        aria-labelledby={`${idPrefix}-title`}
+      >
         <header className="constellation-heading">
           <div>
             <p>Learning paths</p>
@@ -889,6 +907,7 @@ function ConstellationTree({
             const detail = disciplineDetails[map._id];
             const unlockedCount = detail?.skills.filter(skill => unlockedSet.has(skill._id)).length || 0;
             const total = detail?.skills.length || 0;
+            const mapClass = map.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
             const overviewContent = <>
                 <span className="constellation-overview-copy">
                   <span className="constellation-overview-title">{map.name}</span>
@@ -929,11 +948,11 @@ function ConstellationTree({
                 </svg>
               </>;
             return compactOverview ? (
-              <div className="constellation-overview-item is-direct-topic-line" key={map._id} data-map-id={map._id}>
+              <div className={`constellation-overview-item is-direct-topic-line is-map-${mapClass}`} key={map._id} data-map-id={map._id}>
                 {overviewContent}
               </div>
             ) : (
-              <button type="button" className="constellation-overview-item" key={map._id} data-map-id={map._id} onClick={() => selectDiscipline(map._id)} disabled={!detail}>
+              <button type="button" className={`constellation-overview-item is-map-${mapClass}`} key={map._id} data-map-id={map._id} onClick={() => selectDiscipline(map._id)} disabled={!detail}>
                 {overviewContent}
               </button>
             );

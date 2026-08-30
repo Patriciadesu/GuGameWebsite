@@ -1408,3 +1408,127 @@
   .skill-constellation-panel .constellation-node-star { transition: none; }
   .skill-constellation-panel .constellation-node:active .constellation-node-star { transform: none; }
 }
+
+/* Overview atlas: the three disciplines share the same astral language as
+   the focused board, while each sky remains a quiet, scannable card. */
+.constellation-overview.is-astral-fantasy {
+  min-height: 0;
+  background-color: #080b1d;
+  background-image:
+    radial-gradient(circle at 9% 12%, rgb(83 217 255 / 14%), transparent 24%),
+    radial-gradient(circle at 92% 84%, rgb(184 156 255 / 14%), transparent 28%),
+    radial-gradient(circle at 48% 52%, rgb(255 198 91 / 6%), transparent 48%);
+  border-color: #57658b;
+  box-shadow: inset 0 0 0 1px rgb(255 216 134 / 9%), 0 22px 54px rgb(1 4 15 / 32%);
+}
+
+.constellation-overview.is-astral-fantasy .constellation-heading {
+  min-height: 72px;
+  background: linear-gradient(105deg, rgb(10 15 39 / 98%), rgb(21 27 60 / 96%));
+  border-bottom-color: rgb(255 211 119 / 35%);
+}
+
+.constellation-overview.is-astral-fantasy .constellation-heading p {
+  color: #71ddff;
+  letter-spacing: .14em;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-heading h2 {
+  color: #fff1cb;
+  letter-spacing: .025em;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-legend { color: #b9c7e7; }
+.constellation-overview.is-astral-fantasy .constellation-legend i { box-shadow: 0 0 9px currentColor; }
+
+.constellation-overview.is-astral-fantasy .constellation-overview-grid {
+  min-height: 0;
+  padding: 14px;
+  gap: 14px;
+  background: transparent;
+  border: 0;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-item {
+  min-height: 0;
+  color: #f7f0df;
+  background: linear-gradient(160deg, rgb(18 27 57 / 88%), rgb(8 12 31 / 94%));
+  border: 1px solid #3d5078;
+  border-radius: 16px;
+  box-shadow: inset 0 0 32px rgb(83 217 255 / 3%), 0 12px 24px rgb(1 4 15 / 20%);
+  transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-item + .constellation-overview-item { border-left: 1px solid #3d5078; }
+
+.constellation-overview.is-astral-fantasy .constellation-overview-item:hover,
+.constellation-overview.is-astral-fantasy .constellation-overview-item:focus-visible {
+  background: linear-gradient(160deg, rgb(24 38 78 / 96%), rgb(10 15 39 / 98%));
+  border-color: #53d9ff;
+  box-shadow: inset 0 0 32px rgb(83 217 255 / 7%), 0 0 22px rgb(83 217 255 / 12%);
+  outline: 0;
+  transform: translateY(-2px);
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-copy {
+  top: 18px;
+  right: 14px;
+  left: 14px;
+  gap: 4px;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-title {
+  color: #fff1cb;
+  font-size: clamp(20px, 1.55vw, 27px);
+  text-shadow: 0 2px 12px rgb(1 4 15 / 70%);
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-progress {
+  color: #ffc65b;
+  font-size: 10px;
+  letter-spacing: .1em;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-item.is-map-game-art { border-color: rgb(255 198 91 / 58%); }
+.constellation-overview.is-astral-fantasy .constellation-overview-item.is-map-system { border-color: rgb(184 156 255 / 58%); }
+.constellation-overview.is-astral-fantasy .constellation-overview-item.is-map-map-scene { border-color: rgb(83 217 255 / 72%); }
+
+.constellation-overview.is-astral-fantasy .constellation-mini-layer .constellation-lines path {
+  stroke: #8da2c8;
+  opacity: .72;
+  filter: drop-shadow(0 0 4px rgb(83 217 255 / 20%));
+}
+
+.constellation-overview.is-astral-fantasy .constellation-mini-layer .constellation-link-star {
+  fill: #111936;
+  stroke: #53d9ff;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-mini-layer .constellation-node-star {
+  fill: #111936;
+  filter: drop-shadow(0 0 7px currentColor);
+}
+
+.constellation-overview.is-astral-fantasy .constellation-mini-layer .constellation-node-label,
+.constellation-overview.is-astral-fantasy .constellation-mini-layer .constellation-node-kicker {
+  fill: #f7f0df;
+  stroke: #080b1d;
+}
+
+/* System is deliberately read as a constellation silhouette at this zoom;
+   its quest names stay available after opening the sky instead of colliding
+   inside the overview card. */
+.constellation-overview.is-astral-fantasy .is-map-system .constellation-node-label,
+.constellation-overview.is-astral-fantasy .is-map-system .constellation-node-kicker { display: none; }
+
+@media (min-width: 769px) {
+  .constellation-overview.is-astral-fantasy .constellation-overview-grid {
+    height: 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  .constellation-overview.is-astral-fantasy .constellation-heading { min-height: 64px; }
+  .constellation-overview.is-astral-fantasy .constellation-overview-grid { gap: 10px; padding: 10px; }
+  .constellation-overview.is-astral-fantasy .constellation-overview-item + .constellation-overview-item { border-left: 1px solid #3d5078; }
+}

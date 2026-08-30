@@ -1732,6 +1732,86 @@ test('SVG auto layout samples the colored silhouette and keeps stars on the guid
   await page.screenshot({ path: '/tmp/constellation-visual/admin-blender-svg-auto-layout.png', fullPage: true });
 });
 
+test('SVG auto layout treats complete data-star markers as the authored quest sequence', async ({ page }) => {
+  await installApiFixtures(page);
+  await page.goto('admin');
+  await page.getByRole('button', { name: /Constellation Editor/ }).click();
+  await page.getByLabel('Choose discipline').selectOption({ label: 'Game Art' });
+  const editor = page.getByRole('application', { name: 'Game Art visual layout editor' });
+  const topic = editor.locator('.constellation-layout-embedded-topic').filter({ hasText: '3D Modeling' });
+  const firstStar = topic.locator('[data-skill-id="600000000000000000000001"]');
+  const secondStar = topic.locator('[data-skill-id="600000000000000000000002"]');
+  await topic.dispatchEvent('pointerdown', { detail: 1, button: 0, pointerId: 1, clientX: 400, clientY: 400 });
+  const authoredGuide = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <path fill="#0ea5e9" d="M5 5h90v90H5z"/>
+    ${Array.from({ length: 11 }, (_, index) => `<circle data-star="${index + 1}" cx="${index % 2 === 0 ? 10 : 90}" cy="${index === 0 ? 10 : index === 1 ? 90 : 50}" r="0"/>`).join('')}
+  </svg>`;
+  await page.locator('.constellation-layout-editor input[type="file"]').setInputFiles({
+    name: 'authored-sequence.svg',
+    mimeType: 'image/svg+xml',
+    buffer: Buffer.from(authoredGuide)
+  });
+  await expect(page.getByText('Unsaved', { exact: true })).toBeVisible();
+  const [firstTransform, secondTransform] = await Promise.all([
+    firstStar.getAttribute('transform'),
+    secondStar.getAttribute('transform')
+  ]);
+  const coordinates = (transform: string | null) => (transform || '').match(/translate\(([-\d.]+) ([-\d.]+)\)/)?.slice(1).map(Number);
+  const first = coordinates(firstTransform);
+  const second = coordinates(secondTransform);
+  expect(first).toBeTruthy();
+  expect(second).toBeTruthy();
+  // Marker 1 is authored at top-left and marker 2 at bottom-right. A coloured
+  // silhouette sampler would choose its own visually dense route instead.
+  expect(first![0]).toBeLessThan(second![0]);
+  expect(first![1]).toBeLessThan(second![1]);
+});
+
+test('curated Map & Scene SVG markers remain on visible artwork', async ({ page }) => {
+  await installApiFixtures(page);
+  await page.goto('mainmenu');
+  const review = await page.evaluate(async () => {
+    const guides = [
+      ['/gugame/constellation-guides/advance-lighting-heart.svg', 10],
+      ['/gugame/constellation-guides/light-probe-starfish.svg', 8],
+      ['/gugame/constellation-guides/realtime-global-illumination.svg', 7],
+      ['/gugame/constellation-guides/area-light-softbox.svg', 3]
+    ] as const;
+    return Promise.all(guides.map(async ([assetUrl, expectedCount]) => {
+      const source = await fetch(assetUrl).then(response => response.text());
+      const svgDocument = new DOMParser().parseFromString(source, 'image/svg+xml');
+      const viewBox = (svgDocument.documentElement.getAttribute('viewBox') || '0 0 1 1').split(/[ ,]+/).map(Number);
+      const authoredMarkers = [...svgDocument.querySelectorAll('g[data-star-markers] [data-star]')];
+      const markers = (authoredMarkers.length > 0 ? authoredMarkers : [...svgDocument.querySelectorAll('[data-star]')]).map(marker => ({
+        x: Number(marker.getAttribute('cx')),
+        y: Number(marker.getAttribute('cy'))
+      }));
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const candidate = new Image();
+        candidate.onload = () => resolve(candidate);
+        candidate.onerror = reject;
+        candidate.src = URL.createObjectURL(new Blob([source], { type: 'image/svg+xml' }));
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 512;
+      const context = canvas.getContext('2d')!;
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const opacityAt = ({ x, y }: { x: number; y: number }) => context.getImageData(
+        Math.max(0, Math.min(canvas.width - 1, Math.round((x - viewBox[0]) / viewBox[2] * canvas.width))),
+        Math.max(0, Math.min(canvas.height - 1, Math.round((y - viewBox[1]) / viewBox[3] * canvas.height))),
+        1,
+        1
+      ).data[3];
+      return { assetUrl, expectedCount, markerCount: markers.length, opacity: markers.map(opacityAt) };
+    }));
+  });
+  for (const guide of review) {
+    expect(guide.markerCount, guide.assetUrl).toBe(guide.expectedCount);
+    expect(Math.min(...guide.opacity), guide.assetUrl).toBeGreaterThanOrEqual(100);
+  }
+});
+
 test('embedded SVG auto layout immediately moves Topic stars in the Discipline editor', async ({ page }) => {
   await installApiFixtures(page);
   await page.goto('admin');
@@ -1756,8 +1836,14 @@ test('embedded SVG auto layout immediately moves Topic stars in the Discipline e
   ]);
   expect(backgroundBox).not.toBeNull();
   expect(boundaryBox).not.toBeNull();
-  expect(boundaryBox!.width / backgroundBox!.width).toBeGreaterThan(0.85);
-  expect(boundaryBox!.height / backgroundBox!.height).toBeGreaterThan(0.85);
+  // The boundary follows the silhouette, not the SVG's transparent canvas.
+  // It must remain visibly inside the artwork but still cover a substantial
+  // part of it after the full-source transform used by the Player.
+  expect(boundaryBox!.width / backgroundBox!.width).toBeGreaterThan(0.35);
+  expect(boundaryBox!.height / backgroundBox!.height).toBeGreaterThan(0.35);
+  // The deliberately baked 30px breathing room may extend beyond artwork.
+  expect(boundaryBox!.width).toBeLessThanOrEqual(backgroundBox!.width + 40);
+  expect(boundaryBox!.height).toBeLessThanOrEqual(backgroundBox!.height + 40);
   await page.screenshot({ path: '/tmp/constellation-visual/admin-discipline-embedded-svg-outline.png', fullPage: true });
 });
 

@@ -8,7 +8,7 @@ import {
 } from './constellationVisuals';
 import './ConstellationTree.css';
 import { autoStyleConstellation } from './constellationAutoLayout';
-import { bakedBoundaryTransform, buildSvgGuideOutline, getSvgGuideImageSize, type BakedSvgGuideBoundary } from './constellationSvgPathfinding';
+import { bakedBoundaryTransform, buildSvgGuideOutline, buildSvgGuideRoutes, getSvgGuideImageSize, type BakedSvgGuideBoundary } from './constellationSvgPathfinding';
 
 export interface ConstellationLayoutPosition {
   x: number;
@@ -387,6 +387,7 @@ function ConstellationLayoutEditor({
   const [embeddedGuideOutlines, setEmbeddedGuideOutlines] = useState<Record<string, BakedSvgGuideBoundary>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
+  const [embeddedSvgRoutes, setEmbeddedSvgRoutes] = useState<Record<string, string>>({});
   const svgRef = useRef<SVGSVGElement | null>(null);
   const lastTapRef = useRef<{ skillId: string; timestamp: number } | null>(null);
 
@@ -419,12 +420,13 @@ function ConstellationLayoutEditor({
         ? positions[gateway._id] || pointForConstellationSkill(gateway, Math.max(0, gatewayIndex), skills.length, map)
         : { x: map.viewport.width / 2, y: map.viewport.height / 2 };
       const sourcePoints = group.skills.map((skill, index) => pointForConstellationSkill(skill, index, group.skills.length, group.map));
-      const minX = Math.min(...sourcePoints.map(point => point.x));
-      const maxX = Math.max(...sourcePoints.map(point => point.x));
-      const minY = Math.min(...sourcePoints.map(point => point.y));
-      const maxY = Math.max(...sourcePoints.map(point => point.y));
-      const scale = sourcePoints.length <= 1 ? 1 : Math.min(0.46, 560 / Math.max(1, maxX - minX), 400 / Math.max(1, maxY - minY));
-      const center = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+      // Keep the embedded Editor on exactly the same coordinate transform as
+      // the Player. Scaling only the star bounding-box stretches artwork and
+      // makes a valid route appear outside of its own SVG silhouette.
+      const sourceWidth = Math.max(1, group.map.viewport.width);
+      const sourceHeight = Math.max(1, group.map.viewport.height);
+      const scale = sourcePoints.length <= 1 ? 1 : Math.min(0.46, 560 / sourceWidth, 400 / sourceHeight);
+      const center = { x: sourceWidth / 2, y: sourceHeight / 2 };
       const childSkills = group.skills.map((skill, index) => ({
         ...skill,
         constellationPosition: {
@@ -434,10 +436,10 @@ function ConstellationLayoutEditor({
       }));
       const points = childSkills.map(skill => skill.constellationPosition!);
       const guideBounds = group.map.visualTheme?.backgroundAssetUrl ? {
-        x: Math.min(...points.map(point => point.x)) - 60,
-        y: Math.min(...points.map(point => point.y)) - 60,
-        width: Math.max(...points.map(point => point.x)) - Math.min(...points.map(point => point.x)) + 120,
-        height: Math.max(...points.map(point => point.y)) - Math.min(...points.map(point => point.y)) + 120
+        x: anchor.x - sourceWidth * scale / 2,
+        y: anchor.y - sourceHeight * scale / 2,
+        width: sourceWidth * scale,
+        height: sourceHeight * scale
       } : undefined;
       return { group, skills: childSkills, points, guideBounds, boundary: guideBounds ? guideBoundaryPath(guideBounds) : boundaryPath(points) };
     });
@@ -460,14 +462,55 @@ function ConstellationLayoutEditor({
       constellationPosition: embeddedPositions[skill._id] || skill.constellationPosition
     }));
     const points = nextSkills.map(skill => skill.constellationPosition!);
+    // Only move the guide when the entire cluster moves. A child-Star drag or
+    // Auto Layout must never resize/re-anchor the SVG or its baked boundary.
+    const deltas = nextSkills.map((skill, index) => ({
+      x: (skill.constellationPosition?.x || 0) - (group.skills[index].constellationPosition?.x || 0),
+      y: (skill.constellationPosition?.y || 0) - (group.skills[index].constellationPosition?.y || 0)
+    }));
+    const firstDelta = deltas[0] || { x: 0, y: 0 };
+    const isWholeClusterMove = deltas.every(delta => Math.abs(delta.x - firstDelta.x) < 0.5 && Math.abs(delta.y - firstDelta.y) < 0.5);
     const guideBounds = group.guideBounds ? {
-      x: Math.min(...points.map(point => point.x)) - 60,
-      y: Math.min(...points.map(point => point.y)) - 60,
-      width: Math.max(...points.map(point => point.x)) - Math.min(...points.map(point => point.x)) + 120,
-      height: Math.max(...points.map(point => point.y)) - Math.min(...points.map(point => point.y)) + 120
+      ...group.guideBounds,
+      x: group.guideBounds.x + (isWholeClusterMove ? firstDelta.x : 0),
+      y: group.guideBounds.y + (isWholeClusterMove ? firstDelta.y : 0)
     } : undefined;
     return { ...group, skills: nextSkills, points, guideBounds, boundary: guideBounds ? guideBoundaryPath(guideBounds) : boundaryPath(points) };
   }), [embeddedPositions, embeddedTopicGroups]);
+  const embeddedRouteKey = visibleEmbeddedTopicGroups
+    .filter(group => group.guideBounds && group.group.map.visualTheme?.backgroundAssetUrl)
+    .map(group => `${group.group.map._id}:${group.guideBounds!.x}:${group.guideBounds!.y}:${group.guideBounds!.width}:${group.guideBounds!.height}:${group.skills.map(skill => `${skill._id}:${skill.constellationPosition?.x}:${skill.constellationPosition?.y}:${(skill.connections || []).map(connection => connection.targetSkillId).join(',')}`).join(';')}`)
+    .join('|');
+  useEffect(() => {
+    let cancelled = false;
+    // Routing is intentionally deferred until pointer motion settles. The
+    // Player and Editor still update node positions every frame, while the
+    // heavier path search runs once for the final geometry.
+    const timer = window.setTimeout(() => {
+      const guides = visibleEmbeddedTopicGroups.filter(group => group.guideBounds && group.group.map.visualTheme?.backgroundAssetUrl);
+      void Promise.all(guides.map(async group => {
+        const skillIds = new Set(group.skills.map(skill => skill._id));
+        const edges = group.skills.flatMap(skill => (skill.connections || [])
+          .filter(connection => skillIds.has(connection.targetSkillId))
+          .map(connection => ({ sourceId: skill._id, targetId: connection.targetSkillId })));
+        const routes = await buildSvgGuideRoutes(
+          group.group.map.visualTheme!.backgroundAssetUrl!,
+          group.guideBounds!,
+          group.skills.map(skill => ({ id: skill._id, x: skill.constellationPosition!.x, y: skill.constellationPosition!.y })),
+          edges
+        );
+        return Object.fromEntries(Object.entries(routes).map(([key, path]) => [`${group.group.map._id}:${key}`, path]));
+      })).then(results => {
+        if (!cancelled) setEmbeddedSvgRoutes(Object.assign({}, ...results));
+      }).catch(() => {
+        if (!cancelled) setEmbeddedSvgRoutes({});
+      });
+    }, 120);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [embeddedRouteKey, visibleEmbeddedTopicGroups]);
   const legacyGuideKey = visibleEmbeddedTopicGroups
     .filter(group => group.guideBounds && group.group.map.visualTheme?.backgroundAssetUrl &&
       (group.group.map.visualTheme.bakedBoundary?.assetUrl !== group.group.map.visualTheme.backgroundAssetUrl || !group.group.map.visualTheme.bakedBoundary?.path))
@@ -657,7 +700,14 @@ function ConstellationLayoutEditor({
           setSelectedSkillIds(finalSelection);
           onSelectSkill(finalSelection.values().next().value || '');
         }
-      } else if (event.type === 'pointerup' && !moved) onTap?.();
+      } else if (nextGesture.type === 'node' && nextGesture.skillId) {
+        // A pointer gesture can finish after the parent Inspector has rendered
+        // its previous selection. Reassert the active Star at pointer-up so
+        // focus, Inspector and keyboard navigation stay in sync.
+        setSelectedSkillIds(current => new Set([...current, nextGesture.skillId!]));
+        onSelectSkill(nextGesture.skillId);
+        if (event.type === 'pointerup' && !moved) onTap?.();
+      }
     };
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleEnd);
@@ -730,15 +780,27 @@ function ConstellationLayoutEditor({
     const viewBox = (root.getAttribute('viewBox') || `0 0 ${targetMap.viewport.width} ${targetMap.viewport.height}`).trim().split(/[ ,]+/).map(Number);
     const [vx, vy, vw, vh] = viewBox.length === 4 && viewBox.every(Number.isFinite) ? viewBox : [0, 0, targetMap.viewport.width, targetMap.viewport.height];
     const svgDataUrl = encodeSvgDataUrl(svgText);
-    const markerPoints = [...document.querySelectorAll<SVGGraphicsElement>('[data-star], circle, ellipse, rect')].map(element => {
+    const authoredMarkers = [...document.querySelectorAll<SVGGraphicsElement>('g[data-star-markers] [data-star]')];
+    const explicitMarkers = authoredMarkers.length > 0
+      ? authoredMarkers
+      : [...document.querySelectorAll<SVGGraphicsElement>('[data-star]')];
+    // Legacy uploads may contain only illustrative shapes. Once an SVG opts
+    // into data-star, never mix decorative circles into the quest sequence.
+    const markerElements = explicitMarkers.length > 0
+      ? explicitMarkers
+      : [...document.querySelectorAll<SVGGraphicsElement>('circle, ellipse, rect')];
+    const markerPoints = markerElements.map(element => {
       const x = Number(element.getAttribute('cx') ?? element.getAttribute('x') ?? 0) + Number(element.getAttribute('width') || 0) / 2;
       const y = Number(element.getAttribute('cy') ?? element.getAttribute('y') ?? 0) + Number(element.getAttribute('height') || 0) / 2;
       return { x, y };
     }).filter(point => Number.isFinite(point.x) && Number.isFinite(point.y));
-    let points = markerPoints;
+    // Curated data-star markers describe the designer-approved learning path.
+    // They are authoritative when the SVG provides a complete sequence;
+    // coloured-pixel tracing remains a fallback for arbitrary uploads.
+    let points = markerPoints.length >= targetSkills.length ? markerPoints : [];
     try {
       const coloredPoints = await coloredSvgGuidePoints(svgDataUrl, [vx, vy, vw, vh], targetSkills.length);
-      if (coloredPoints.length >= Math.min(2, targetSkills.length)) points = coloredPoints;
+      if (points.length < targetSkills.length && coloredPoints.length >= Math.min(2, targetSkills.length)) points = coloredPoints;
     } catch {
       // Fall back to explicit guide markers and finally to a safe spread when rendering fails.
     }
@@ -1028,10 +1090,10 @@ function ConstellationLayoutEditor({
                   {group.map.visualTheme?.backgroundAssetUrl && <image
                     className="constellation-layout-topic-background"
                     href={group.map.visualTheme.backgroundAssetUrl}
-                    x={Math.min(...points.map(point => point.x)) - 60}
-                    y={Math.min(...points.map(point => point.y)) - 60}
-                    width={Math.max(...points.map(point => point.x)) - Math.min(...points.map(point => point.x)) + 120}
-                    height={Math.max(...points.map(point => point.y)) - Math.min(...points.map(point => point.y)) + 120}
+                    x={guideBounds?.x || 0}
+                    y={guideBounds?.y || 0}
+                    width={guideBounds?.width || group.map.viewport.width}
+                    height={guideBounds?.height || group.map.viewport.height}
                     preserveAspectRatio="xMidYMid meet"
                     pointerEvents="none"
                   />}
@@ -1047,7 +1109,12 @@ function ConstellationLayoutEditor({
                     {topicSkills.flatMap(source => (source.connections || []).flatMap(connection => {
                       const target = topicSkills.find(skill => skill._id === connection.targetSkillId);
                       if (!target || !source.constellationPosition || !target.constellationPosition) return [];
-                      return <path key={`${source._id}-${target._id}`} d={editorConnectionPath(source.constellationPosition, target.constellationPosition)} markerEnd={`url(#constellation-editor-${connection.connectionType === 'special' ? 'special-arrow' : 'arrow'}-${map._id})`} vectorEffect="non-scaling-stroke" />;
+                      const route = embeddedSvgRoutes[`${group.map._id}:${source._id}:${target._id}`];
+                      // An SVG guide is a hard boundary in the Editor as well
+                      // as in the Player. Do not draw a deceptive fallback
+                      // through transparent artwork when no valid route exists.
+                      if (group.map.visualTheme?.backgroundAssetUrl && !route) return [];
+                      return <path key={`${source._id}-${target._id}`} d={route || editorConnectionPath(source.constellationPosition, target.constellationPosition)} markerEnd={`url(#constellation-editor-${connection.connectionType === 'special' ? 'special-arrow' : 'arrow'}-${map._id})`} vectorEffect="non-scaling-stroke" />;
                     }))}
                   </g>
                   {topicSkills.map(skill => {
@@ -1080,6 +1147,7 @@ function ConstellationLayoutEditor({
                       onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onActivateSkill?.(skill._id); } }}
                     >
                       <ConstellationNodeGlyph skill={skill} label={skill.constellationLabel || skill.title} labelOnLeft={point.x > map.viewport.width * 0.74} labelY={6} />
+                      {group.map.visualTheme?.backgroundAssetUrl && <text className="constellation-svg-sequence" y="5" textAnchor="middle">{topicSkills.indexOf(skill) + 1}</text>}
                     </g>;
                   })}
                 </g>
@@ -1115,7 +1183,11 @@ function ConstellationLayoutEditor({
                     className={`constellation-node is-available constellation-layout-node role-${role} ${selectedSkillIds.has(skill._id) ? 'is-selected' : ''} ${dirtySkillIds.has(skill._id) ? 'is-dirty' : ''}`}
                     transform={`translate(${position.x} ${position.y})`}
                     role="button"
-                    tabIndex={selectedSkillId === skill._id || (!selectedSkillId && index === 0) ? 0 : -1}
+                    // Local selection updates synchronously at pointer-down;
+                    // the parent Inspector state follows on the next render.
+                    // Use it for roving focus so a dragged Star never drops
+                    // out of keyboard navigation during that hand-off.
+                    tabIndex={selectedSkillIds.has(skill._id) || dirtySkillIds.has(skill._id) || (!selectedSkillId && selectedSkillIds.size === 0 && index === 0) ? 0 : -1}
                     aria-label={`${skill.constellationLabel || skill.title}, ${role}${map.scope === 'discipline' ? ', double click to open topic' : ''}`}
                     onKeyDown={event => {
                       if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {

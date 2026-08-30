@@ -1669,6 +1669,8 @@ test('embedded SVG auto layout immediately moves Topic stars in the Discipline e
   });
   await expect(page.getByText('Unsaved', { exact: true })).toBeVisible();
   await expect.poll(() => firstStar.getAttribute('transform')).not.toBe(before);
+  await expect(topic.locator('.constellation-layout-topic-boundary.is-svg-outline')).toHaveCount(1);
+  await page.screenshot({ path: '/tmp/constellation-visual/admin-discipline-embedded-svg-outline.png', fullPage: true });
 });
 
 test('admin creates branching connections between topic gateways in a discipline', async ({ page }) => {

@@ -154,15 +154,17 @@ const smoothContour = (points: OutlinePoint[], toWorldX: (x: number) => number, 
 // SVG strokes from being genuinely smooth, especially after dilation.
 export const buildSvgGuideOutline = async (assetUrl: string, bounds: SvgGuideBounds) => {
   const image = await loadImage(assetUrl);
-  // 120px keeps the silhouette recognizable without producing a jagged,
-  // overly-detailed wrapper path. The mask is dilated below for 30px padding.
-  const size = 120;
+  // Reserve a transparent rim so the 30px expansion never clips a contour at
+  // the raster edge; clipped masks cannot form a closed marching-squares loop.
+  const size = 160;
+  const inset = 16;
+  const drawableSize = size - inset * 2;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const context = canvas.getContext('2d', { willReadFrequently: true });
   if (!context) return '';
-  context.drawImage(image, 0, 0, size, size);
+  context.drawImage(image, inset, inset, drawableSize, drawableSize);
   const alpha = context.getImageData(0, 0, size, size).data;
   const imageScale = Math.min(bounds.width / image.width, bounds.height / image.height);
   const imageWidth = image.width * imageScale;
@@ -170,7 +172,7 @@ export const buildSvgGuideOutline = async (assetUrl: string, bounds: SvgGuideBou
   const imageX = bounds.x + (bounds.width - imageWidth) / 2;
   const imageY = bounds.y + (bounds.height - imageHeight) / 2;
   const baseWalkable = (x: number, y: number) => x >= 0 && x < size && y >= 0 && y < size && alpha[(y * size + x) * 4 + 3] >= 40;
-  const paddingCells = Math.max(1, Math.ceil(30 / Math.max(1, imageWidth / size)));
+  const paddingCells = Math.max(1, Math.ceil(30 / Math.max(1, imageWidth / drawableSize)));
   const walkable = (x: number, y: number) => {
     for (let offsetY = -paddingCells; offsetY <= paddingCells; offsetY += 1) {
       for (let offsetX = -paddingCells; offsetX <= paddingCells; offsetX += 1) {
@@ -179,8 +181,8 @@ export const buildSvgGuideOutline = async (assetUrl: string, bounds: SvgGuideBou
     }
     return false;
   };
-  const toWorldX = (x: number) => imageX + x / size * imageWidth;
-  const toWorldY = (y: number) => imageY + y / size * imageHeight;
+  const toWorldX = (x: number) => imageX + (x - inset) / drawableSize * imageWidth;
+  const toWorldY = (y: number) => imageY + (y - inset) / drawableSize * imageHeight;
   const edges: Array<{ start: OutlinePoint; end: OutlinePoint }> = [];
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
@@ -191,25 +193,57 @@ export const buildSvgGuideOutline = async (assetUrl: string, bounds: SvgGuideBou
       if (!walkable(x - 1, y)) edges.push({ start: { x, y: y + 1 }, end: { x, y } });
     }
   }
-  // A hull over every visible boundary point gives one complete outer contour
-  // even when the raster mask contains diagonal junctions or several nearby
-  // connected components. Unlike a rectangle, it still follows this SVG's
-  // silhouette and is then rounded by smoothContour.
-  const boundaryPoints = edges.flatMap(edge => [edge.start, edge.end])
-    .sort((left, right) => left.x - right.x || left.y - right.y)
-    .filter((point, index, points) => index === 0 || pointKey(point) !== pointKey(points[index - 1]));
-  const cross = (origin: OutlinePoint, a: OutlinePoint, b: OutlinePoint) =>
-    (a.x - origin.x) * (b.y - origin.y) - (a.y - origin.y) * (b.x - origin.x);
-  const lower: OutlinePoint[] = [];
-  boundaryPoints.forEach(point => {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) lower.pop();
-    lower.push(point);
+  // Marching squares traces the visible alpha boundary itself. A convex hull
+  // shortcuts across concave or detached parts of a guide, which is why the
+  // lower-left SVG lobe could end up outside the previous boundary.
+  const contours: Array<Array<[OutlinePoint, OutlinePoint]>> = [];
+  const segments: Array<[OutlinePoint, OutlinePoint]> = [];
+  const edgePoint = (x: number, y: number, edge: 'top' | 'right' | 'bottom' | 'left'): OutlinePoint => {
+    if (edge === 'top') return { x: x + 0.5, y };
+    if (edge === 'right') return { x: x + 1, y: y + 0.5 };
+    if (edge === 'bottom') return { x: x + 0.5, y: y + 1 };
+    return { x, y: y + 0.5 };
+  };
+  const addSegment = (x: number, y: number, start: Parameters<typeof edgePoint>[2], end: Parameters<typeof edgePoint>[2]) =>
+    segments.push([edgePoint(x, y, start), edgePoint(x, y, end)]);
+  const cases: Record<number, Array<[Parameters<typeof edgePoint>[2], Parameters<typeof edgePoint>[2]]>> = {
+    0: [], 1: [['left', 'top']], 2: [['top', 'right']], 3: [['left', 'right']],
+    4: [['right', 'bottom']], 5: [['top', 'right'], ['bottom', 'left']], 6: [['top', 'bottom']], 7: [['left', 'bottom']],
+    8: [['bottom', 'left']], 9: [['top', 'bottom']], 10: [['left', 'top'], ['right', 'bottom']], 11: [['right', 'bottom']],
+    12: [['left', 'right']], 13: [['top', 'right']], 14: [['left', 'top']], 15: []
+  };
+  for (let y = 0; y < size - 1; y += 1) {
+    for (let x = 0; x < size - 1; x += 1) {
+      const state = (walkable(x, y) ? 1 : 0) | (walkable(x + 1, y) ? 2 : 0) | (walkable(x + 1, y + 1) ? 4 : 0) | (walkable(x, y + 1) ? 8 : 0);
+      cases[state].forEach(([start, end]) => addSegment(x, y, start, end));
+    }
+  }
+  const segmentsByPoint = new Map<string, number[]>();
+  segments.forEach(([start, end], index) => {
+    [start, end].forEach(point => {
+      const key = pointKey(point);
+      segmentsByPoint.set(key, [...(segmentsByPoint.get(key) || []), index]);
+    });
   });
-  const upper: OutlinePoint[] = [];
-  [...boundaryPoints].reverse().forEach(point => {
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) upper.pop();
-    upper.push(point);
-  });
-  const hull = lower.slice(0, -1).concat(upper.slice(0, -1));
-  return smoothContour(hull, toWorldX, toWorldY, true);
+  const unused = new Set(segments.map((_, index) => index));
+  while (unused.size > 0) {
+    const firstIndex = unused.values().next().value as number;
+    const [firstStart, firstEnd] = segments[firstIndex];
+    const points: OutlinePoint[] = [firstStart, firstEnd];
+    unused.delete(firstIndex);
+    let current = firstEnd;
+    while (pointKey(current) !== pointKey(firstStart)) {
+      const candidate = (segmentsByPoint.get(pointKey(current)) || []).find(index => unused.has(index));
+      if (candidate === undefined) break;
+      unused.delete(candidate);
+      const [start, end] = segments[candidate];
+      current = pointKey(start) === pointKey(current) ? end : start;
+      points.push(current);
+    }
+    if (points.length > 3 && pointKey(points[0]) === pointKey(points[points.length - 1])) {
+      points.pop();
+      contours.push(points.map((point, index) => [point, points[(index + 1) % points.length]]));
+    }
+  }
+  return contours.map(contour => smoothContour(contour.map(([start]) => start), toWorldX, toWorldY, true)).join(' ');
 };

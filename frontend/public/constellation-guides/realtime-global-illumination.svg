@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700">
+  <!-- Original connected sun-and-orbit constellation guide for GuGame. -->
+  <g fill="#354b5e">
+    <circle cx="600" cy="350" r="224"/>
+    <path d="M552 142 600 18 648 142ZM758 204 880 96 842 252ZM808 302 1170 350 808 398ZM842 448 880 604 758 496ZM648 558 600 682 552 558ZM442 496 320 604 358 448ZM392 398 30 350 392 302ZM358 252 320 96 442 204Z"/>
+  </g>
+  <circle cx="600" cy="350" r="138" fill="#527089"/>
+  <ellipse cx="600" cy="350" rx="410" ry="168" fill="none" stroke="#354b5e" stroke-width="52" transform="rotate(-14 600 350)"/>
+  <circle cx="914" cy="208" r="52" fill="#7594aa"/>
+</svg>

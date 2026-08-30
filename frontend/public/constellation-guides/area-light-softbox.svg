@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700">
+  <!-- Original connected softbox-and-beam constellation guide for GuGame. -->
+  <path fill="#354b5e" d="M330 52H870Q930 52 930 112V252Q930 292 890 292H824L1140 662H60L376 292H310Q270 292 270 252V112Q270 52 330 52Z"/>
+  <path fill="#527089" d="M374 104H826Q858 104 858 136V208Q858 240 826 240H374Q342 240 342 208V136Q342 104 374 104ZM600 300 950 614H250Z" opacity=".58"/>
+  <path fill="#7594aa" d="M566 108H634V238H566Z"/>
+</svg>

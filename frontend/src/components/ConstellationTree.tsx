@@ -726,11 +726,16 @@ function ConstellationTree({
         <g className="constellation-lines">
           {connections.map(({ source, targetSkill, connection, sourcePoint, targetPoint }) => {
             const connectionStatus = statusForConnection(source, targetSkill);
+            const route = svgGuideRoutes[`${detail.map._id}:${source._id}:${connection.targetSkillId}`];
+            // A guide is a hard visual boundary. Never fall back to a straight
+            // line that cuts across empty space when its SVG islands are not
+            // connected; the order badge remains visible on every star.
+            if (detail.map.visualTheme?.backgroundAssetUrl && !route) return null;
             return (
             <path
               key={`${source._id}-${connection.targetSkillId}`}
               className={`is-${connectionStatus} is-${connection.connectionType}`}
-              d={svgGuideRoutes[`${detail.map._id}:${source._id}:${connection.targetSkillId}`] || pathBetween(sourcePoint, targetPoint)}
+              d={route || pathBetween(sourcePoint, targetPoint)}
               markerEnd={connection.hasArrowhead ? `url(#${options.markerId || `${idPrefix}-arrow`})` : undefined}
               vectorEffect="non-scaling-stroke"
             />
@@ -793,6 +798,7 @@ function ConstellationTree({
                 labelY={labelY}
                 isStart={index === 0 && detail.map.scope === 'topic'}
               />
+              {detail.map.visualTheme?.backgroundAssetUrl && detail.map.scope === 'topic' && <text className="constellation-svg-sequence" y="5" textAnchor="middle">{index + 1}</text>}
             </g>
           );
         })}

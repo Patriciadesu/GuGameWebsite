@@ -1212,12 +1212,12 @@
 .discipline-constellation-canvas:active { cursor: grabbing; }
 
 .discipline-topic-boundary {
-  fill: color-mix(in srgb, var(--constellation-unlocked) 4%, transparent);
-  stroke: color-mix(in srgb, var(--constellation-unlocked) 72%, var(--constellation-border));
-  stroke-width: 2.5;
+  fill: color-mix(in srgb, var(--constellation-unlocked) 2%, transparent);
+  stroke: color-mix(in srgb, var(--constellation-unlocked) 52%, var(--constellation-border));
+  stroke-width: 2;
   stroke-dasharray: 8 7;
   stroke-linejoin: round;
-  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--constellation-unlocked) 18%, transparent));
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--constellation-unlocked) 30%, transparent));
   pointer-events: none;
 }
 
@@ -1277,6 +1277,14 @@
 
 .discipline-topic-quest-layer .constellation-lines path { stroke-width: 2.5; }
 .discipline-topic-quest-layer .constellation-node-star { filter: drop-shadow(0 2px 5px color-mix(in srgb, var(--constellation-text) 20%, transparent)); }
+.constellation-svg-sequence {
+  fill: var(--constellation-text);
+  font: 800 11px/1 "Noto Sans Thai", sans-serif;
+  paint-order: stroke;
+  stroke: var(--constellation-surface);
+  stroke-width: 3px;
+  pointer-events: none;
+}
 .discipline-topic-cluster.is-level-locked .discipline-topic-boundary { stroke: var(--constellation-locked); filter: none; }
 .discipline-topic-cluster.is-level-locked .discipline-topic-boundary__eyebrow { fill: var(--constellation-locked); }
 

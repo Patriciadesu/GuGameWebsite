@@ -254,7 +254,9 @@ const questOrderForGuide = (skills: ConstellationSkill[]) => {
   return [...ordered, ...skills.filter(skill => !visited.has(skill._id))];
 };
 
-const coloredSvgGuidePoints = async (svgDataUrl: string, viewBox: [number, number, number, number], count: number) => {
+// Exported for repeatable guide migrations and visual QA. The Editor and
+// production data tooling must use the same placement algorithm.
+export const coloredSvgGuidePoints = async (svgDataUrl: string, viewBox: [number, number, number, number], count: number) => {
   const [, , viewBoxWidth, viewBoxHeight] = viewBox;
   const width = 640;
   const height = Math.max(120, Math.round(width * viewBoxHeight / Math.max(1, viewBoxWidth)));

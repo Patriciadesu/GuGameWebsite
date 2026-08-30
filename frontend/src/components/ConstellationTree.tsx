@@ -97,6 +97,13 @@ const boundaryPathFor = (points: Point[], paddingOverride?: number): string => {
   return `${expanded.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')} Z`;
 };
 
+const guideBoundaryPath = (bounds: NonNullable<MapDetail['svgGuideBounds']>) => {
+  const radius = Math.min(28, bounds.width / 5, bounds.height / 5);
+  const right = bounds.x + bounds.width;
+  const bottom = bounds.y + bounds.height;
+  return `M ${bounds.x + radius} ${bounds.y} H ${right - radius} Q ${right} ${bounds.y} ${right} ${bounds.y + radius} V ${bottom - radius} Q ${right} ${bottom} ${right - radius} ${bottom} H ${bounds.x + radius} Q ${bounds.x} ${bottom} ${bounds.x} ${bottom - radius} V ${bounds.y + radius} Q ${bounds.x} ${bounds.y} ${bounds.x + radius} ${bounds.y} Z`;
+};
+
 const placeTopicGroupInDiscipline = (
   group: ConstellationTopicGroup,
   discipline: ConstellationMap,
@@ -1080,7 +1087,9 @@ function ConstellationTree({
           const points = detail.skills.map((skill, index) =>
             pointForSkill(skill, index, detail.skills.length, detail.map)
           );
-          const boundaryPath = boundaryPathFor(points);
+          const boundaryPath = detail.svgGuideBounds
+            ? guideBoundaryPath(detail.svgGuideBounds)
+            : boundaryPathFor(points);
           const levelLocked = (group.map.level || 1) > userLevel;
           const labelPoint = {
             x: Math.min(...points.map(point => point.x)) + 16,

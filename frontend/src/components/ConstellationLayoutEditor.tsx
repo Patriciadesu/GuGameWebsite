@@ -324,6 +324,13 @@ const boundaryPath = (points: Array<{ x: number; y: number }>) => {
   return `${expanded.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')} Z`;
 };
 
+const guideBoundaryPath = (bounds: { x: number; y: number; width: number; height: number }) => {
+  const radius = Math.min(24, bounds.width / 5, bounds.height / 5);
+  const right = bounds.x + bounds.width;
+  const bottom = bounds.y + bounds.height;
+  return `M ${bounds.x + radius} ${bounds.y} H ${right - radius} Q ${right} ${bounds.y} ${right} ${bounds.y + radius} V ${bottom - radius} Q ${right} ${bottom} ${right - radius} ${bottom} H ${bounds.x + radius} Q ${bounds.x} ${bottom} ${bounds.x} ${bottom - radius} V ${bounds.y + radius} Q ${bounds.x} ${bounds.y} ${bounds.x + radius} ${bounds.y} Z`;
+};
+
 const editorConnectionPath = (source: ConstellationLayoutPosition, target: ConstellationLayoutPosition) => {
   const distance = Math.hypot(target.x - source.x, target.y - source.y);
   if (distance === 0) return straightConstellationPath(source, target);
@@ -422,7 +429,13 @@ function ConstellationLayoutEditor({
         }
       }));
       const points = childSkills.map(skill => skill.constellationPosition!);
-      return { group, skills: childSkills, points, boundary: boundaryPath(points) };
+      const guideBounds = group.map.visualTheme?.backgroundAssetUrl ? {
+        x: Math.min(...points.map(point => point.x)) - 60,
+        y: Math.min(...points.map(point => point.y)) - 60,
+        width: Math.max(...points.map(point => point.x)) - Math.min(...points.map(point => point.x)) + 120,
+        height: Math.max(...points.map(point => point.y)) - Math.min(...points.map(point => point.y)) + 120
+      } : undefined;
+      return { group, skills: childSkills, points, guideBounds, boundary: guideBounds ? guideBoundaryPath(guideBounds) : boundaryPath(points) };
     });
   }, [map, positions, skills, topicGroups]);
   const isEmbeddedDiscipline = embeddedTopicGroups.length > 0;
@@ -443,7 +456,13 @@ function ConstellationLayoutEditor({
       constellationPosition: embeddedPositions[skill._id] || skill.constellationPosition
     }));
     const points = nextSkills.map(skill => skill.constellationPosition!);
-    return { ...group, skills: nextSkills, points, boundary: boundaryPath(points) };
+    const guideBounds = group.guideBounds ? {
+      x: Math.min(...points.map(point => point.x)) - 60,
+      y: Math.min(...points.map(point => point.y)) - 60,
+      width: Math.max(...points.map(point => point.x)) - Math.min(...points.map(point => point.x)) + 120,
+      height: Math.max(...points.map(point => point.y)) - Math.min(...points.map(point => point.y)) + 120
+    } : undefined;
+    return { ...group, skills: nextSkills, points, guideBounds, boundary: guideBounds ? guideBoundaryPath(guideBounds) : boundaryPath(points) };
   }), [embeddedPositions, embeddedTopicGroups]);
   const connectionEdges = useMemo(() => {
     const result: Array<{ sourceId: string; targetId: string; special: boolean }> = [];

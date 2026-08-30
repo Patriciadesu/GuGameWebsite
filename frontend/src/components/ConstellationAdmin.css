@@ -239,6 +239,14 @@
   stroke: var(--constellation-bg);
   stroke-width: 10px;
 }
+.constellation-layout-editor.is-packed-topic-board .constellation-layout-topic-eyebrow {
+  font-size: 14px;
+  stroke-width: 6px;
+}
+.constellation-layout-editor.is-packed-topic-board .constellation-layout-topic-title {
+  font: 800 24px/1 "Noto Sans Thai", sans-serif;
+  stroke-width: 8px;
+}
 .constellation-layout-topic-lines path { stroke-width: 2.5; }
 .constellation-layout-embedded-topic.is-svg-guide .constellation-node-label,
 .constellation-layout-embedded-topic.is-svg-guide .constellation-node-kicker { display: none; }

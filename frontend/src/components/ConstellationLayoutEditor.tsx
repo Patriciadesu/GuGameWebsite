@@ -66,6 +66,13 @@ interface SelectionBox {
 const NODE_MARGIN = 46;
 const SNAP_SIZE = 20;
 
+// These course-guide files already include an authored route spine. Re-running
+// raster pathfinding for every embedded cluster turns a dense Sky into an
+// expensive render loop and duplicates the visual route.
+const hasBakedGuideSpine = (assetUrl?: string) => Boolean(
+  assetUrl?.match(/^\/gugame\/constellation-guides\/(game-art|system)-/)
+);
+
 interface SvgGuidePoint {
   x: number;
   y: number;
@@ -413,19 +420,35 @@ function ConstellationLayoutEditor({
   const skillIds = useMemo(() => new Set(skills.map(skill => skill._id)), [skills]);
   const embeddedTopicGroups = useMemo(() => {
     if (map.scope !== 'discipline' || !topicGroups?.length) return [];
-    return topicGroups.filter(group => group.skills.length > 0).map(group => {
+    const visibleGroups = topicGroups
+      .filter(group => group.skills.length > 0)
+      .sort((left, right) => (left.map.displayOrder ?? 0) - (right.map.displayOrder ?? 0) || left.map.name.localeCompare(right.map.name));
+    const usePackedTopicBoard = visibleGroups.length >= 8 && map.viewport.width <= 1800;
+    const columns = 3;
+    const rows = Math.max(1, Math.ceil(visibleGroups.length / columns));
+    return visibleGroups.map((group, groupIndex) => {
       const gateway = group.gateway;
       const gatewayIndex = gateway ? skills.findIndex(skill => skill._id === gateway._id) : -1;
-      const anchor = gateway
+      const inheritedAnchor = gateway
         ? positions[gateway._id] || pointForConstellationSkill(gateway, Math.max(0, gatewayIndex), skills.length, map)
         : { x: map.viewport.width / 2, y: map.viewport.height / 2 };
+      const anchor = usePackedTopicBoard
+        ? {
+            x: map.viewport.width / columns * ((groupIndex % columns) + 0.5),
+            y: 160 + Math.floor(groupIndex / columns) * ((map.viewport.height - 270) / Math.max(1, rows - 1))
+          }
+        : inheritedAnchor;
       const sourcePoints = group.skills.map((skill, index) => pointForConstellationSkill(skill, index, group.skills.length, group.map));
       // Keep the embedded Editor on exactly the same coordinate transform as
       // the Player. Scaling only the star bounding-box stretches artwork and
       // makes a valid route appear outside of its own SVG silhouette.
       const sourceWidth = Math.max(1, group.map.viewport.width);
       const sourceHeight = Math.max(1, group.map.viewport.height);
-      const scale = sourcePoints.length <= 1 ? 1 : Math.min(0.46, 560 / sourceWidth, 400 / sourceHeight);
+      const scale = usePackedTopicBoard
+        ? Math.min(0.24, 350 / sourceWidth, 180 / sourceHeight)
+        : sourcePoints.length <= 1
+          ? 1
+          : Math.min(0.46, 560 / sourceWidth, 400 / sourceHeight);
       const center = { x: sourceWidth / 2, y: sourceHeight / 2 };
       const childSkills = group.skills.map((skill, index) => ({
         ...skill,
@@ -441,7 +464,7 @@ function ConstellationLayoutEditor({
         width: sourceWidth * scale,
         height: sourceHeight * scale
       } : undefined;
-      return { group, skills: childSkills, points, guideBounds, boundary: guideBounds ? guideBoundaryPath(guideBounds) : boundaryPath(points) };
+      return { group, skills: childSkills, points, guideBounds, boundary: guideBounds ? guideBoundaryPath(guideBounds) : boundaryPath(points), usePackedTopicBoard };
     });
   }, [map, positions, skills, topicGroups]);
   const isEmbeddedDiscipline = embeddedTopicGroups.length > 0;
@@ -487,7 +510,7 @@ function ConstellationLayoutEditor({
     // Player and Editor still update node positions every frame, while the
     // heavier path search runs once for the final geometry.
     const timer = window.setTimeout(() => {
-      const guides = visibleEmbeddedTopicGroups.filter(group => group.guideBounds && group.group.map.visualTheme?.backgroundAssetUrl);
+      const guides = visibleEmbeddedTopicGroups.filter(group => group.guideBounds && group.group.map.visualTheme?.backgroundAssetUrl && !hasBakedGuideSpine(group.group.map.visualTheme.backgroundAssetUrl));
       void Promise.all(guides.map(async group => {
         const skillIds = new Set(group.skills.map(skill => skill._id));
         const edges = group.skills.flatMap(skill => (skill.connections || [])
@@ -941,7 +964,7 @@ function ConstellationLayoutEditor({
   };
 
   return (
-    <div className={`constellation-layout-editor constellation-shell constellation-focus ${isEmbeddedDiscipline ? 'is-embedded-discipline' : ''}`} style={themeStyle}>
+    <div className={`constellation-layout-editor constellation-shell constellation-focus ${isEmbeddedDiscipline ? 'is-embedded-discipline' : ''} ${embeddedTopicGroups.some(group => group.usePackedTopicBoard) ? 'is-packed-topic-board' : ''}`} style={themeStyle}>
       <header className="constellation-layout-simple-header">
         <div>
           <p>{parentMapName || (map.scope === 'discipline' ? 'Sky' : 'Star Cluster')}</p>
@@ -1103,8 +1126,8 @@ function ConstellationLayoutEditor({
                     transform={bakedBoundary && guideBounds ? bakedBoundaryTransform(bakedBoundary, guideBounds) : undefined}
                     vectorEffect="non-scaling-stroke"
                   />
-                  <text className="constellation-layout-topic-eyebrow" x={Math.min(...points.map(point => point.x)) + 12} y={Math.min(...points.map(point => point.y)) - 94}>TOPIC · LEVEL {group.map.level || 1}</text>
-                  <text className="constellation-layout-topic-title" x={Math.min(...points.map(point => point.x)) + 12} y={Math.min(...points.map(point => point.y)) - 66}>{group.map.name}</text>
+                  <text className="constellation-layout-topic-eyebrow" x={guideBounds ? guideBounds.x + 12 : Math.min(...points.map(point => point.x)) + 12} y={guideBounds ? guideBounds.y - 22 : Math.min(...points.map(point => point.y)) - 94}>TOPIC · LEVEL {group.map.level || 1}</text>
+                  <text className="constellation-layout-topic-title" x={guideBounds ? guideBounds.x + 12 : Math.min(...points.map(point => point.x)) + 12} y={guideBounds ? guideBounds.y + 4 : Math.min(...points.map(point => point.y)) - 66}>{group.map.name}</text>
                   <g className="constellation-lines constellation-layout-topic-lines" aria-hidden="true">
                     {topicSkills.flatMap(source => (source.connections || []).flatMap(connection => {
                       const target = topicSkills.find(skill => skill._id === connection.targetSkillId);
@@ -1113,7 +1136,8 @@ function ConstellationLayoutEditor({
                       // An SVG guide is a hard boundary in the Editor as well
                       // as in the Player. Do not draw a deceptive fallback
                       // through transparent artwork when no valid route exists.
-                      if (group.map.visualTheme?.backgroundAssetUrl && !route) return [];
+                      if (group.map.visualTheme?.backgroundAssetUrl && !route && !hasBakedGuideSpine(group.map.visualTheme.backgroundAssetUrl)) return [];
+                      if (hasBakedGuideSpine(group.map.visualTheme?.backgroundAssetUrl)) return [];
                       return <path key={`${source._id}-${target._id}`} d={route || editorConnectionPath(source.constellationPosition, target.constellationPosition)} markerEnd={`url(#constellation-editor-${connection.connectionType === 'special' ? 'special-arrow' : 'arrow'}-${map._id})`} vectorEffect="non-scaling-stroke" />;
                     }))}
                   </g>

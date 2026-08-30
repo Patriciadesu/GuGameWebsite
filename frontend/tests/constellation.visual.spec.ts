@@ -1869,7 +1869,9 @@ test('curated Game Art and System guide markers and route spines remain on visib
         expectedCount,
         markerCount: markers.length,
         opacity: markers.map(opacityAt),
-        routeSpineCount: svgDocument.querySelectorAll('g[data-guide-route-spine="curated"] path').length
+        routeSpineCount: svgDocument.querySelectorAll('g[data-guide-route-spine="curated"] path').length,
+        palette: svgDocument.querySelector('defs[data-guide-palette]')?.getAttribute('data-guide-palette'),
+        gradientCount: svgDocument.querySelectorAll('defs linearGradient').length
       };
     }));
   });
@@ -1877,6 +1879,8 @@ test('curated Game Art and System guide markers and route spines remain on visib
     expect(guide.markerCount, guide.assetUrl).toBe(guide.expectedCount);
     if (guide.expectedCount) expect(Math.min(...guide.opacity), guide.assetUrl).toBeGreaterThanOrEqual(100);
     expect(guide.routeSpineCount, guide.assetUrl).toBe(guide.expectedCount > 1 ? 1 : 0);
+    expect(guide.palette, guide.assetUrl).toBe('curated');
+    expect(guide.gradientCount, guide.assetUrl).toBeGreaterThanOrEqual(1);
   }
 });
 

@@ -1242,6 +1242,20 @@
   stroke-width: 10px;
 }
 
+/* System is a dense course board, not a loose scattering of giant labels.
+   Keep the hierarchy visible while reserving the artwork as the main focus. */
+.is-packed-topic-board .discipline-topic-boundary__eyebrow {
+  font-size: 14px;
+  letter-spacing: .11em;
+  stroke-width: 6px;
+}
+.is-packed-topic-board .discipline-topic-boundary__title {
+  font-family: "Noto Sans Thai", sans-serif;
+  font-size: 24px;
+  font-weight: 800;
+  stroke-width: 8px;
+}
+
 .discipline-topic-quest-layer .constellation-node-label {
   font-size: 22px;
   stroke: var(--constellation-bg);
@@ -1277,6 +1291,7 @@
 
 .discipline-topic-quest-layer .constellation-lines path { stroke-width: 2.5; }
 .discipline-topic-quest-layer .constellation-node-star { filter: drop-shadow(0 2px 5px color-mix(in srgb, var(--constellation-text) 20%, transparent)); }
+.discipline-topic-quest-layer .constellation-map-svg-guide { opacity: 0.56; }
 .constellation-svg-sequence {
   fill: var(--constellation-text);
   font: 800 11px/1 "Noto Sans Thai", sans-serif;

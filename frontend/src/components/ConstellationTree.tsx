@@ -108,7 +108,8 @@ const guideBoundaryPath = (bounds: NonNullable<MapDetail['svgGuideBounds']>) => 
 const placeTopicGroupInDiscipline = (
   group: ConstellationTopicGroup,
   discipline: ConstellationMap,
-  anchor: Point
+  anchor: Point,
+  options: { maxArtworkWidth?: number; maxArtworkHeight?: number; maxScale?: number } = {}
 ): MapDetail => {
   const sourcePoints = group.skills.map((skill, index) =>
     pointForSkill(skill, index, group.skills.length, group.map)
@@ -119,8 +120,8 @@ const placeTopicGroupInDiscipline = (
   const sourceWidth = Math.max(1, group.map.viewport.width);
   const sourceHeight = Math.max(1, group.map.viewport.height);
   const scale = sourcePoints.length === 1
-    ? 1
-    : Math.min(0.46, 560 / sourceWidth, 400 / sourceHeight);
+    ? Math.min(options.maxScale ?? 1, (options.maxArtworkWidth || sourceWidth) / sourceWidth, (options.maxArtworkHeight || sourceHeight) / sourceHeight)
+    : Math.min(options.maxScale ?? 0.46, (options.maxArtworkWidth || 560) / sourceWidth, (options.maxArtworkHeight || 400) / sourceHeight);
   const center = { x: sourceWidth / 2, y: sourceHeight / 2 };
   const rawPoints = sourcePoints.map(point => ({
     x: anchor.x + (point.x - center.x) * scale,
@@ -182,6 +183,12 @@ const fallbackTheme = {
   bossColor: '#b42335',
   capstoneColor: '#6941c6'
 };
+
+// GuGame's curated guide files include the approved visual route spine.  Their
+// geometry is already baked and does not need a fresh bitmap/BFS pass every
+// time a dense Discipline board opens.  Legacy/uploads continue to use the
+// route solver below.
+const hasBakedGuideSpine = (assetUrl?: string) => Boolean(assetUrl?.match(/^\/gugame\/constellation-guides\/(game-art|system)-/));
 
 type ConstellationHistoryState =
   | { view: 'overview' }
@@ -352,14 +359,40 @@ function ConstellationTree({
   activeTheme.lockedColor = readableLockedColor(activeTheme.backgroundColor, activeTheme.lockedColor);
   const unlockedSet = useMemo(() => new Set(unlockedSkillIds), [unlockedSkillIds]);
   const pendingSet = useMemo(() => new Set(pendingSkillIds), [pendingSkillIds]);
-  const topicClusters = (selectedDiscipline?.topicGroups || [])
+  const visibleTopicGroups = (selectedDiscipline?.topicGroups || [])
     .filter(group => group.skills.length > 0)
-    .map(group => {
+    .sort((left, right) => left.map.displayOrder - right.map.displayOrder || left.map.name.localeCompare(right.map.name));
+  // A dense discipline cannot preserve every old gateway coordinate: eleven
+  // full-sized silhouettes were being stacked on top of one another in System.
+  // Give dense skies a deliberate course-board grid while retaining the
+  // gateway-driven freeform placement for spacious skies such as Game Art.
+  const usePackedTopicBoard = Boolean(
+    selectedDiscipline &&
+    visibleTopicGroups.length >= 8 &&
+    selectedDiscipline.map.viewport.width <= 1800
+  );
+  const topicClusters = visibleTopicGroups
+    .map((group, groupIndex) => {
       const gatewayIndex = selectedDiscipline!.skills.findIndex(skill => skill._id === group.gateway?._id);
-      const anchor = group.gateway
+      const inheritedAnchor = group.gateway
         ? pointForSkill(group.gateway, Math.max(0, gatewayIndex), selectedDiscipline!.skills.length, selectedDiscipline!.map)
         : { x: selectedDiscipline!.map.viewport.width / 2, y: selectedDiscipline!.map.viewport.height / 2 };
-      return { group, detail: placeTopicGroupInDiscipline(group, selectedDiscipline!.map, anchor) };
+      const columns = 3;
+      const rows = Math.ceil(visibleTopicGroups.length / columns);
+      const column = groupIndex % columns;
+      const row = Math.floor(groupIndex / columns);
+      const anchor = usePackedTopicBoard
+        ? {
+          x: (selectedDiscipline!.map.viewport.width / columns) * (column + 0.5),
+          y: 160 + row * ((selectedDiscipline!.map.viewport.height - 270) / Math.max(1, rows - 1 || 1))
+        }
+        : inheritedAnchor;
+      return {
+        group,
+        detail: placeTopicGroupInDiscipline(group, selectedDiscipline!.map, anchor, usePackedTopicBoard
+          ? { maxArtworkWidth: 350, maxArtworkHeight: 180, maxScale: 0.24 }
+          : undefined)
+      };
     });
   const svgRouteKey = [...topicClusters.map(cluster => cluster.detail), ...(topicDetail ? [topicDetail] : [])]
     .map(detail => `${detail.map._id}:${detail.skills.map(skill => `${skill._id}:${skill.constellationPosition?.x || 0}:${skill.constellationPosition?.y || 0}:${(skill.connections || []).map(connection => connection.targetSkillId).join(',')}`).join(';')}`)
@@ -367,7 +400,7 @@ function ConstellationTree({
   useEffect(() => {
     let cancelled = false;
     const details = [...topicClusters.map(cluster => cluster.detail), ...(topicDetail ? [topicDetail] : [])]
-      .filter(detail => detail.map.visualTheme?.backgroundAssetUrl);
+      .filter(detail => detail.map.visualTheme?.backgroundAssetUrl && !hasBakedGuideSpine(detail.map.visualTheme.backgroundAssetUrl));
     if (details.length === 0) {
       setSvgGuideRoutes({});
       return () => { cancelled = true; };
@@ -720,7 +753,7 @@ function ConstellationTree({
           width={detail.svgGuideBounds?.width || detail.map.viewport.width}
           height={detail.svgGuideBounds?.height || detail.map.viewport.height}
           preserveAspectRatio="xMidYMid meet"
-          opacity="0.72"
+          opacity="0.56"
           pointerEvents="none"
         />}
         <g className="constellation-lines">
@@ -932,7 +965,7 @@ function ConstellationTree({
     : { x: 0, y: 0 };
   return (
     <section
-      className={`constellation-shell constellation-focus ${directMap ? 'is-main-quest-rail' : 'is-discipline-board'}`}
+      className={`constellation-shell constellation-focus ${directMap ? 'is-main-quest-rail' : 'is-discipline-board'} ${usePackedTopicBoard ? 'is-packed-topic-board' : ''}`}
       style={{
         '--constellation-bg': activeTheme.backgroundColor,
         '--constellation-surface': activeTheme.surfaceColor,
@@ -1125,10 +1158,15 @@ function ConstellationTree({
             ? (bakedBoundary?.path || guideBoundaryPath(detail.svgGuideBounds))
             : boundaryPathFor(points);
           const levelLocked = (group.map.level || 1) > userLevel;
-          const labelPoint = {
-            x: Math.min(...points.map(point => point.x)) + 16,
-            y: Math.min(...points.map(point => point.y)) - 104
-          };
+          const labelPoint = detail.svgGuideBounds
+            ? {
+              x: detail.svgGuideBounds.x + 12,
+              y: detail.svgGuideBounds.y - 22
+            }
+            : {
+              x: Math.min(...points.map(point => point.x)) + 16,
+              y: Math.min(...points.map(point => point.y)) - 104
+            };
           return <g
             className={`discipline-topic-cluster ${levelLocked ? 'is-level-locked' : ''}`}
             key={group.map._id}

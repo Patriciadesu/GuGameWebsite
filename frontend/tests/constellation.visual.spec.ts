@@ -458,6 +458,7 @@ test('player constellation states render without overflow', async ({ page }) => 
   const svgGuide = clusterMap.locator('.constellation-map-svg-guide');
   await expect(svgGuide).toHaveCount(1);
   await expect(modelingCluster.locator('.discipline-topic-boundary')).toHaveAttribute('d', /^M /);
+  await expect(modelingCluster.locator('.discipline-topic-boundary.is-svg-outline')).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'View Path' })).toHaveCount(0);
   await page.screenshot({ path: '/tmp/constellation-visual/player-discipline-board-without-lens.png', fullPage: true });
 

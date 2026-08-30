@@ -977,7 +977,7 @@ function ConstellationLayoutEditor({
                     preserveAspectRatio="xMidYMid meet"
                     pointerEvents="none"
                   />}
-                  <path className="constellation-layout-topic-boundary" d={embeddedGuideOutlines[group.map._id] || boundary} vectorEffect="non-scaling-stroke" />
+                  <path className={`constellation-layout-topic-boundary ${embeddedGuideOutlines[group.map._id] ? 'is-svg-outline' : ''}`} d={embeddedGuideOutlines[group.map._id] || boundary} vectorEffect="non-scaling-stroke" />
                   <text className="constellation-layout-topic-eyebrow" x={Math.min(...points.map(point => point.x)) + 12} y={Math.min(...points.map(point => point.y)) - 94}>TOPIC · LEVEL {group.map.level || 1}</text>
                   <text className="constellation-layout-topic-title" x={Math.min(...points.map(point => point.x)) + 12} y={Math.min(...points.map(point => point.y)) - 66}>{group.map.name}</text>
                   <g className="constellation-lines constellation-layout-topic-lines" aria-hidden="true">

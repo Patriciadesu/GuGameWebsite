@@ -116,7 +116,7 @@ export const buildSvgGuideRoutes = async (
 export const buildSvgGuideOutline = async (assetUrl: string, bounds: SvgGuideBounds) => {
   const image = await loadImage(assetUrl);
   // 120px keeps the silhouette recognizable without producing a jagged,
-  // overly-detailed wrapper path.
+  // overly-detailed wrapper path. The mask is dilated below for 30px padding.
   const size = 120;
   const canvas = document.createElement('canvas');
   canvas.width = size;
@@ -131,7 +131,7 @@ export const buildSvgGuideOutline = async (assetUrl: string, bounds: SvgGuideBou
   const imageX = bounds.x + (bounds.width - imageWidth) / 2;
   const imageY = bounds.y + (bounds.height - imageHeight) / 2;
   const baseWalkable = (x: number, y: number) => x >= 0 && x < size && y >= 0 && y < size && alpha[(y * size + x) * 4 + 3] >= 40;
-  const paddingCells = Math.max(1, Math.ceil(5 / Math.max(1, imageWidth / size)));
+  const paddingCells = Math.max(1, Math.ceil(30 / Math.max(1, imageWidth / size)));
   const walkable = (x: number, y: number) => {
     for (let offsetY = -paddingCells; offsetY <= paddingCells; offsetY += 1) {
       for (let offsetX = -paddingCells; offsetX <= paddingCells; offsetX += 1) {

@@ -1264,6 +1264,17 @@
   display: none;
 }
 
+.discipline-topic-boundary {
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.discipline-topic-boundary.is-svg-outline {
+  stroke-dasharray: none !important;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
 .discipline-topic-quest-layer .constellation-lines path { stroke-width: 2.5; }
 .discipline-topic-quest-layer .constellation-node-star { filter: drop-shadow(0 2px 5px color-mix(in srgb, var(--constellation-text) 20%, transparent)); }
 .discipline-topic-cluster.is-level-locked .discipline-topic-boundary { stroke: var(--constellation-locked); filter: none; }

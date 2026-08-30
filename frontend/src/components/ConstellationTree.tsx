@@ -1117,7 +1117,7 @@ function ConstellationTree({
             role="listitem"
             aria-label={`${group.map.name}, Level ${group.map.level || 1}, ${detail.skills.length} ${detail.skills.length === 1 ? 'quest' : 'quests'}`}
           >
-            <path className="discipline-topic-boundary" d={boundaryPath} vectorEffect="non-scaling-stroke" />
+            <path className={`discipline-topic-boundary ${svgGuideOutlines[detail.map._id] ? 'is-svg-outline' : ''}`} d={boundaryPath} vectorEffect="non-scaling-stroke" />
             <text className="discipline-topic-boundary__eyebrow" x={labelPoint.x} y={labelPoint.y}>TOPIC · LEVEL {group.map.level || 1}</text>
             <text className="discipline-topic-boundary__title" x={labelPoint.x} y={labelPoint.y + 31}>{group.map.name}</text>
             {renderMapLayer(detail, {

@@ -66,6 +66,20 @@ interface SelectionBox {
 const NODE_MARGIN = 46;
 const SNAP_SIZE = 20;
 
+const astralFantasyTheme = {
+  backgroundColor: '#080b1d',
+  surfaceColor: '#111936',
+  textColor: '#f7f0df',
+  mutedTextColor: '#b3c0db',
+  borderColor: '#3d5078',
+  lineColor: '#8da2c8',
+  unlockedColor: '#53d9ff',
+  availableColor: '#ffc65b',
+  lockedColor: '#7d8aa5',
+  bossColor: '#ff6b86',
+  capstoneColor: '#b89cff'
+};
+
 // These course-guide files already include an authored route spine. Re-running
 // raster pathfinding for every embedded cluster turns a dense Sky into an
 // expensive render loop and duplicates the visual route.
@@ -787,6 +801,7 @@ function ConstellationLayoutEditor({
   };
 
   const theme = map.visualTheme;
+  const isAstralFantasy = ['Game Art', 'System'].includes(map.name) || ['Game Art', 'System'].includes(parentMapName || '');
   const selectedTopicGroup = embeddedSelection?.topicMapId
     ? topicGroups?.find(group => group.map._id === embeddedSelection.topicMapId)
     : undefined;
@@ -869,18 +884,19 @@ function ConstellationLayoutEditor({
     const nextPositions = autoStyleConstellation(skills, [...selectedSkillIds], positions, map);
     Object.entries(nextPositions).forEach(([skillId, position]) => onPositionChange(skillId, position));
   };
+  const resolvedTheme = isAstralFantasy ? astralFantasyTheme : theme;
   const themeStyle = {
-    '--constellation-bg': theme?.backgroundColor || '#f7f9fc',
-    '--constellation-surface': theme?.surfaceColor || '#ffffff',
-    '--constellation-text': theme?.textColor || '#182033',
-    '--constellation-muted': theme?.mutedTextColor || '#667085',
-    '--constellation-border': theme?.borderColor || '#d9e0ea',
-    '--constellation-line': theme?.lineColor || '#8b97aa',
-    '--constellation-unlocked': theme?.unlockedColor || '#1677ff',
-    '--constellation-available': theme?.availableColor || '#b77900',
-    '--constellation-locked': theme?.lockedColor || '#a4adbb',
-    '--constellation-boss': theme?.bossColor || '#d63c45',
-    '--constellation-capstone': theme?.capstoneColor || '#6d4aff'
+    '--constellation-bg': resolvedTheme?.backgroundColor || '#f7f9fc',
+    '--constellation-surface': resolvedTheme?.surfaceColor || '#ffffff',
+    '--constellation-text': resolvedTheme?.textColor || '#182033',
+    '--constellation-muted': resolvedTheme?.mutedTextColor || '#667085',
+    '--constellation-border': resolvedTheme?.borderColor || '#d9e0ea',
+    '--constellation-line': resolvedTheme?.lineColor || '#8b97aa',
+    '--constellation-unlocked': resolvedTheme?.unlockedColor || '#1677ff',
+    '--constellation-available': resolvedTheme?.availableColor || '#b77900',
+    '--constellation-locked': resolvedTheme?.lockedColor || '#a4adbb',
+    '--constellation-boss': resolvedTheme?.bossColor || '#d63c45',
+    '--constellation-capstone': resolvedTheme?.capstoneColor || '#6d4aff'
   } as CSSProperties;
 
   const startEmbeddedDrag = (
@@ -964,7 +980,7 @@ function ConstellationLayoutEditor({
   };
 
   return (
-    <div className={`constellation-layout-editor constellation-shell constellation-focus ${isEmbeddedDiscipline ? 'is-embedded-discipline' : ''} ${embeddedTopicGroups.some(group => group.usePackedTopicBoard) ? 'is-packed-topic-board' : ''}`} style={themeStyle}>
+    <div className={`constellation-layout-editor constellation-shell constellation-focus ${isEmbeddedDiscipline ? 'is-embedded-discipline' : ''} ${embeddedTopicGroups.some(group => group.usePackedTopicBoard) ? 'is-packed-topic-board' : ''} ${isAstralFantasy ? 'is-astral-fantasy' : ''}`} style={themeStyle}>
       <header className="constellation-layout-simple-header">
         <div>
           <p>{parentMapName || (map.scope === 'discipline' ? 'Sky' : 'Star Cluster')}</p>

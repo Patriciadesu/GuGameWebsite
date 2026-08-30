@@ -247,6 +247,27 @@
   font: 800 24px/1 "Noto Sans Thai", sans-serif;
   stroke-width: 8px;
 }
+.constellation-layout-editor.is-astral-fantasy {
+  background-color: #080b1d;
+  background-image:
+    radial-gradient(circle at 16% 10%, rgb(71 115 184 / 24%), transparent 28%),
+    radial-gradient(circle at 86% 86%, rgb(143 83 194 / 19%), transparent 31%);
+  border-bottom-color: rgb(255 211 119 / 30%);
+}
+.constellation-layout-editor.is-astral-fantasy .constellation-layout-simple-header {
+  background: linear-gradient(105deg, rgb(10 15 39 / 98%), rgb(21 27 60 / 97%));
+  border-bottom-color: rgb(255 211 119 / 30%);
+}
+.constellation-layout-editor.is-astral-fantasy .constellation-layout-simple-header p,
+.constellation-layout-editor.is-astral-fantasy .constellation-layout-simple-header h2 { color: var(--constellation-text); }
+.constellation-layout-editor.is-astral-fantasy .constellation-layout-topic-background { opacity: .78; }
+.constellation-layout-editor.is-astral-fantasy .constellation-layout-topic-boundary {
+  fill: rgb(103 153 255 / 5%);
+  stroke: rgb(111 214 255 / 76%);
+  filter: drop-shadow(0 0 12px rgb(73 199 255 / 28%));
+}
+.constellation-layout-editor.is-astral-fantasy .constellation-layout-topic-eyebrow { fill: #71ddff; stroke: #080b1d; }
+.constellation-layout-editor.is-astral-fantasy .constellation-layout-topic-title { fill: #fff1cf; stroke: #080b1d; }
 .constellation-layout-topic-lines path { stroke-width: 2.5; }
 .constellation-layout-embedded-topic.is-svg-guide .constellation-node-label,
 .constellation-layout-embedded-topic.is-svg-guide .constellation-node-kicker { display: none; }

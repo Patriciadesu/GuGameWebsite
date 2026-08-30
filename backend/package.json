@@ -1,6 +1,6 @@
 {
   "name": "gugame-backend",
-  "version": "1.0.25",
+  "version": "1.0.26",
   "description": "Backend API for GuGame",
   "main": "dist/server.js",
   "scripts": {
@@ -15,6 +15,7 @@
     "migrate:main-quest-levels": "tsx scripts/migrate-main-quest-levels.ts --apply",
     "migrate:star-master": "tsx scripts/migrate-star-master-catalog.ts",
     "migrate:sound-v101": "tsx scripts/consolidate-sound-quests-v101.ts",
+    "migrate:animation-constellation": "tsx scripts/group-animation-constellation.ts",
     "test:load:seed": "tsx scripts/seed-load-test.ts",
     "test:load": "tsx scripts/load-test.ts",
     "start": "node dist/server.js"

@@ -184,6 +184,20 @@ const fallbackTheme = {
   capstoneColor: '#6941c6'
 };
 
+const astralFantasyTheme = {
+  backgroundColor: '#080b1d',
+  surfaceColor: '#111936',
+  textColor: '#f7f0df',
+  mutedTextColor: '#b3c0db',
+  borderColor: '#3d5078',
+  lineColor: '#8da2c8',
+  unlockedColor: '#53d9ff',
+  availableColor: '#ffc65b',
+  lockedColor: '#7d8aa5',
+  bossColor: '#ff6b86',
+  capstoneColor: '#b89cff'
+};
+
 // GuGame's curated guide files include the approved visual route spine.  Their
 // geometry is already baked and does not need a fresh bitmap/BFS pass every
 // time a dense Discipline board opens.  Legacy/uploads continue to use the
@@ -355,7 +369,13 @@ function ConstellationTree({
     ? disciplineDetails[selectedDisciplineId]
     : null;
   const activeMap = selectedDiscipline?.map;
-  const activeTheme = { ...fallbackTheme };
+  const isFantasyConstellation = Boolean(
+    selectedDiscipline && ['Game Art', 'System'].includes(selectedDiscipline.map.name)
+  );
+  const activeTheme = {
+    ...fallbackTheme,
+    ...(isFantasyConstellation ? astralFantasyTheme : (topicDetail?.map.visualTheme || activeMap?.visualTheme || {}))
+  };
   activeTheme.lockedColor = readableLockedColor(activeTheme.backgroundColor, activeTheme.lockedColor);
   const unlockedSet = useMemo(() => new Set(unlockedSkillIds), [unlockedSkillIds]);
   const pendingSet = useMemo(() => new Set(pendingSkillIds), [pendingSkillIds]);
@@ -953,19 +973,9 @@ function ConstellationTree({
   const mapWidth = canvasMap?.viewport.width || 1600;
   const mapHeight = canvasMap?.viewport.height || 900;
 
-  const activeGateway = topicGateway;
-  const gatewayIndex = activeGateway
-    ? selectedDiscipline.skills.findIndex(skill => skill._id === activeGateway._id)
-    : -1;
-  const gatewayPoint = activeGateway && activeMap
-    ? pointForSkill(activeGateway, Math.max(0, gatewayIndex), selectedDiscipline.skills.length, activeMap)
-    : null;
-  const disciplineContextOffset = gatewayPoint && topicDetail
-    ? { x: mapWidth / 2 - gatewayPoint.x, y: mapHeight / 2 - gatewayPoint.y }
-    : { x: 0, y: 0 };
   return (
     <section
-      className={`constellation-shell constellation-focus ${directMap ? 'is-main-quest-rail' : 'is-discipline-board'} ${usePackedTopicBoard ? 'is-packed-topic-board' : ''}`}
+      className={`constellation-shell constellation-focus ${directMap ? 'is-main-quest-rail' : 'is-discipline-board'} ${usePackedTopicBoard ? 'is-packed-topic-board' : ''} ${isFantasyConstellation ? 'is-astral-fantasy' : ''}`}
       style={{
         '--constellation-bg': activeTheme.backgroundColor,
         '--constellation-surface': activeTheme.surfaceColor,
@@ -995,8 +1005,8 @@ function ConstellationTree({
           <ChevronLeft aria-hidden="true" />
         </button>}
         <div>
-          <p>{directMap ? `Your level-up path · Current Level ${userLevel}` : 'Discipline · All quests'}</p>
-          <h2>{activeMap?.name}</h2>
+          <p>{directMap ? `Your level-up path · Current Level ${userLevel}` : topicDetail ? `Topic · Level ${topicDetail.map.level || 1}` : 'Discipline · All quests'}</p>
+          <h2>{topicDetail?.map.name || activeMap?.name}</h2>
         </div>
         {directMap && <div className="main-quest-level-progress" aria-label={`Current Level ${userLevel}; next Level ${userLevel + 1}`}>
           <span>CURRENT</span>
@@ -1069,10 +1079,8 @@ function ConstellationTree({
             className={`constellation-camera ${isDirectManipulating ? 'is-direct-manipulation' : ''}`}
             transform={`translate(${camera.x} ${camera.y}) scale(${camera.zoom})`}
           >
-            {selectedDiscipline && renderMapLayer(mainQuestDetail || selectedDiscipline, {
+            {selectedDiscipline && !topicDetail && renderMapLayer(mainQuestDetail || selectedDiscipline, {
               className: 'constellation-discipline-layer',
-              offsetX: disciplineContextOffset.x,
-              offsetY: disciplineContextOffset.y,
               gatewayOnly: !directMap,
               straightLineFit: directMap,
               focusedGatewayId: topicGateway?._id,

@@ -580,7 +580,28 @@ function ConstellationAdmin({
 
   const switchMap = (mapId: string) => {
     if (mapId === selectedMapId) return;
+    // A Topic draft belongs to the destination coordinate space and must
+    // follow the user into that Topic. Only a dirty layout on the map being
+    // left needs a discard decision.
     if (dirtySkillIds.size > 0 && !confirm('Discard unsaved star positions?')) return;
+    // Prime the destination coordinate space before changing the map.  Waiting
+    // for the post-render effect briefly handed the Topic editor the previous
+    // Sky's draft positions, which made a correct constellation appear to
+    // scramble immediately after opening it.
+    const destination = maps.find(map => map._id === mapId);
+    const destinationSkills = skills
+      .filter(skill => skill.constellationMapId === mapId)
+      .sort((left, right) => left.position - right.position);
+    if (destination) {
+      setDraftPositions(Object.fromEntries(destinationSkills.map((skill, index) => [
+        skill._id,
+        draftTopicPositions[skill._id] || skill.constellationPosition || {
+          x: 260 + (index % 4) * 300,
+          y: 220 + Math.floor(index / 4) * 210
+        }
+      ])));
+      layoutMapId.current = mapId;
+    }
     setSelectedMapId(mapId);
     setSelectedSkillId('');
     setSelectedSkillIds([]);

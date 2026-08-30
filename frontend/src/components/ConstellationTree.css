@@ -1336,6 +1336,47 @@
   outline-offset: 2px;
 }
 
+/* The curated Game Art/System skies are an astral atlas: deep space, gilded
+   frames, and luminous artwork rather than a pale admin dashboard. */
+.constellation-shell.is-astral-fantasy {
+  background-color: #080b1d;
+  background-image:
+    radial-gradient(circle at 16% 12%, rgb(71 115 184 / 23%), transparent 29%),
+    radial-gradient(circle at 81% 82%, rgb(143 83 194 / 18%), transparent 32%),
+    radial-gradient(circle at 50% 50%, rgb(255 205 111 / 7%), transparent 55%);
+  border-color: #57658b;
+  box-shadow: inset 0 0 0 1px rgb(255 216 134 / 10%), 0 22px 54px rgb(1 4 15 / 32%);
+}
+.is-astral-fantasy .constellation-focus-header {
+  background: linear-gradient(105deg, rgb(10 15 39 / 97%), rgb(21 27 60 / 96%));
+  border-bottom-color: rgb(255 211 119 / 35%);
+}
+.is-astral-fantasy .constellation-focus-header h2 { color: #fff1cb; letter-spacing: .025em; }
+.is-astral-fantasy .constellation-focus-header p,
+.is-astral-fantasy .constellation-legend { color: #b9c7e7; }
+.is-astral-fantasy .constellation-back,
+.is-astral-fantasy .constellation-camera-controls button {
+  color: #ffe2a1;
+  background: rgb(19 28 64 / 88%);
+  border-color: rgb(255 211 119 / 35%);
+}
+.is-astral-fantasy .constellation-back:hover,
+.is-astral-fantasy .constellation-camera-controls button:hover {
+  color: #fff8e8;
+  background: rgb(65 47 93 / 94%);
+  border-color: #ffd377;
+}
+.is-astral-fantasy .discipline-topic-boundary {
+  fill: rgb(103 153 255 / 5%);
+  stroke: rgb(111 214 255 / 76%);
+  filter: drop-shadow(0 0 12px rgb(73 199 255 / 28%));
+}
+.is-astral-fantasy .discipline-topic-boundary__eyebrow { fill: #71ddff; stroke: #080b1d; }
+.is-astral-fantasy .discipline-topic-boundary__title { fill: #fff1cf; stroke: #080b1d; }
+.is-astral-fantasy .discipline-topic-quest-layer .constellation-map-svg-guide { opacity: .78; }
+.is-astral-fantasy .discipline-topic-quest-layer .constellation-node-label,
+.is-astral-fantasy .constellation-topic-layer .constellation-node-label { stroke: #080b1d; }
+
 @media (min-width: 769px) {
   .skill-constellation-panel .constellation-overview-copy { z-index: 3; }
 }

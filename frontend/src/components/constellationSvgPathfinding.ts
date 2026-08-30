@@ -115,9 +115,9 @@ export const buildSvgGuideRoutes = async (
 // unique guide into the same generic polygon.
 export const buildSvgGuideOutline = async (assetUrl: string, bounds: SvgGuideBounds) => {
   const image = await loadImage(assetUrl);
-  // 180px is enough to preserve the silhouette while keeping the SVG path
-  // light enough for an editor that may contain several topic groups.
-  const size = 180;
+  // 120px keeps the silhouette recognizable without producing a jagged,
+  // overly-detailed wrapper path.
+  const size = 120;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
@@ -125,12 +125,21 @@ export const buildSvgGuideOutline = async (assetUrl: string, bounds: SvgGuideBou
   if (!context) return '';
   context.drawImage(image, 0, 0, size, size);
   const alpha = context.getImageData(0, 0, size, size).data;
-  const walkable = (x: number, y: number) => x >= 0 && x < size && y >= 0 && y < size && alpha[(y * size + x) * 4 + 3] >= 40;
   const imageScale = Math.min(bounds.width / image.width, bounds.height / image.height);
   const imageWidth = image.width * imageScale;
   const imageHeight = image.height * imageScale;
   const imageX = bounds.x + (bounds.width - imageWidth) / 2;
   const imageY = bounds.y + (bounds.height - imageHeight) / 2;
+  const baseWalkable = (x: number, y: number) => x >= 0 && x < size && y >= 0 && y < size && alpha[(y * size + x) * 4 + 3] >= 40;
+  const paddingCells = Math.max(1, Math.ceil(5 / Math.max(1, imageWidth / size)));
+  const walkable = (x: number, y: number) => {
+    for (let offsetY = -paddingCells; offsetY <= paddingCells; offsetY += 1) {
+      for (let offsetX = -paddingCells; offsetX <= paddingCells; offsetX += 1) {
+        if (offsetX * offsetX + offsetY * offsetY <= paddingCells * paddingCells && baseWalkable(x + offsetX, y + offsetY)) return true;
+      }
+    }
+    return false;
+  };
   const toWorldX = (x: number) => imageX + x / size * imageWidth;
   const toWorldY = (y: number) => imageY + y / size * imageHeight;
   const segments: string[] = [];

@@ -1,6 +1,6 @@
 {
   "name": "gugame-backend",
-  "version": "1.0.40",
+  "version": "1.0.41",
   "description": "Backend API for GuGame",
   "main": "dist/server.js",
   "scripts": {
@@ -19,6 +19,7 @@
     "migrate:baked-boundaries": "tsx scripts/apply-baked-constellation-boundaries.ts",
     "migrate:lighting-to-map-scene": "tsx scripts/move-lighting-topics-to-map-scene.ts",
     "migrate:lighting-guides": "tsx scripts/apply-lighting-constellation-guides.ts",
+    "migrate:game-art-system-guides": "tsx scripts/apply-game-art-system-constellation-redesign.ts",
     "migrate:animation-constellation": "tsx scripts/group-animation-constellation.ts",
     "test:load:seed": "tsx scripts/seed-load-test.ts",
     "test:load": "tsx scripts/load-test.ts",

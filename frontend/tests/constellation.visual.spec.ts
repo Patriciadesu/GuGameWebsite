@@ -1812,6 +1812,74 @@ test('curated Map & Scene SVG markers remain on visible artwork', async ({ page 
   }
 });
 
+test('curated Game Art and System guide markers and route spines remain on visible artwork', async ({ page }) => {
+  await installApiFixtures(page);
+  await page.goto('mainmenu');
+  const review = await page.evaluate(async () => {
+    const guides = [
+      ['/gugame/constellation-guides/game-art-blender.svg', 5],
+      ['/gugame/constellation-guides/game-art-shader-graph.svg', 2],
+      ['/gugame/constellation-guides/game-art-ui.svg', 6],
+      ['/gugame/constellation-guides/game-art-animation.svg', 4],
+      ['/gugame/constellation-guides/game-art-basic-particle.svg', 12],
+      ['/gugame/constellation-guides/game-art-advance-particle.svg', 11],
+      ['/gugame/constellation-guides/game-art-advance-blender.svg', 0],
+      ['/gugame/constellation-guides/game-art-sound.svg', 4],
+      ['/gugame/constellation-guides/game-art-light.svg', 0],
+      ['/gugame/constellation-guides/game-art-godray.svg', 0],
+      ['/gugame/constellation-guides/system-csharp-nard.svg', 3],
+      ['/gugame/constellation-guides/system-csharp-dev-l1.svg', 5],
+      ['/gugame/constellation-guides/system-dev-l2.svg', 4],
+      ['/gugame/constellation-guides/system-csharp-nerd-l2.svg', 1],
+      ['/gugame/constellation-guides/system-csharp-unity-l2.svg', 1],
+      ['/gugame/constellation-guides/system-csharp-unity-l3.svg', 1],
+      ['/gugame/constellation-guides/system-csharp-nerd-l3.svg', 1],
+      ['/gugame/constellation-guides/system-csharp-unity-l4.svg', 1],
+      ['/gugame/constellation-guides/system-dev-l3.svg', 7],
+      ['/gugame/constellation-guides/system-dev-l4.svg', 5],
+      ['/gugame/constellation-guides/system-dev-l5.svg', 2]
+    ] as const;
+    return Promise.all(guides.map(async ([assetUrl, expectedCount]) => {
+      const source = await fetch(assetUrl).then(response => response.text());
+      const svgDocument = new DOMParser().parseFromString(source, 'image/svg+xml');
+      const viewBox = (svgDocument.documentElement.getAttribute('viewBox') || '0 0 1 1').split(/[ ,]+/).map(Number);
+      const markers = [...svgDocument.querySelectorAll('g[data-star-markers] [data-star]')].map(marker => ({
+        x: Number(marker.getAttribute('cx')),
+        y: Number(marker.getAttribute('cy'))
+      }));
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const candidate = new Image();
+        candidate.onload = () => resolve(candidate);
+        candidate.onerror = reject;
+        candidate.src = URL.createObjectURL(new Blob([source], { type: 'image/svg+xml' }));
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 512;
+      const context = canvas.getContext('2d')!;
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const opacityAt = ({ x, y }: { x: number; y: number }) => context.getImageData(
+        Math.max(0, Math.min(canvas.width - 1, Math.round((x - viewBox[0]) / viewBox[2] * canvas.width))),
+        Math.max(0, Math.min(canvas.height - 1, Math.round((y - viewBox[1]) / viewBox[3] * canvas.height))),
+        1,
+        1
+      ).data[3];
+      return {
+        assetUrl,
+        expectedCount,
+        markerCount: markers.length,
+        opacity: markers.map(opacityAt),
+        routeSpineCount: svgDocument.querySelectorAll('g[data-guide-route-spine="curated"] path').length
+      };
+    }));
+  });
+  for (const guide of review) {
+    expect(guide.markerCount, guide.assetUrl).toBe(guide.expectedCount);
+    if (guide.expectedCount) expect(Math.min(...guide.opacity), guide.assetUrl).toBeGreaterThanOrEqual(100);
+    expect(guide.routeSpineCount, guide.assetUrl).toBe(guide.expectedCount > 1 ? 1 : 0);
+  }
+});
+
 test('embedded SVG auto layout immediately moves Topic stars in the Discipline editor', async ({ page }) => {
   await installApiFixtures(page);
   await page.goto('admin');

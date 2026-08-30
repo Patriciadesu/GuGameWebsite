@@ -110,9 +110,45 @@ export const buildSvgGuideRoutes = async (
   return routes;
 };
 
-// Extract the visible silhouette as small edge segments. Keeping the segments
-// separate preserves concave corners and holes; a convex hull would turn every
-// unique guide into the same generic polygon.
+type OutlinePoint = { x: number; y: number };
+
+const pointKey = (point: OutlinePoint) => `${point.x},${point.y}`;
+
+const smoothContour = (points: OutlinePoint[], toWorldX: (x: number) => number, toWorldY: (y: number) => number, closed: boolean) => {
+  if (points.length < 3) return '';
+  // Collapse long runs of collinear raster edges before creating the curve.
+  const corners = points.filter((point, index) => {
+    const previous = points[(index - 1 + points.length) % points.length];
+    const next = points[(index + 1) % points.length];
+    return (point.x - previous.x) * (next.y - point.y) !== (point.y - previous.y) * (next.x - point.x);
+  });
+  const contour = corners.length >= 3 ? corners : points;
+  const midpoint = (a: OutlinePoint, b: OutlinePoint): OutlinePoint => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  if (!closed) {
+    let path = `M ${toWorldX(contour[0].x)} ${toWorldY(contour[0].y)}`;
+    for (let index = 1; index < contour.length - 1; index += 1) {
+      const point = contour[index];
+      const nextMidpoint = midpoint(point, contour[index + 1]);
+      path += ` Q ${toWorldX(point.x)} ${toWorldY(point.y)} ${toWorldX(nextMidpoint.x)} ${toWorldY(nextMidpoint.y)}`;
+    }
+    const last = contour[contour.length - 1];
+    path += ` L ${toWorldX(last.x)} ${toWorldY(last.y)}`;
+    return path;
+  }
+  const start = midpoint(contour[contour.length - 1], contour[0]);
+  let path = `M ${toWorldX(start.x)} ${toWorldY(start.y)}`;
+  for (let index = 0; index < contour.length; index += 1) {
+    const point = contour[index];
+    const next = contour[(index + 1) % contour.length];
+    const nextMidpoint = midpoint(point, next);
+    path += ` Q ${toWorldX(point.x)} ${toWorldY(point.y)} ${toWorldX(nextMidpoint.x)} ${toWorldY(nextMidpoint.y)}`;
+  }
+  return `${path} Z`;
+};
+
+// Extract connected silhouette loops rather than returning independent edge
+// segments. The old segment output made SVG outlines look broken and prevented
+// SVG strokes from being genuinely smooth, especially after dilation.
 export const buildSvgGuideOutline = async (assetUrl: string, bounds: SvgGuideBounds) => {
   const image = await loadImage(assetUrl);
   // 120px keeps the silhouette recognizable without producing a jagged,
@@ -142,15 +178,35 @@ export const buildSvgGuideOutline = async (assetUrl: string, bounds: SvgGuideBou
   };
   const toWorldX = (x: number) => imageX + x / size * imageWidth;
   const toWorldY = (y: number) => imageY + y / size * imageHeight;
-  const segments: string[] = [];
+  const edges: Array<{ start: OutlinePoint; end: OutlinePoint }> = [];
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
       if (!walkable(x, y)) continue;
-      if (!walkable(x, y - 1)) segments.push(`M ${toWorldX(x)} ${toWorldY(y)} L ${toWorldX(x + 1)} ${toWorldY(y)}`);
-      if (!walkable(x + 1, y)) segments.push(`M ${toWorldX(x + 1)} ${toWorldY(y)} L ${toWorldX(x + 1)} ${toWorldY(y + 1)}`);
-      if (!walkable(x, y + 1)) segments.push(`M ${toWorldX(x + 1)} ${toWorldY(y + 1)} L ${toWorldX(x)} ${toWorldY(y + 1)}`);
-      if (!walkable(x - 1, y)) segments.push(`M ${toWorldX(x)} ${toWorldY(y + 1)} L ${toWorldX(x)} ${toWorldY(y)}`);
+      if (!walkable(x, y - 1)) edges.push({ start: { x, y }, end: { x: x + 1, y } });
+      if (!walkable(x + 1, y)) edges.push({ start: { x: x + 1, y }, end: { x: x + 1, y: y + 1 } });
+      if (!walkable(x, y + 1)) edges.push({ start: { x: x + 1, y: y + 1 }, end: { x, y: y + 1 } });
+      if (!walkable(x - 1, y)) edges.push({ start: { x, y: y + 1 }, end: { x, y } });
     }
   }
-  return segments.join(' ');
+  // A hull over every visible boundary point gives one complete outer contour
+  // even when the raster mask contains diagonal junctions or several nearby
+  // connected components. Unlike a rectangle, it still follows this SVG's
+  // silhouette and is then rounded by smoothContour.
+  const boundaryPoints = edges.flatMap(edge => [edge.start, edge.end])
+    .sort((left, right) => left.x - right.x || left.y - right.y)
+    .filter((point, index, points) => index === 0 || pointKey(point) !== pointKey(points[index - 1]));
+  const cross = (origin: OutlinePoint, a: OutlinePoint, b: OutlinePoint) =>
+    (a.x - origin.x) * (b.y - origin.y) - (a.y - origin.y) * (b.x - origin.x);
+  const lower: OutlinePoint[] = [];
+  boundaryPoints.forEach(point => {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) lower.pop();
+    lower.push(point);
+  });
+  const upper: OutlinePoint[] = [];
+  [...boundaryPoints].reverse().forEach(point => {
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) upper.pop();
+    upper.push(point);
+  });
+  const hull = lower.slice(0, -1).concat(upper.slice(0, -1));
+  return smoothContour(hull, toWorldX, toWorldY, true);
 };

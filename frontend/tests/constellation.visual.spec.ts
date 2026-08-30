@@ -1651,6 +1651,25 @@ test('SVG auto layout samples the colored silhouette and keeps stars on the guid
   await page.screenshot({ path: '/tmp/constellation-visual/admin-blender-svg-auto-layout.png', fullPage: true });
 });
 
+test('embedded SVG auto layout immediately moves Topic stars in the Discipline editor', async ({ page }) => {
+  await installApiFixtures(page);
+  await page.goto('admin');
+  await page.getByRole('button', { name: /Constellation Editor/ }).click();
+  await page.getByLabel('Choose discipline').selectOption({ label: 'Game Art' });
+  const editor = page.getByRole('application', { name: 'Game Art visual layout editor' });
+  const topic = editor.locator('.constellation-layout-embedded-topic').filter({ hasText: '3D Modeling' });
+  const firstStar = topic.locator('[data-skill-id="600000000000000000000001"]');
+  const before = await firstStar.getAttribute('transform');
+  await topic.dispatchEvent('pointerdown', { detail: 1, button: 0, pointerId: 1, clientX: 400, clientY: 400 });
+  await page.locator('.constellation-layout-editor input[type="file"]').setInputFiles({
+    name: 'arm-muscles-silhouette.svg',
+    mimeType: 'image/svg+xml',
+    buffer: Buffer.from(armSilhouetteGuide.split(',')[1], 'base64')
+  });
+  await expect(page.getByText('Unsaved', { exact: true })).toBeVisible();
+  await expect.poll(() => firstStar.getAttribute('transform')).not.toBe(before);
+});
+
 test('admin creates branching connections between topic gateways in a discipline', async ({ page }) => {
   const changes: Array<{ method: string; sourceId: string; targetId: string }> = [];
   await installApiFixtures(page, undefined, undefined, undefined, undefined, (method, sourceId, targetId) => {

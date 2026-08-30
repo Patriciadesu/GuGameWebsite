@@ -204,9 +204,17 @@ function ConstellationAdmin({
       .map(map => ({
         map,
         gateway: mapSkills.find(skill => skill._id === map.gatewaySkillId) || null,
-        skills: skills.filter(skill => skill.constellationMapId === map._id && skill.isActive).sort((a, b) => a.position - b.position)
+        // Feed unsaved Topic layout positions back into the embedded editor.
+        // Without this, Auto Layout updates the draft but the canvas keeps
+        // rendering the original map coordinates until a full reload.
+        skills: skills
+          .filter(skill => skill.constellationMapId === map._id && skill.isActive)
+          .map(skill => draftTopicPositions[skill._id]
+            ? { ...skill, constellationPosition: draftTopicPositions[skill._id] }
+            : skill)
+          .sort((a, b) => a.position - b.position)
       }));
-  }, [isMainConstellation, mapSkills, maps, selectedMap, skills]);
+  }, [draftTopicPositions, isMainConstellation, mapSkills, maps, selectedMap, skills]);
   const selectedSkill = mapSkills.find(skill => skill._id === selectedSkillId);
   const selectedSkills = useMemo(() => mapSkills.filter(skill => selectedSkillIds.includes(skill._id)), [mapSkills, selectedSkillIds]);
   const duplicateInfoLevelSkill = isMainConstellation

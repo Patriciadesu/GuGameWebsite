@@ -698,6 +698,16 @@ function ConstellationLayoutEditor({
       x: Math.round(Math.max(NODE_MARGIN, Math.min(targetMap.viewport.width - NODE_MARGIN, imageOffsetX + (point.x - vx) * imageScale)) / SNAP_SIZE) * SNAP_SIZE,
       y: Math.round(Math.max(NODE_MARGIN, Math.min(targetMap.viewport.height - NODE_MARGIN, imageOffsetY + (point.y - vy) * imageScale)) / SNAP_SIZE) * SNAP_SIZE
     }));
+    if (topic) {
+      // The embedded canvas keeps a transformed (Discipline-space) cache.
+      // Clear affected entries so it immediately re-renders from the freshly
+      // updated Topic-space draft positions below.
+      setEmbeddedPositions(current => {
+        const updated = { ...current };
+        targetSkills.forEach(skill => delete updated[skill._id]);
+        return updated;
+      });
+    }
     targetSkills.forEach((skill, index) => {
       if (topic) onEmbeddedTopicPositionChange?.(topic.map._id, skill._id, next[index]);
       else onPositionChange(skill._id, next[index]);

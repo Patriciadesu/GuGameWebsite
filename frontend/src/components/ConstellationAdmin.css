@@ -220,10 +220,10 @@
   pointer-events: none;
 }
 .constellation-layout-topic-boundary.is-svg-outline { stroke-dasharray: none !important; stroke-linejoin: round; stroke-linecap: round; }
-.constellation-layout-topic-background { opacity: 0.58; mix-blend-mode: multiply; pointer-events: none; }
-:root[data-theme="dark"] .constellation-layout-topic-background { filter: brightness(0) invert(1); mix-blend-mode: screen; }
-.constellation-layout-map-background { opacity: 0.42; mix-blend-mode: multiply; pointer-events: none; }
-:root[data-theme="dark"] .constellation-layout-map-background { filter: brightness(0) invert(1); mix-blend-mode: screen; }
+.constellation-layout-topic-background { opacity: 0.62; mix-blend-mode: normal; pointer-events: none; }
+:root[data-theme="dark"] .constellation-layout-topic-background { filter: none; opacity: 0.72; mix-blend-mode: normal; }
+.constellation-layout-map-background { opacity: 0.52; mix-blend-mode: normal; pointer-events: none; }
+:root[data-theme="dark"] .constellation-layout-map-background { filter: none; opacity: 0.66; mix-blend-mode: normal; }
 .constellation-layout-topic-eyebrow {
   fill: var(--constellation-unlocked);
   font: 800 18px/1 "Noto Sans Thai", sans-serif;

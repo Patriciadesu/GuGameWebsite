@@ -1323,6 +1323,32 @@ test('admin can inspect and edit embedded topic stars from the discipline editor
   await expect(page.getByRole('dialog', { name: /Edit (star|quest)/ })).toBeVisible();
 });
 
+test('admin saves an individually moved embedded topic star to its topic map', async ({ page }) => {
+  await installApiFixtures(page);
+  await page.goto('admin');
+  await page.getByRole('button', { name: /Constellation Editor/ }).click();
+  await page.getByLabel('Choose discipline').selectOption({ label: 'Game Art' });
+
+  const editor = page.getByRole('application', { name: 'Game Art visual layout editor' });
+  const embeddedStar = editor.locator('[data-skill-id="600000000000000000000001"]');
+  // First click selects the Star; the next drag is the child-level operation.
+  await embeddedStar.click();
+  const box = await embeddedStar.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width / 2 + 80, box!.y + box!.height / 2 + 40);
+  await page.mouse.up();
+
+  const saveRequest = page.waitForRequest(request => {
+    const url = new URL(request.url());
+    return request.method() === 'PATCH' && url.pathname === `/api/constellation-maps/${topicMap._id}/layout`;
+  });
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  const payload = (await saveRequest).postDataJSON() as { nodes: Array<{ skillId: string }> };
+  expect(payload.nodes).toContainEqual(expect.objectContaining({ skillId: '600000000000000000000001' }));
+});
+
 test('admin keeps new maps draft and exposes publish and delete actions', async ({ page }) => {
   let createdMap: Record<string, unknown> | undefined;
   let updatedMap: { id: string; payload: Record<string, unknown> } | undefined;

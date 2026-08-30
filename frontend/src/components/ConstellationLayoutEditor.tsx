@@ -788,7 +788,10 @@ function ConstellationLayoutEditor({
     event.stopPropagation();
     event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId);
     const moveChild = Boolean(childSkillId && embeddedSelection?.topicMapId === topicMapId && embeddedSelection.skillId === childSkillId);
-    setEmbeddedSelection({ topicMapId, skillId: moveChild ? childSkillId : undefined });
+    // First click selects a Star while retaining the convenient "move the
+    // whole cluster" drag. A subsequent drag on that selected Star moves it
+    // individually, matching the hierarchy behaviour in the Editor.
+    setEmbeddedSelection({ topicMapId, skillId: childSkillId });
     const startPositions = Object.fromEntries(groupSkills.map(skill => [skill._id, skill.constellationPosition!])) as Record<string, ConstellationLayoutPosition>;
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -814,6 +817,11 @@ function ConstellationLayoutEditor({
         y: position.y + delta.y
       }])) as Record<string, ConstellationLayoutPosition>;
       setEmbeddedPositions(current => ({ ...current, ...nextPositions }));
+      // A cluster drag changes every child Star in the Topic. Persist each
+      // Topic-space coordinate, not only the gateway's Discipline position.
+      Object.entries(nextPositions).forEach(([skillId, position]) => {
+        onEmbeddedTopicPositionChange?.(topicMapId, skillId, position);
+      });
       if (gateway) {
         const gatewayPosition = positions[gateway._id] || positionFor(gateway, skills.findIndex(skill => skill._id === gateway._id));
         onPositionChange(gateway._id, { x: gatewayPosition.x + delta.x, y: gatewayPosition.y + delta.y });
@@ -827,7 +835,7 @@ function ConstellationLayoutEditor({
     const handleEnd = (endEvent: PointerEvent) => {
       if (endEvent.pointerId !== event.pointerId) return;
       cleanup();
-      if (!moved) setEmbeddedSelection({ topicMapId, skillId: moveChild ? childSkillId : undefined });
+      if (!moved) setEmbeddedSelection({ topicMapId, skillId: childSkillId });
     };
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleEnd);

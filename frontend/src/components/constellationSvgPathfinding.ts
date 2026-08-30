@@ -140,8 +140,11 @@ const smoothContour = (points: OutlinePoint[], toWorldX: (x: number) => number, 
   for (let index = 0; index < contour.length; index += 1) {
     const point = contour[index];
     const next = contour[(index + 1) % contour.length];
+    // Quadratic midpoint curves round each corner without overshooting the
+    // silhouette (which can happen with cubic controls on small hulls).
+    const control = point;
     const nextMidpoint = midpoint(point, next);
-    path += ` Q ${toWorldX(point.x)} ${toWorldY(point.y)} ${toWorldX(nextMidpoint.x)} ${toWorldY(nextMidpoint.y)}`;
+    path += ` Q ${toWorldX(control.x)} ${toWorldY(control.y)} ${toWorldX(nextMidpoint.x)} ${toWorldY(nextMidpoint.y)}`;
   }
   return `${path} Z`;
 };

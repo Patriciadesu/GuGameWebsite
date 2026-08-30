@@ -1349,6 +1349,27 @@ test('admin saves an individually moved embedded topic star to its topic map', a
   expect(payload.nodes).toContainEqual(expect.objectContaining({ skillId: '600000000000000000000001' }));
 });
 
+test('admin deletes multiple selected Stars in one confirmed action', async ({ page }) => {
+  const deletedIds: string[] = [];
+  await installApiFixtures(page, undefined, undefined, undefined, undefined, undefined, undefined, undefined, (skillId) => deletedIds.push(skillId));
+  await page.goto('admin');
+  await page.getByRole('button', { name: /Constellation Editor/ }).click();
+  await page.getByLabel('Choose discipline').selectOption({ label: 'Game Art' });
+  await page.getByRole('application', { name: 'Game Art visual layout editor' })
+    .locator('.constellation-layout-node').filter({ hasText: '3D Modeling' }).dblclick();
+
+  const editor = page.getByRole('application', { name: '3D Modeling visual layout editor' });
+  await editor.locator('[data-skill-id="600000000000000000000001"]').click();
+  await editor.locator('[data-skill-id="600000000000000000000002"]').click({ modifiers: ['Shift'] });
+  await expect(page.getByRole('button', { name: 'Delete 2 stars' })).toBeVisible();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Delete 2 stars' }).click();
+  await expect.poll(() => deletedIds).toEqual(expect.arrayContaining([
+    '600000000000000000000001',
+    '600000000000000000000002'
+  ]));
+});
+
 test('admin keeps new maps draft and exposes publish and delete actions', async ({ page }) => {
   let createdMap: Record<string, unknown> | undefined;
   let updatedMap: { id: string; payload: Record<string, unknown> } | undefined;

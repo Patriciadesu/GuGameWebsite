@@ -700,6 +700,41 @@ function ConstellationAdmin({
     }
   };
 
+  const deleteSelectedStars = async () => {
+    if (selectedSkills.length < 2) return;
+    // Deleting a gateway cascades to its Topic and every child Star. Do not
+    // send a second delete for any selected child in that same Topic.
+    const gatewayTopicIds = new Set(selectedSkills
+      .filter(skill => skill.mapNodeRole === 'topic-gateway')
+      .map(skill => maps.find(map => map.scope === 'topic' && map.gatewaySkillId === skill._id)?._id)
+      .filter((mapId): mapId is string => Boolean(mapId)));
+    const deletable = selectedSkills.filter(skill => !gatewayTopicIds.has(skill.constellationMapId || ''));
+    if (deletable.length === 0) return;
+    const names = deletable.map(skill => skill.constellationLabel || skill.title).filter(Boolean);
+    const preview = names.slice(0, 3).map(name => `“${name}”`).join(', ');
+    const remaining = names.length - Math.min(3, names.length);
+    const cascadeCount = selectedSkills.length - deletable.length;
+    const warning = `Delete ${deletable.length} selected star${deletable.length === 1 ? '' : 's'} (${preview}${remaining > 0 ? ` and ${remaining} more` : ''})?` +
+      `${cascadeCount > 0 ? ` ${cascadeCount} selected child star${cascadeCount === 1 ? '' : 's'} will be deleted with its Topic.` : ''} ` +
+      'Connections, dependent Topics, child stars, and user progress will also be removed. This cannot be undone.';
+    if (!confirm(warning)) return;
+    try {
+      setBusy(true);
+      setError('');
+      for (const skill of deletable) {
+        await axios.delete(`/api/skills/${skill._id}`, { params: { cascade: true } });
+      }
+      setSelectedSkillId('');
+      setSelectedSkillIds([]);
+      setConnectionSourceId('');
+      await onSkillsChanged();
+    } catch (requestError: any) {
+      setError(requestErrorMessage(requestError, 'Unable to delete the selected stars.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const deleteSelectedMap = async () => {
     if (!selectedMap) return;
     const parentMapId = selectedMap.parentMapId;
@@ -1270,6 +1305,7 @@ function ConstellationAdmin({
                 <p className="constellation-inspector-note">A typed value applies to every selected star. Drag to move the group together.</p>
               </fieldset>
               {selectedSkills.length === 1 && <button type="button" className="constellation-admin-secondary constellation-inspector-edit" onClick={() => openSkillInfo(selectedSkills[0])}><Pencil size={15} aria-hidden="true" /> Edit full details</button>}
+              {selectedSkills.length > 1 && <button type="button" className="constellation-admin-secondary constellation-inspector-edit is-danger" disabled={busy} onClick={() => void deleteSelectedStars()}><Trash2 size={15} aria-hidden="true" /> Delete {selectedSkills.length} stars</button>}
             </div> : <div className="constellation-inspector-empty"><strong>No star selected</strong><span>Click a star or drag over several stars to inspect them.</span></div>)}
           </aside>
           </>}

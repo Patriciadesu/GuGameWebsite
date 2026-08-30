@@ -1,6 +1,6 @@
 {
   "name": "gugame-backend",
-  "version": "1.0.32",
+  "version": "1.0.33",
   "description": "Backend API for GuGame",
   "main": "dist/server.js",
   "scripts": {
@@ -17,6 +17,7 @@
     "migrate:sound-v101": "tsx scripts/consolidate-sound-quests-v101.ts",
     "migrate:sound-constellation": "tsx scripts/group-sound-topics-constellation.ts",
     "migrate:baked-boundaries": "tsx scripts/apply-baked-constellation-boundaries.ts",
+    "migrate:lighting-to-map-scene": "tsx scripts/move-lighting-topics-to-map-scene.ts",
     "migrate:animation-constellation": "tsx scripts/group-animation-constellation.ts",
     "test:load:seed": "tsx scripts/seed-load-test.ts",
     "test:load": "tsx scripts/load-test.ts",

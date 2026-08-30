@@ -6,6 +6,12 @@ export type ConstellationType = 'main' | 'skill';
 export interface IConstellationVisualTheme {
   key: string;
   backgroundAssetUrl?: string;
+  bakedBoundary?: {
+    path: string;
+    assetUrl: string;
+    bounds: { x: number; y: number; width: number; height: number };
+    generatedAt?: Date;
+  };
   frameStyle: string;
   backgroundColor: string;
   surfaceColor: string;
@@ -50,6 +56,17 @@ export interface IConstellationMap extends Document {
 const ConstellationVisualThemeSchema = new Schema<IConstellationVisualTheme>({
   key: { type: String, required: true, trim: true, default: 'default' },
   backgroundAssetUrl: { type: String, trim: true },
+  bakedBoundary: {
+    path: { type: String, trim: true },
+    assetUrl: { type: String, trim: true },
+    bounds: {
+      x: { type: Number },
+      y: { type: Number },
+      width: { type: Number, min: 1 },
+      height: { type: Number, min: 1 }
+    },
+    generatedAt: { type: Date }
+  },
   frameStyle: { type: String, required: true, trim: true, default: 'luminous-minimal' },
   backgroundColor: { type: String, required: true, default: '#f7f9fc' },
   surfaceColor: { type: String, required: true, default: '#ffffff' },

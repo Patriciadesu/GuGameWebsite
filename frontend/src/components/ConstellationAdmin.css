@@ -192,6 +192,9 @@
   vector-effect: non-scaling-stroke;
 }
 
+.constellation-layout-lines,
+.constellation-layout-topic-lines { pointer-events: none; }
+
 .constellation-layout-lines path.is-special { stroke: var(--constellation-boss); stroke-width: 2.5; }
 .constellation-layout-marquee { fill: color-mix(in srgb, var(--constellation-unlocked) 12%, transparent); stroke: var(--constellation-unlocked); stroke-width: 1.5; stroke-dasharray: 7 5; }
 .constellation-layout-arrow path { fill: var(--constellation-line); }

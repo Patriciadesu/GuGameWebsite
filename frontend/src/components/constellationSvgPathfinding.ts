@@ -16,12 +16,34 @@ export interface SvgGuideBounds {
   height: number;
 }
 
-const loadImage = (source: string) => new Promise<HTMLImageElement>((resolve, reject) => {
+export interface BakedSvgGuideBoundary {
+  path: string;
+  assetUrl: string;
+  bounds: SvgGuideBounds;
+  generatedAt?: string;
+}
+
+export const bakedBoundaryTransform = (source: SvgGuideBounds, destination: SvgGuideBounds) => {
+  const scale = Math.min(destination.width / Math.max(1, source.width), destination.height / Math.max(1, source.height));
+  const translateX = destination.x + destination.width / 2 - (source.x + source.width / 2) * scale;
+  const translateY = destination.y + destination.height / 2 - (source.y + source.height / 2) * scale;
+  return `translate(${translateX} ${translateY}) scale(${scale})`;
+};
+
+const imageCache = new Map<string, Promise<HTMLImageElement>>();
+const loadImage = (source: string) => {
+  const cached = imageCache.get(source);
+  if (cached) return cached;
+  const request = new Promise<HTMLImageElement>((resolve, reject) => {
   const image = new Image();
   image.onload = () => resolve(image);
   image.onerror = () => reject(new Error('Unable to load SVG guide.'));
   image.src = source;
-});
+  });
+  imageCache.set(source, request);
+  request.catch(() => imageCache.delete(source));
+  return request;
+};
 
 const nearestWalkable = (x: number, y: number, width: number, height: number, walkable: (x: number, y: number) => boolean) => {
   const startX = Math.max(0, Math.min(width - 1, Math.round(x)));

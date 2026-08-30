@@ -8,7 +8,7 @@ import {
 } from './constellationVisuals';
 import './ConstellationTree.css';
 import { autoStyleConstellation } from './constellationAutoLayout';
-import { buildSvgGuideOutline } from './constellationSvgPathfinding';
+import { bakedBoundaryTransform, buildSvgGuideOutline, type BakedSvgGuideBoundary } from './constellationSvgPathfinding';
 
 export interface ConstellationLayoutPosition {
   x: number;
@@ -21,8 +21,8 @@ interface ConstellationLayoutEditorProps {
   skills: ConstellationSkill[];
   topicGroups?: ConstellationTopicGroup[];
   onEmbeddedTopicPositionChange?: (topicMapId: string, skillId: string, position: ConstellationLayoutPosition) => void;
-  onEmbeddedTopicVisualChange?: (topicMapId: string, backgroundAssetUrl: string) => void;
-  onVisualChange?: (mapId: string, backgroundAssetUrl: string) => void;
+  onEmbeddedTopicVisualChange?: (topicMapId: string, visual: { backgroundAssetUrl: string; bakedBoundary?: BakedSvgGuideBoundary }) => void;
+  onVisualChange?: (mapId: string, visual: { backgroundAssetUrl: string; bakedBoundary?: BakedSvgGuideBoundary }) => void;
   embeddedTopicDirtyCount?: number;
   embeddedTopicResetRevision?: number;
   positions: Record<string, ConstellationLayoutPosition>;
@@ -382,7 +382,7 @@ function ConstellationLayoutEditor({
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(new Set());
   const [embeddedSelection, setEmbeddedSelection] = useState<{ topicMapId: string; skillId?: string } | null>(null);
   const [embeddedPositions, setEmbeddedPositions] = useState<Record<string, ConstellationLayoutPosition>>({});
-  const [embeddedGuideOutlines, setEmbeddedGuideOutlines] = useState<Record<string, string>>({});
+  const [embeddedGuideOutlines, setEmbeddedGuideOutlines] = useState<Record<string, BakedSvgGuideBoundary>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -466,19 +466,37 @@ function ConstellationLayoutEditor({
     } : undefined;
     return { ...group, skills: nextSkills, points, guideBounds, boundary: guideBounds ? guideBoundaryPath(guideBounds) : boundaryPath(points) };
   }), [embeddedPositions, embeddedTopicGroups]);
+  const legacyGuideKey = visibleEmbeddedTopicGroups
+    .filter(group => group.guideBounds && group.group.map.visualTheme?.backgroundAssetUrl &&
+      (group.group.map.visualTheme.bakedBoundary?.assetUrl !== group.group.map.visualTheme.backgroundAssetUrl || !group.group.map.visualTheme.bakedBoundary?.path))
+    .map(group => `${group.group.map._id}:${group.group.map.visualTheme.backgroundAssetUrl}`)
+    .join('|');
   useEffect(() => {
     let cancelled = false;
-    const guideGroups = visibleEmbeddedTopicGroups.filter(group => group.guideBounds && group.group.map.visualTheme?.backgroundAssetUrl);
+    const guideGroups = visibleEmbeddedTopicGroups.filter(group => group.guideBounds && group.group.map.visualTheme?.backgroundAssetUrl &&
+      (group.group.map.visualTheme.bakedBoundary?.assetUrl !== group.group.map.visualTheme.backgroundAssetUrl || !group.group.map.visualTheme.bakedBoundary?.path));
     void Promise.all(guideGroups.map(async group => [
       group.group.map._id,
-      await buildSvgGuideOutline(group.group.map.visualTheme!.backgroundAssetUrl!, group.guideBounds!)
+      {
+        path: await buildSvgGuideOutline(group.group.map.visualTheme!.backgroundAssetUrl!, {
+          x: 0,
+          y: 0,
+          width: group.group.map.viewport.width,
+          height: group.group.map.viewport.height
+        }),
+        assetUrl: group.group.map.visualTheme!.backgroundAssetUrl!,
+        bounds: { x: 0, y: 0, width: group.group.map.viewport.width, height: group.group.map.viewport.height }
+      }
     ] as const)).then(entries => {
       if (!cancelled) setEmbeddedGuideOutlines(Object.fromEntries(entries));
     }).catch(() => {
       if (!cancelled) setEmbeddedGuideOutlines({});
     });
     return () => { cancelled = true; };
-  }, [visibleEmbeddedTopicGroups]);
+  // The expensive raster trace is keyed only by the SVG asset. Dragging Stars
+  // changes destination geometry, which is handled by a cheap SVG transform.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [legacyGuideKey]);
   const connectionEdges = useMemo(() => {
     const result: Array<{ sourceId: string; targetId: string; special: boolean }> = [];
     const seen = new Set<string>();
@@ -747,8 +765,17 @@ function ConstellationLayoutEditor({
       else onPositionChange(skill._id, next[index]);
     });
     const backgroundAssetUrl = svgDataUrl;
-    if (topic) onEmbeddedTopicVisualChange?.(topic.map._id, backgroundAssetUrl);
-    else onVisualChange?.(map._id, backgroundAssetUrl);
+    const bakedBounds = { x: 0, y: 0, width: targetMap.viewport.width, height: targetMap.viewport.height };
+    let bakedBoundary: BakedSvgGuideBoundary | undefined;
+    try {
+      const path = await buildSvgGuideOutline(backgroundAssetUrl, bakedBounds);
+      if (path) bakedBoundary = { path, assetUrl: backgroundAssetUrl, bounds: bakedBounds, generatedAt: new Date().toISOString() };
+    } catch {
+      // The stable one-time fallback will trace the guide on the next load.
+    }
+    const visual = { backgroundAssetUrl, ...(bakedBoundary ? { bakedBoundary } : {}) };
+    if (topic) onEmbeddedTopicVisualChange?.(topic.map._id, visual);
+    else onVisualChange?.(map._id, visual);
   };
   const autoStyleSelection = () => {
     const nextPositions = autoStyleConstellation(skills, [...selectedSkillIds], positions, map);
@@ -796,6 +823,8 @@ function ConstellationLayoutEditor({
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
     let moved = false;
+    let pendingTopicPositions: Record<string, ConstellationLayoutPosition> = {};
+    let pendingGatewayPosition: ConstellationLayoutPosition | undefined;
     const handleMove = (moveEvent: PointerEvent) => {
       if (moveEvent.pointerId !== event.pointerId) return;
       const delta = {
@@ -808,23 +837,19 @@ function ConstellationLayoutEditor({
         const position = startPositions[childSkillId];
         if (!position) return;
         const next = { x: position.x + delta.x, y: position.y + delta.y };
+        pendingTopicPositions = { [childSkillId]: next };
         setEmbeddedPositions(current => ({ ...current, [childSkillId]: next }));
-        onEmbeddedTopicPositionChange?.(topicMapId, childSkillId, next);
         return;
       }
       const nextPositions = Object.fromEntries(Object.entries(startPositions).map(([skillId, position]) => [skillId, {
         x: position.x + delta.x,
         y: position.y + delta.y
       }])) as Record<string, ConstellationLayoutPosition>;
+      pendingTopicPositions = nextPositions;
       setEmbeddedPositions(current => ({ ...current, ...nextPositions }));
-      // A cluster drag changes every child Star in the Topic. Persist each
-      // Topic-space coordinate, not only the gateway's Discipline position.
-      Object.entries(nextPositions).forEach(([skillId, position]) => {
-        onEmbeddedTopicPositionChange?.(topicMapId, skillId, position);
-      });
       if (gateway) {
         const gatewayPosition = positions[gateway._id] || positionFor(gateway, skills.findIndex(skill => skill._id === gateway._id));
-        onPositionChange(gateway._id, { x: gatewayPosition.x + delta.x, y: gatewayPosition.y + delta.y });
+        pendingGatewayPosition = { x: gatewayPosition.x + delta.x, y: gatewayPosition.y + delta.y };
       }
     };
     const cleanup = () => {
@@ -835,6 +860,14 @@ function ConstellationLayoutEditor({
     const handleEnd = (endEvent: PointerEvent) => {
       if (endEvent.pointerId !== event.pointerId) return;
       cleanup();
+      if (moved) {
+        // Keep pointer-move rendering local. Committing once on pointer-up
+        // avoids a second full Admin render for every drag frame.
+        Object.entries(pendingTopicPositions).forEach(([skillId, position]) => {
+          onEmbeddedTopicPositionChange?.(topicMapId, skillId, position);
+        });
+        if (gateway && pendingGatewayPosition) onPositionChange(gateway._id, pendingGatewayPosition);
+      }
       if (!moved) setEmbeddedSelection({ topicMapId, skillId: childSkillId });
     };
     window.addEventListener('pointermove', handleMove);
@@ -959,7 +992,11 @@ function ConstellationLayoutEditor({
               />
             ))}
             {isEmbeddedDiscipline && <g className="constellation-layout-embedded-topics">
-              {visibleEmbeddedTopicGroups.map(({ group, skills: topicSkills, points, boundary }) => (
+              {visibleEmbeddedTopicGroups.map(({ group, skills: topicSkills, points, guideBounds, boundary }) => {
+                const bakedBoundary = group.map.visualTheme?.bakedBoundary?.assetUrl === group.map.visualTheme?.backgroundAssetUrl
+                  ? group.map.visualTheme.bakedBoundary
+                  : embeddedGuideOutlines[group.map._id];
+                return (
                 <g
                   key={group.map._id}
                   className="constellation-layout-embedded-topic"
@@ -995,7 +1032,12 @@ function ConstellationLayoutEditor({
                     preserveAspectRatio="xMidYMid meet"
                     pointerEvents="none"
                   />}
-                  <path className={`constellation-layout-topic-boundary ${embeddedGuideOutlines[group.map._id] ? 'is-svg-outline' : ''}`} d={embeddedGuideOutlines[group.map._id] || boundary} vectorEffect="non-scaling-stroke" />
+                  <path
+                    className={`constellation-layout-topic-boundary ${bakedBoundary ? 'is-svg-outline' : ''}`}
+                    d={bakedBoundary?.path || boundary}
+                    transform={bakedBoundary && guideBounds ? bakedBoundaryTransform(bakedBoundary.bounds, guideBounds) : undefined}
+                    vectorEffect="non-scaling-stroke"
+                  />
                   <text className="constellation-layout-topic-eyebrow" x={Math.min(...points.map(point => point.x)) + 12} y={Math.min(...points.map(point => point.y)) - 94}>TOPIC · LEVEL {group.map.level || 1}</text>
                   <text className="constellation-layout-topic-title" x={Math.min(...points.map(point => point.x)) + 12} y={Math.min(...points.map(point => point.y)) - 66}>{group.map.name}</text>
                   <g className="constellation-lines constellation-layout-topic-lines" aria-hidden="true">
@@ -1038,7 +1080,8 @@ function ConstellationLayoutEditor({
                     </g>;
                   })}
                 </g>
-              ))}
+                );
+              })}
             </g>}
             {selectionBox && (
               <rect

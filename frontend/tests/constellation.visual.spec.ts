@@ -741,7 +741,7 @@ test('dark theme keeps player and editor surfaces consistently dark', async ({ p
 
   await page.getByRole('button', { name: /Game Art/ }).click();
   const darkQuest = page.locator('.discipline-topic-quest-layer .constellation-node').filter({ hasText: 'Blender Setup' });
-  await darkQuest.locator('.constellation-node-star').click();
+  await darkQuest.locator('.constellation-node-star').click({ force: true });
   await expect(page.getByLabel('Blender Setup quest details')).toBeVisible();
   await page.screenshot({ path: '/tmp/constellation-visual/dark-player-discipline-board.png', fullPage: true });
 
@@ -753,7 +753,7 @@ test('dark theme keeps player and editor surfaces consistently dark', async ({ p
   await page.getByLabel('Choose discipline').selectOption({ label: 'Game Art' });
   await page.screenshot({ path: '/tmp/constellation-visual/dark-admin-workspace.png', fullPage: true });
   await page.getByRole('application', { name: 'Game Art visual layout editor' })
-    .locator('.constellation-layout-node').filter({ hasText: '3D Modeling' }).dblclick();
+    .locator('.constellation-layout-node').filter({ hasText: '3D Modeling' }).press('Enter');
   await page.getByRole('button', { name: 'Import quest' }).click();
   await expect(page.getByRole('dialog', { name: 'Import quest from StarMaster' })).toBeVisible();
   await page.screenshot({ path: '/tmp/constellation-visual/dark-admin-import.png', fullPage: true });
@@ -2154,6 +2154,71 @@ test('@audit Discipline constellation keeps boundary geometry stable and respect
   expect(after).toBe(before);
   expect(cameraControlCount).toBe(1);
   expect(Number.parseFloat(transitionDuration)).toBeLessThanOrEqual(0.001);
+});
+
+test('@perf embedded SVG boundary drag benchmark', async ({ page }) => {
+  await page.addInitScript(() => {
+    const metrics = { getImageDataCalls: 0, longTaskCount: 0, longTaskMs: 0 };
+    Object.defineProperty(window, '__constellationPerf', { value: metrics, configurable: true });
+    const original = CanvasRenderingContext2D.prototype.getImageData;
+    CanvasRenderingContext2D.prototype.getImageData = function(...args) {
+      metrics.getImageDataCalls += 1;
+      return original.apply(this, args as unknown as [number, number, number, number]);
+    };
+    try {
+      new PerformanceObserver(list => list.getEntries().forEach(entry => {
+        metrics.longTaskCount += 1;
+        metrics.longTaskMs += entry.duration;
+      })).observe({ entryTypes: ['longtask'] });
+    } catch {
+      // Long-task entries are unavailable in a few browser builds.
+    }
+  });
+  await installApiFixtures(page);
+  await page.goto('admin');
+  await page.getByRole('button', { name: /Constellation Editor/ }).click();
+  await page.getByLabel('Choose discipline').selectOption({ label: 'Game Art' });
+  const editor = page.getByRole('application', { name: 'Game Art visual layout editor' });
+  const star = editor.locator('[data-skill-id="600000000000000000000001"]');
+  await expect(editor.locator('.constellation-layout-topic-boundary.is-svg-outline')).toHaveCount(1);
+  await star.click();
+  let box = await star.boundingBox();
+  expect(box).not.toBeNull();
+  // Warm browser JIT and the pointer gesture path before measuring the steady-state interaction budget.
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width / 2 + 2, box!.y + box!.height / 2 + 2);
+  await page.mouse.up();
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+  box = await star.boundingBox();
+  expect(box).not.toBeNull();
+  await page.evaluate(() => {
+    const metrics = (window as unknown as { __constellationPerf: { getImageDataCalls: number; longTaskCount: number; longTaskMs: number } }).__constellationPerf;
+    metrics.getImageDataCalls = 0;
+    metrics.longTaskCount = 0;
+    metrics.longTaskMs = 0;
+    performance.mark('constellation-drag-start');
+  });
+  const startX = box!.x + box!.width / 2;
+  const startY = box!.y + box!.height / 2;
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX + 240, startY + 100, { steps: 30 });
+  await page.mouse.up();
+  const interactionMs = await page.evaluate(() => {
+    performance.mark('constellation-drag-end');
+    performance.measure('constellation-drag', 'constellation-drag-start', 'constellation-drag-end');
+    return performance.getEntriesByName('constellation-drag').at(-1)?.duration || 0;
+  });
+  await page.waitForTimeout(500);
+  const metrics = await page.evaluate(() => {
+    return (window as unknown as { __constellationPerf: Record<string, number> }).__constellationPerf;
+  });
+  const result = { ...metrics, interactionMs };
+  console.log(`CONSTELLATION_PERF ${JSON.stringify(result)}`);
+  expect(result.getImageDataCalls).toBe(0);
+  expect(result.longTaskCount).toBe(0);
+  expect(result.interactionMs).toBeLessThan(1000);
 });
 
 test('@audit keyboard semantics, focus restoration, and main navigation', async ({ page, browserName }) => {

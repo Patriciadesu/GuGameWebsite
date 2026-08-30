@@ -1233,13 +1233,13 @@ function ConstellationAdmin({
             skills={mapSkills}
             topicGroups={topicGroups}
             onEmbeddedTopicPositionChange={(_, skillId, position) => setDraftTopicPositions(current => ({ ...current, [skillId]: position }))}
-            onEmbeddedTopicVisualChange={async (topicMapId, backgroundAssetUrl) => {
+            onEmbeddedTopicVisualChange={async (topicMapId, visual) => {
               try {
                 setBusy(true);
                 const topicMap = maps.find(candidate => candidate._id === topicMapId);
                 if (!topicMap) return;
                 await axios.patch(`/api/constellation-maps/${topicMapId}`, {
-                  visualTheme: { ...topicMap.visualTheme, backgroundAssetUrl }
+                  visualTheme: { ...topicMap.visualTheme, ...visual }
                 });
                 await refreshMaps();
                 setEditorNotice('SVG constellation guide saved.');
@@ -1249,13 +1249,13 @@ function ConstellationAdmin({
                 setBusy(false);
               }
             }}
-            onVisualChange={async (mapId, backgroundAssetUrl) => {
+            onVisualChange={async (mapId, visual) => {
               try {
                 setBusy(true);
                 const currentMap = maps.find(candidate => candidate._id === mapId);
                 if (!currentMap) return;
                 await axios.patch(`/api/constellation-maps/${mapId}`, {
-                  visualTheme: { ...currentMap.visualTheme, backgroundAssetUrl }
+                  visualTheme: { ...currentMap.visualTheme, ...visual }
                 });
                 await refreshMaps();
                 setEditorNotice('SVG constellation guide saved.');

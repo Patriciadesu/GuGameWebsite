@@ -5,6 +5,12 @@ export type MapNodeRole = 'topic-gateway' | 'lesson' | 'boss' | 'capstone';
 export interface ConstellationTheme {
   key: string;
   backgroundAssetUrl?: string;
+  bakedBoundary?: {
+    path: string;
+    assetUrl: string;
+    bounds: { x: number; y: number; width: number; height: number };
+    generatedAt?: string;
+  };
   frameStyle: string;
   backgroundColor: string;
   surfaceColor: string;

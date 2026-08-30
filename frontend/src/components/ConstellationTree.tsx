@@ -9,7 +9,7 @@ import {
   pointForConstellationSkill as pointForSkill,
   straightConstellationPath as pathBetween
 } from './constellationVisuals';
-import { buildSvgGuideOutline, buildSvgGuideRoutes } from './constellationSvgPathfinding';
+import { bakedBoundaryTransform, buildSvgGuideOutline, buildSvgGuideRoutes, type BakedSvgGuideBoundary } from './constellationSvgPathfinding';
 import './ConstellationTree.css';
 
 interface ConstellationTreeProps {
@@ -38,6 +38,7 @@ interface MapDetail {
   skills: ConstellationSkill[];
   topicGroups?: ConstellationTopicGroup[];
   svgGuideBounds?: { x: number; y: number; width: number; height: number };
+  svgGuideSourceBounds?: { x: number; y: number; width: number; height: number };
 }
 
 interface Camera {
@@ -147,7 +148,8 @@ const placeTopicGroupInDiscipline = (
       ...discipline,
       visualTheme: {
         ...discipline.visualTheme,
-        backgroundAssetUrl: group.map.visualTheme?.backgroundAssetUrl
+        backgroundAssetUrl: group.map.visualTheme?.backgroundAssetUrl,
+        bakedBoundary: group.map.visualTheme?.bakedBoundary
       }
     },
     svgGuideBounds: {
@@ -156,6 +158,7 @@ const placeTopicGroupInDiscipline = (
       width: sourceWidth * scale,
       height: sourceHeight * scale
     },
+    svgGuideSourceBounds: { x: 0, y: 0, width: sourceWidth, height: sourceHeight },
     skills: group.skills.map((skill, index) => ({
       ...skill,
       constellationPosition: {
@@ -227,7 +230,7 @@ function ConstellationTree({
   const [overviewIndex, setOverviewIndex] = useState(0);
   const [isDirectManipulating, setIsDirectManipulating] = useState(false);
   const [svgGuideRoutes, setSvgGuideRoutes] = useState<Record<string, string>>({});
-  const [svgGuideOutlines, setSvgGuideOutlines] = useState<Record<string, string>>({});
+  const [svgGuideOutlines, setSvgGuideOutlines] = useState<Record<string, BakedSvgGuideBoundary>>({});
   const dragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const canvasRef = useRef<SVGSVGElement | null>(null);
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
@@ -388,21 +391,27 @@ function ConstellationTree({
     });
     return () => { cancelled = true; };
   }, [svgRouteKey]);
+  const legacyOutlineKey = [...topicClusters.map(cluster => cluster.detail), ...(topicDetail ? [topicDetail] : [])]
+    .filter(detail => detail.map.visualTheme?.backgroundAssetUrl &&
+      (detail.map.visualTheme.bakedBoundary?.assetUrl !== detail.map.visualTheme.backgroundAssetUrl || !detail.map.visualTheme.bakedBoundary?.path))
+    .map(detail => `${detail.map._id}:${detail.map.visualTheme.backgroundAssetUrl}`)
+    .join('|');
   useEffect(() => {
     let cancelled = false;
     const details = [...topicClusters.map(cluster => cluster.detail), ...(topicDetail ? [topicDetail] : [])]
-      .filter(detail => detail.map.visualTheme?.backgroundAssetUrl);
+      .filter(detail => detail.map.visualTheme?.backgroundAssetUrl &&
+        (detail.map.visualTheme.bakedBoundary?.assetUrl !== detail.map.visualTheme.backgroundAssetUrl || !detail.map.visualTheme.bakedBoundary?.path));
     void Promise.all(details.map(async detail => {
-      const bounds = detail.svgGuideBounds || { x: 0, y: 0, width: detail.map.viewport.width, height: detail.map.viewport.height };
+      const bounds = detail.svgGuideSourceBounds || { x: 0, y: 0, width: detail.map.viewport.width, height: detail.map.viewport.height };
       const path = await buildSvgGuideOutline(detail.map.visualTheme.backgroundAssetUrl!, bounds);
-      return [detail.map._id, path] as const;
+      return [detail.map._id, { path, assetUrl: detail.map.visualTheme.backgroundAssetUrl!, bounds }] as const;
     })).then(entries => {
       if (!cancelled) setSvgGuideOutlines(Object.fromEntries(entries));
     }).catch(() => {
       if (!cancelled) setSvgGuideOutlines({});
     });
     return () => { cancelled = true; };
-  }, [svgRouteKey]);
+  }, [legacyOutlineKey]);
 
   useEffect(() => {
     if (!directMap || !selectedDiscipline) return;
@@ -1103,8 +1112,11 @@ function ConstellationTree({
           const points = detail.skills.map((skill, index) =>
             pointForSkill(skill, index, detail.skills.length, detail.map)
           );
+          const bakedBoundary = detail.map.visualTheme.bakedBoundary?.assetUrl === detail.map.visualTheme.backgroundAssetUrl
+            ? detail.map.visualTheme.bakedBoundary
+            : svgGuideOutlines[detail.map._id];
           const boundaryPath = detail.svgGuideBounds
-            ? (svgGuideOutlines[detail.map._id] || guideBoundaryPath(detail.svgGuideBounds))
+            ? (bakedBoundary?.path || guideBoundaryPath(detail.svgGuideBounds))
             : boundaryPathFor(points);
           const levelLocked = (group.map.level || 1) > userLevel;
           const labelPoint = {
@@ -1117,7 +1129,12 @@ function ConstellationTree({
             role="listitem"
             aria-label={`${group.map.name}, Level ${group.map.level || 1}, ${detail.skills.length} ${detail.skills.length === 1 ? 'quest' : 'quests'}`}
           >
-            <path className={`discipline-topic-boundary ${svgGuideOutlines[detail.map._id] ? 'is-svg-outline' : ''}`} d={boundaryPath} vectorEffect="non-scaling-stroke" />
+            <path
+              className={`discipline-topic-boundary ${bakedBoundary ? 'is-svg-outline' : ''}`}
+              d={boundaryPath}
+              transform={bakedBoundary && detail.svgGuideBounds ? bakedBoundaryTransform(bakedBoundary.bounds, detail.svgGuideBounds) : undefined}
+              vectorEffect="non-scaling-stroke"
+            />
             <text className="discipline-topic-boundary__eyebrow" x={labelPoint.x} y={labelPoint.y}>TOPIC · LEVEL {group.map.level || 1}</text>
             <text className="discipline-topic-boundary__title" x={labelPoint.x} y={labelPoint.y + 31}>{group.map.name}</text>
             {renderMapLayer(detail, {

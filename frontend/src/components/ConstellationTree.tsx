@@ -9,7 +9,7 @@ import {
   pointForConstellationSkill as pointForSkill,
   straightConstellationPath as pathBetween
 } from './constellationVisuals';
-import { bakedBoundaryTransform, buildSvgGuideOutline, buildSvgGuideRoutes, type BakedSvgGuideBoundary } from './constellationSvgPathfinding';
+import { bakedBoundaryTransform, buildSvgGuideOutline, buildSvgGuideRoutes, getSvgGuideImageSize, type BakedSvgGuideBoundary } from './constellationSvgPathfinding';
 import './ConstellationTree.css';
 
 interface ConstellationTreeProps {
@@ -404,7 +404,7 @@ function ConstellationTree({
     void Promise.all(details.map(async detail => {
       const bounds = detail.svgGuideSourceBounds || { x: 0, y: 0, width: detail.map.viewport.width, height: detail.map.viewport.height };
       const path = await buildSvgGuideOutline(detail.map.visualTheme.backgroundAssetUrl!, bounds);
-      return [detail.map._id, { path, assetUrl: detail.map.visualTheme.backgroundAssetUrl!, bounds }] as const;
+      return [detail.map._id, { path, assetUrl: detail.map.visualTheme.backgroundAssetUrl!, bounds, imageSize: await getSvgGuideImageSize(detail.map.visualTheme.backgroundAssetUrl!) }] as const;
     })).then(entries => {
       if (!cancelled) setSvgGuideOutlines(Object.fromEntries(entries));
     }).catch(() => {
@@ -1132,7 +1132,7 @@ function ConstellationTree({
             <path
               className={`discipline-topic-boundary ${bakedBoundary ? 'is-svg-outline' : ''}`}
               d={boundaryPath}
-              transform={bakedBoundary && detail.svgGuideBounds ? bakedBoundaryTransform(bakedBoundary.bounds, detail.svgGuideBounds) : undefined}
+              transform={bakedBoundary && detail.svgGuideBounds ? bakedBoundaryTransform(bakedBoundary, detail.svgGuideBounds) : undefined}
               vectorEffect="non-scaling-stroke"
             />
             <text className="discipline-topic-boundary__eyebrow" x={labelPoint.x} y={labelPoint.y}>TOPIC · LEVEL {group.map.level || 1}</text>

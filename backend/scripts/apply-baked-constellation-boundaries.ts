@@ -14,6 +14,7 @@ interface BoundaryInput {
   path: string;
   assetUrl: string;
   bounds: { x: number; y: number; width: number; height: number };
+  imageSize?: { width: number; height: number };
   generatedAt?: string;
 }
 
@@ -55,6 +56,7 @@ const run = async () => {
         path: boundary.path,
         assetUrl: boundary.assetUrl,
         bounds: boundary.bounds,
+        imageSize: boundary.imageSize,
         generatedAt: boundary.generatedAt ? new Date(boundary.generatedAt) : new Date()
       };
       map.markModified('visualTheme.bakedBoundary');

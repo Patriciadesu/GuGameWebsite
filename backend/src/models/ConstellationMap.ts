@@ -10,6 +10,7 @@ export interface IConstellationVisualTheme {
     path: string;
     assetUrl: string;
     bounds: { x: number; y: number; width: number; height: number };
+    imageSize?: { width: number; height: number };
     generatedAt?: Date;
   };
   frameStyle: string;
@@ -62,6 +63,10 @@ const ConstellationVisualThemeSchema = new Schema<IConstellationVisualTheme>({
     bounds: {
       x: { type: Number },
       y: { type: Number },
+      width: { type: Number, min: 1 },
+      height: { type: Number, min: 1 }
+    },
+    imageSize: {
       width: { type: Number, min: 1 },
       height: { type: Number, min: 1 }
     },

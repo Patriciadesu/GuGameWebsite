@@ -240,6 +240,8 @@
   stroke-width: 10px;
 }
 .constellation-layout-topic-lines path { stroke-width: 2.5; }
+.constellation-layout-embedded-topic.is-svg-guide .constellation-node-label,
+.constellation-layout-embedded-topic.is-svg-guide .constellation-node-kicker { display: none; }
 .constellation-layout-embedded-node { cursor: pointer; }
 .constellation-layout-embedded-node:focus-visible .constellation-node-star { stroke-width: 5; stroke-dasharray: 3 2; }
 

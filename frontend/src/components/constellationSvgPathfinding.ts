@@ -20,13 +20,23 @@ export interface BakedSvgGuideBoundary {
   path: string;
   assetUrl: string;
   bounds: SvgGuideBounds;
+  imageSize?: { width: number; height: number };
   generatedAt?: string;
 }
 
-export const bakedBoundaryTransform = (source: SvgGuideBounds, destination: SvgGuideBounds) => {
-  const scale = Math.min(destination.width / Math.max(1, source.width), destination.height / Math.max(1, source.height));
-  const translateX = destination.x + destination.width / 2 - (source.x + source.width / 2) * scale;
-  const translateY = destination.y + destination.height / 2 - (source.y + source.height / 2) * scale;
+export const bakedBoundaryTransform = (boundary: BakedSvgGuideBoundary, destination: SvgGuideBounds) => {
+  const source = boundary.bounds;
+  const imageWidth = Math.max(1, boundary.imageSize?.width || source.width);
+  const imageHeight = Math.max(1, boundary.imageSize?.height || source.height);
+  const sourceImageScale = Math.min(source.width / imageWidth, source.height / imageHeight);
+  const destinationImageScale = Math.min(destination.width / imageWidth, destination.height / imageHeight);
+  const sourceImageX = source.x + (source.width - imageWidth * sourceImageScale) / 2;
+  const sourceImageY = source.y + (source.height - imageHeight * sourceImageScale) / 2;
+  const destinationImageX = destination.x + (destination.width - imageWidth * destinationImageScale) / 2;
+  const destinationImageY = destination.y + (destination.height - imageHeight * destinationImageScale) / 2;
+  const scale = destinationImageScale / Math.max(Number.EPSILON, sourceImageScale);
+  const translateX = destinationImageX - sourceImageX * scale;
+  const translateY = destinationImageY - sourceImageY * scale;
   return `translate(${translateX} ${translateY}) scale(${scale})`;
 };
 
@@ -43,6 +53,11 @@ const loadImage = (source: string) => {
   imageCache.set(source, request);
   request.catch(() => imageCache.delete(source));
   return request;
+};
+
+export const getSvgGuideImageSize = async (assetUrl: string) => {
+  const image = await loadImage(assetUrl);
+  return { width: image.naturalWidth || image.width, height: image.naturalHeight || image.height };
 };
 
 const nearestWalkable = (x: number, y: number, width: number, height: number, walkable: (x: number, y: number) => boolean) => {
@@ -230,8 +245,8 @@ export const buildSvgGuideOutline = async (assetUrl: string, bounds: SvgGuideBou
     segments.push([edgePoint(x, y, start), edgePoint(x, y, end)]);
   const cases: Record<number, Array<[Parameters<typeof edgePoint>[2], Parameters<typeof edgePoint>[2]]>> = {
     0: [], 1: [['left', 'top']], 2: [['top', 'right']], 3: [['left', 'right']],
-    4: [['right', 'bottom']], 5: [['top', 'right'], ['bottom', 'left']], 6: [['top', 'bottom']], 7: [['left', 'bottom']],
-    8: [['bottom', 'left']], 9: [['top', 'bottom']], 10: [['left', 'top'], ['right', 'bottom']], 11: [['right', 'bottom']],
+    4: [['right', 'bottom']], 5: [['left', 'top'], ['right', 'bottom']], 6: [['top', 'bottom']], 7: [['left', 'bottom']],
+    8: [['bottom', 'left']], 9: [['top', 'bottom']], 10: [['top', 'right'], ['bottom', 'left']], 11: [['right', 'bottom']],
     12: [['left', 'right']], 13: [['top', 'right']], 14: [['left', 'top']], 15: []
   };
   for (let y = 0; y < size - 1; y += 1) {

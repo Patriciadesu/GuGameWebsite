@@ -8,7 +8,7 @@ import {
 } from './constellationVisuals';
 import './ConstellationTree.css';
 import { autoStyleConstellation } from './constellationAutoLayout';
-import { bakedBoundaryTransform, buildSvgGuideOutline, type BakedSvgGuideBoundary } from './constellationSvgPathfinding';
+import { bakedBoundaryTransform, buildSvgGuideOutline, getSvgGuideImageSize, type BakedSvgGuideBoundary } from './constellationSvgPathfinding';
 
 export interface ConstellationLayoutPosition {
   x: number;
@@ -485,7 +485,8 @@ function ConstellationLayoutEditor({
           height: group.group.map.viewport.height
         }),
         assetUrl: group.group.map.visualTheme!.backgroundAssetUrl!,
-        bounds: { x: 0, y: 0, width: group.group.map.viewport.width, height: group.group.map.viewport.height }
+        bounds: { x: 0, y: 0, width: group.group.map.viewport.width, height: group.group.map.viewport.height },
+        imageSize: await getSvgGuideImageSize(group.group.map.visualTheme!.backgroundAssetUrl!)
       }
     ] as const)).then(entries => {
       if (!cancelled) setEmbeddedGuideOutlines(Object.fromEntries(entries));
@@ -769,7 +770,7 @@ function ConstellationLayoutEditor({
     let bakedBoundary: BakedSvgGuideBoundary | undefined;
     try {
       const path = await buildSvgGuideOutline(backgroundAssetUrl, bakedBounds);
-      if (path) bakedBoundary = { path, assetUrl: backgroundAssetUrl, bounds: bakedBounds, generatedAt: new Date().toISOString() };
+      if (path) bakedBoundary = { path, assetUrl: backgroundAssetUrl, bounds: bakedBounds, imageSize: await getSvgGuideImageSize(backgroundAssetUrl), generatedAt: new Date().toISOString() };
     } catch {
       // The stable one-time fallback will trace the guide on the next load.
     }
@@ -999,7 +1000,7 @@ function ConstellationLayoutEditor({
                 return (
                 <g
                   key={group.map._id}
-                  className="constellation-layout-embedded-topic"
+                  className={`constellation-layout-embedded-topic ${group.map.visualTheme?.backgroundAssetUrl ? 'is-svg-guide' : ''}`}
                   role="group"
                   aria-label={`${group.map.name} topic, ${topicSkills.length} quests`}
                   onPointerDown={event => {
@@ -1035,7 +1036,7 @@ function ConstellationLayoutEditor({
                   <path
                     className={`constellation-layout-topic-boundary ${bakedBoundary ? 'is-svg-outline' : ''}`}
                     d={bakedBoundary?.path || boundary}
-                    transform={bakedBoundary && guideBounds ? bakedBoundaryTransform(bakedBoundary.bounds, guideBounds) : undefined}
+                    transform={bakedBoundary && guideBounds ? bakedBoundaryTransform(bakedBoundary, guideBounds) : undefined}
                     vectorEffect="non-scaling-stroke"
                   />
                   <text className="constellation-layout-topic-eyebrow" x={Math.min(...points.map(point => point.x)) + 12} y={Math.min(...points.map(point => point.y)) - 94}>TOPIC · LEVEL {group.map.level || 1}</text>

@@ -9,6 +9,7 @@ export interface ConstellationTheme {
     path: string;
     assetUrl: string;
     bounds: { x: number; y: number; width: number; height: number };
+    imageSize?: { width: number; height: number };
     generatedAt?: string;
   };
   frameStyle: string;

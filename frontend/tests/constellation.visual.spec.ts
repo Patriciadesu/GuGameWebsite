@@ -459,6 +459,15 @@ test('player constellation states render without overflow', async ({ page }) => 
   await expect(svgGuide).toHaveCount(1);
   await expect(modelingCluster.locator('.discipline-topic-boundary')).toHaveAttribute('d', /^M /);
   await expect(modelingCluster.locator('.discipline-topic-boundary.is-svg-outline')).toHaveCount(1);
+  const [playerGuideBox, playerBoundaryBox] = await Promise.all([
+    svgGuide.boundingBox(),
+    modelingCluster.locator('.discipline-topic-boundary.is-svg-outline').boundingBox()
+  ]);
+  expect(playerGuideBox).not.toBeNull();
+  expect(playerBoundaryBox).not.toBeNull();
+  const playerGuideContentSize = Math.min(playerGuideBox!.width, playerGuideBox!.height);
+  expect(playerBoundaryBox!.width / playerGuideContentSize).toBeGreaterThan(0.85);
+  expect(playerBoundaryBox!.height / playerGuideContentSize).toBeGreaterThan(0.85);
   await expect(page.getByRole('button', { name: 'View Path' })).toHaveCount(0);
   await page.screenshot({ path: '/tmp/constellation-visual/player-discipline-board-without-lens.png', fullPage: true });
 
@@ -1741,6 +1750,14 @@ test('embedded SVG auto layout immediately moves Topic stars in the Discipline e
   await expect(page.getByText('Unsaved', { exact: true })).toBeVisible();
   await expect.poll(() => firstStar.getAttribute('transform')).not.toBe(before);
   await expect(topic.locator('.constellation-layout-topic-boundary.is-svg-outline')).toHaveCount(1);
+  const [backgroundBox, boundaryBox] = await Promise.all([
+    topic.locator('.constellation-layout-topic-background').boundingBox(),
+    topic.locator('.constellation-layout-topic-boundary.is-svg-outline').boundingBox()
+  ]);
+  expect(backgroundBox).not.toBeNull();
+  expect(boundaryBox).not.toBeNull();
+  expect(boundaryBox!.width / backgroundBox!.width).toBeGreaterThan(0.85);
+  expect(boundaryBox!.height / backgroundBox!.height).toBeGreaterThan(0.85);
   await page.screenshot({ path: '/tmp/constellation-visual/admin-discipline-embedded-svg-outline.png', fullPage: true });
 });
 

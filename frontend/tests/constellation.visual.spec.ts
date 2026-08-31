@@ -444,8 +444,8 @@ test('player constellation states render without overflow', async ({ page }) => 
   const overviewTopicCounts = await skillOverview.locator('.constellation-overview-item').evaluateAll(items =>
     items.map(item => item.querySelectorAll('.constellation-node').length)
   );
-  expect(overviewTopicCounts).toEqual([4, 4, 5]);
-  await expect(skillOverview.locator(`.constellation-overview-item[data-map-id="${gameArtMap._id}"] .constellation-overview-guide-image`)).toHaveCount(1);
+  expect(overviewTopicCounts).toEqual([4, 4, 11]);
+  await expect(skillOverview.locator(`.constellation-overview-item[data-map-id="${gameArtMap._id}"] .constellation-map-svg-guide`)).toHaveCount(1);
   await page.screenshot({ path: '/tmp/constellation-visual/player-overview.png', fullPage: true });
 
   await page.getByRole('button', { name: /Game Art/ }).click();
@@ -689,7 +689,8 @@ test('desktop Skill Constellation fits dense discipline graphs without overflow'
     const skillPanel = page.locator('.skill-constellation-panel');
     const shell = skillPanel.locator('.constellation-shell');
     const card = skillPanel.locator(`.constellation-overview-item[data-map-id="${gameArtMap._id}"]`);
-    await expect(card.locator('.constellation-node')).toHaveCount(gameArtSkills.length);
+    await expect(card.locator('.constellation-overview-topic-cluster')).toHaveCount(1);
+    await expect(card.locator('.constellation-node')).toHaveCount(topicSkills.length);
 
     const fit = await card.evaluate(element => {
       const cardBounds = element.getBoundingClientRect();
@@ -701,7 +702,7 @@ test('desktop Skill Constellation fits dense discipline graphs without overflow'
         card: { left: cardBounds.left, right: cardBounds.right, top: cardBounds.top, bottom: cardBounds.bottom },
         stars,
         viewBox: element.querySelector('svg')?.getAttribute('viewBox'),
-        dense: element.querySelector('.constellation-mini-layer')?.classList.contains('is-dense'),
+        topicConstellation: Boolean(element.querySelector('.constellation-overview-topic-cluster')),
         visibleLabels: [...element.querySelectorAll('.constellation-node-label')]
           .filter(label => getComputedStyle(label).display !== 'none').length
       };
@@ -710,8 +711,8 @@ test('desktop Skill Constellation fits dense discipline graphs without overflow'
     expect(shellBounds).not.toBeNull();
     expect(panelBounds).not.toBeNull();
     expect(shellBounds!.width).toBeGreaterThanOrEqual(panelBounds!.width - 4);
-    expect(fit.viewBox).not.toBe(`0 0 ${gameArtMap.viewport.width} ${gameArtMap.viewport.height}`);
-    expect(fit.dense).toBe(true);
+    expect(fit.viewBox).toBe('0 0 1200 900');
+    expect(fit.topicConstellation).toBe(true);
     expect(fit.visibleLabels).toBe(0);
     expect(fit.stars.every(star =>
       star.left >= fit.card.left + 2 && star.right <= fit.card.right - 2 &&

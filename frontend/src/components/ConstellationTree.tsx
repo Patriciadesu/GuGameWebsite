@@ -225,6 +225,45 @@ const readableLockedColor = (backgroundColor: string, lockedColor: string) => {
   return (lighter + 0.05) / (darker + 0.05) >= 3 ? lockedColor : fallbackTheme.lockedColor;
 };
 
+const overviewTopicClustersFor = (detail: MapDetail) => {
+  const groups = (detail.topicGroups || [])
+    .filter(group => group.skills.length > 0)
+    .sort((left, right) => left.map.displayOrder - right.map.displayOrder || left.map.name.localeCompare(right.map.name));
+  if (groups.length === 0) return [];
+
+  const columns = groups.length >= 7 ? 3 : groups.length >= 4 ? 2 : 1;
+  const rows = Math.ceil(groups.length / columns);
+  // The cards are portrait-oriented on desktop. Give the full topic atlas a
+  // stable portrait viewport so the artwork occupies the card instead of
+  // being letterboxed into a thin horizontal strip.
+  const overviewMap: ConstellationMap = {
+    ...detail.map,
+    viewport: {
+      ...detail.map.viewport,
+      width: 1200,
+      height: Math.max(900, rows * 420)
+    }
+  };
+  const cellWidth = overviewMap.viewport.width / columns;
+  const cellHeight = overviewMap.viewport.height / rows;
+  return groups.map((group, index) => {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    const anchor = {
+      x: cellWidth * (column + 0.5),
+      y: cellHeight * (row + 0.56)
+    };
+    return {
+      group,
+      detail: placeTopicGroupInDiscipline(group, overviewMap, anchor, {
+        maxArtworkWidth: cellWidth * 0.9,
+        maxArtworkHeight: cellHeight * 0.86,
+        maxScale: groups.length >= 7 ? 0.28 : 0.42
+      })
+    };
+  });
+};
+
 function ConstellationTree({
   disciplineMaps,
   heading = 'Skill Constellations',
@@ -414,12 +453,17 @@ function ConstellationTree({
           : undefined)
       };
     });
-  const svgRouteKey = [...topicClusters.map(cluster => cluster.detail), ...(topicDetail ? [topicDetail] : [])]
+  const overviewTopicClusters = disciplineMaps.flatMap(map => {
+    const detail = disciplineDetails[map._id];
+    return detail ? overviewTopicClustersFor(detail).map(cluster => cluster.detail) : [];
+  });
+  const svgRouteDetails = [...topicClusters.map(cluster => cluster.detail), ...overviewTopicClusters, ...(topicDetail ? [topicDetail] : [])];
+  const svgRouteKey = svgRouteDetails
     .map(detail => `${detail.map._id}:${detail.skills.map(skill => `${skill._id}:${skill.constellationPosition?.x || 0}:${skill.constellationPosition?.y || 0}:${(skill.connections || []).map(connection => connection.targetSkillId).join(',')}`).join(';')}`)
     .join('|');
   useEffect(() => {
     let cancelled = false;
-    const details = [...topicClusters.map(cluster => cluster.detail), ...(topicDetail ? [topicDetail] : [])]
+    const details = svgRouteDetails
       .filter(detail => detail.map.visualTheme?.backgroundAssetUrl && !hasBakedGuideSpine(detail.map.visualTheme.backgroundAssetUrl));
     if (details.length === 0) {
       setSvgGuideRoutes({});
@@ -444,14 +488,15 @@ function ConstellationTree({
     });
     return () => { cancelled = true; };
   }, [svgRouteKey]);
-  const legacyOutlineKey = [...topicClusters.map(cluster => cluster.detail), ...(topicDetail ? [topicDetail] : [])]
+  const legacyOutlineDetails = [...topicClusters.map(cluster => cluster.detail), ...overviewTopicClusters, ...(topicDetail ? [topicDetail] : [])];
+  const legacyOutlineKey = legacyOutlineDetails
     .filter(detail => detail.map.visualTheme?.backgroundAssetUrl &&
       (detail.map.visualTheme.bakedBoundary?.assetUrl !== detail.map.visualTheme.backgroundAssetUrl || !detail.map.visualTheme.bakedBoundary?.path))
     .map(detail => `${detail.map._id}:${detail.map.visualTheme.backgroundAssetUrl}`)
     .join('|');
   useEffect(() => {
     let cancelled = false;
-    const details = [...topicClusters.map(cluster => cluster.detail), ...(topicDetail ? [topicDetail] : [])]
+    const details = legacyOutlineDetails
       .filter(detail => detail.map.visualTheme?.backgroundAssetUrl &&
         (detail.map.visualTheme.bakedBoundary?.assetUrl !== detail.map.visualTheme.backgroundAssetUrl || !detail.map.visualTheme.bakedBoundary?.path));
     void Promise.all(details.map(async detail => {
@@ -862,42 +907,6 @@ function ConstellationTree({
     );
   };
 
-  const renderOverviewGuideLayer = (detail: MapDetail) => {
-    const guideGroups = (detail.topicGroups || []).filter(group =>
-      Boolean(group.gateway && group.map.visualTheme?.backgroundAssetUrl)
-    );
-    if (guideGroups.length === 0) return null;
-
-    const guideSize = Math.min(220, Math.max(96, 640 / guideGroups.length));
-    return (
-      <g className="constellation-overview-guide-layer" aria-hidden="true">
-        {guideGroups.map(group => {
-          const gateway = group.gateway!;
-          const gatewayIndex = detail.skills.findIndex(skill => skill._id === gateway._id);
-          const point = pointForSkill(
-            gateway,
-            Math.max(0, gatewayIndex),
-            detail.skills.length,
-            detail.map
-          );
-          return (
-            <image
-              className="constellation-overview-guide-image"
-              key={group.map._id}
-              href={group.map.visualTheme!.backgroundAssetUrl}
-              x={point.x - guideSize / 2}
-              y={point.y - guideSize / 2}
-              width={guideSize}
-              height={guideSize}
-              preserveAspectRatio="xMidYMid meet"
-              data-topic-map-id={group.map._id}
-            />
-          );
-        })}
-      </g>
-    );
-  };
-
   if (!selectedDiscipline && !directMap) {
     return (
       <section
@@ -943,6 +952,7 @@ function ConstellationTree({
             const detail = disciplineDetails[map._id];
             const unlockedCount = detail?.skills.filter(skill => unlockedSet.has(skill._id)).length || 0;
             const total = detail?.skills.length || 0;
+            const overviewClusters = detail ? overviewTopicClustersFor(detail) : [];
             const mapClass = map.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
             const overviewContent = <>
                 <span className="constellation-overview-copy">
@@ -952,11 +962,18 @@ function ConstellationTree({
                 <svg
                   viewBox={compactOverview
                     ? `100 ${Math.max(0, map.viewport.height / 2 - 90)} ${Math.max(400, map.viewport.width - 200)} 210`
-                    : detail ? overviewViewBoxFor(detail) : `0 0 ${map.viewport.width} ${map.viewport.height}`}
+                    : detail && overviewClusters.length > 0
+                      ? `0 0 ${overviewClusters[0].detail.map.viewport.width} ${overviewClusters[0].detail.map.viewport.height}`
+                      : detail ? overviewViewBoxFor(detail) : `0 0 ${map.viewport.width} ${map.viewport.height}`}
                   preserveAspectRatio="xMidYMid meet"
                   aria-hidden={compactOverview ? undefined : true}
                   aria-label={compactOverview ? `${map.name} topics` : undefined}
                 >
+                  {!compactOverview && overviewClusters.length > 0 && <defs>
+                    <marker id={`${idPrefix}-overview-arrow`} className="constellation-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                      <path d="M 0 0 L 10 5 L 0 10 Z" />
+                    </marker>
+                  </defs>}
                   <g className="constellation-star-field">
                     {backgroundStarsFor(map).map((star, index) => (
                       <circle
@@ -969,8 +986,37 @@ function ConstellationTree({
                       />
                     ))}
                   </g>
-                  {detail && renderOverviewGuideLayer(detail)}
-                  {detail && (
+                  {!compactOverview && overviewClusters.length > 0 ? (
+                    <g className="constellation-overview-topic-clusters">
+                      {overviewClusters.map(({ group, detail: topicCluster }) => {
+                        const bakedBoundary = topicCluster.map.visualTheme?.bakedBoundary?.assetUrl === topicCluster.map.visualTheme?.backgroundAssetUrl
+                          ? topicCluster.map.visualTheme.bakedBoundary
+                          : undefined;
+                        const guideBounds = topicCluster.svgGuideBounds;
+                        const labelX = guideBounds ? guideBounds.x + 8 : 0;
+                        const labelY = guideBounds ? Math.max(28, guideBounds.y - 18) : 0;
+                        return (
+                          <g className="constellation-overview-topic-cluster" key={group.map._id} data-topic-map-id={group.map._id}>
+                            {bakedBoundary && guideBounds && <path
+                              className="constellation-overview-topic-boundary"
+                              d={bakedBoundary.path}
+                              transform={bakedBoundaryTransform(bakedBoundary, guideBounds)}
+                              vectorEffect="non-scaling-stroke"
+                            />}
+                            {guideBounds && <>
+                              <text className="constellation-overview-topic-eyebrow" x={labelX} y={labelY}>TOPIC · LEVEL {group.map.level || 1}</text>
+                              <text className="constellation-overview-topic-title" x={labelX} y={labelY + 27}>{group.map.name}</text>
+                            </>}
+                            {renderMapLayer(topicCluster, {
+                              className: 'constellation-overview-topic-layer',
+                              markerId: `${idPrefix}-overview-arrow`,
+                              onNodeClick: (skill, interaction, trigger) => onOpenSkill(skill, interaction, trigger)
+                            })}
+                          </g>
+                        );
+                      })}
+                    </g>
+                  ) : detail && (
                     <g transform="translate(0 34)">
                       {renderMapLayer(detail, {
                         className: `constellation-mini-layer ${topicWindowFor(detail).length > 8 ? 'is-dense' : ''}`,

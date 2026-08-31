@@ -1531,6 +1531,53 @@
   opacity: .28;
 }
 
+.constellation-overview.is-astral-fantasy .constellation-overview-topic-clusters {
+  pointer-events: none;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-topic-cluster {
+  pointer-events: none;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-topic-boundary {
+  fill: rgb(83 217 255 / 4%);
+  stroke: rgb(141 162 200 / 78%);
+  stroke-width: 4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 9px rgb(83 217 255 / 18%));
+  pointer-events: none;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-topic-eyebrow,
+.constellation-overview.is-astral-fantasy .constellation-overview-topic-title {
+  paint-order: stroke;
+  stroke: #080b1d;
+  pointer-events: none;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-topic-eyebrow {
+  fill: #71ddff;
+  stroke-width: 7px;
+  font: 800 16px/1 "Noto Sans Thai", sans-serif;
+  letter-spacing: .12em;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-topic-title {
+  fill: #fff1cf;
+  stroke-width: 9px;
+  font: 700 27px/1 Georgia, "Noto Sans Thai", serif;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-topic-layer.is-svg-guide .constellation-node-label,
+.constellation-overview.is-astral-fantasy .constellation-overview-topic-layer.is-svg-guide .constellation-node-kicker {
+  display: none;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-topic-layer .constellation-node-hit-target {
+  pointer-events: none;
+}
+
 /* System is deliberately read as a constellation silhouette at this zoom;
    its quest names stay available after opening the sky instead of colliding
    inside the overview card. */

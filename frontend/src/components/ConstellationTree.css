@@ -1578,6 +1578,33 @@
   pointer-events: none;
 }
 
+/* Keep the quest stars legible on top of saturated topic artwork. The guide
+   remains the silhouette; the actual interactive star must read as a star. */
+.constellation-overview.is-astral-fantasy .constellation-overview-topic-layer .constellation-node-aura {
+  opacity: .24;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-topic-layer .constellation-node-star {
+  transform: scale(1.38);
+  transform-box: fill-box;
+  transform-origin: center;
+  fill: #111936;
+  stroke: #f7f0df;
+  stroke-width: 4;
+  filter: drop-shadow(0 0 7px currentColor);
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-topic-layer .constellation-node-core {
+  transform: scale(1.25);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-topic-layer .constellation-node-image-ring {
+  stroke: #f7f0df;
+  stroke-width: 4;
+}
+
 /* System is deliberately read as a constellation silhouette at this zoom;
    its quest names stay available after opening the sky instead of colliding
    inside the overview card. */

@@ -342,7 +342,13 @@ function ConstellationTree({
     axios.get(`/api/constellation-maps/${topicMapId}`)
       .then(response => {
         if (!cancelled) {
-          setTopicDetail({ map: response.data.map, skills: response.data.skills || [] });
+          setTopicDetail({
+            map: response.data.map,
+            skills: (response.data.skills || []).map((skill: ConstellationSkill) => ({
+              ...skill,
+              topicLevel: response.data.map.level || 1
+            }))
+          });
         }
       })
       .catch(() => {
@@ -389,7 +395,13 @@ function ConstellationTree({
         setLoadingTopic(true);
         const response = await axios.get(`/api/constellation-maps/${state.topicMapId}`);
         setTopicGateway(gateway);
-        setTopicDetail({ map: response.data.map, skills: response.data.skills || [] });
+        setTopicDetail({
+          map: response.data.map,
+          skills: (response.data.skills || []).map((skill: ConstellationSkill) => ({
+            ...skill,
+            topicLevel: response.data.map.level || 1
+          }))
+        });
         originGatewayIdRef.current = state.gatewayId;
         setCamera({ zoom: 1, x: 0, y: 0 });
       } catch {
@@ -453,11 +465,10 @@ function ConstellationTree({
           : undefined)
       };
     });
-  const overviewTopicClusters = disciplineMaps.flatMap(map => {
-    const detail = disciplineDetails[map._id];
-    return detail ? overviewTopicClustersFor(detail).map(cluster => cluster.detail) : [];
-  });
-  const svgRouteDetails = [...topicClusters.map(cluster => cluster.detail), ...overviewTopicClusters, ...(topicDetail ? [topicDetail] : [])];
+  // Overview and Discipline render only the baked artwork/boundary. Build
+  // SVG routes only for the active Topic where quest stars and connections
+  // are actually visible.
+  const svgRouteDetails = topicDetail ? [topicDetail] : [];
   const svgRouteKey = svgRouteDetails
     .map(detail => `${detail.map._id}:${detail.skills.map(skill => `${skill._id}:${skill.constellationPosition?.x || 0}:${skill.constellationPosition?.y || 0}:${(skill.connections || []).map(connection => connection.targetSkillId).join(',')}`).join(';')}`)
     .join('|');
@@ -488,7 +499,9 @@ function ConstellationTree({
     });
     return () => { cancelled = true; };
   }, [svgRouteKey]);
-  const legacyOutlineDetails = [...topicClusters.map(cluster => cluster.detail), ...overviewTopicClusters, ...(topicDetail ? [topicDetail] : [])];
+  // Discipline still needs a cached outline for each Topic boundary, while
+  // Overview can use the boundary baked into its artwork.
+  const legacyOutlineDetails = [...topicClusters.map(cluster => cluster.detail), ...(topicDetail ? [topicDetail] : [])];
   const legacyOutlineKey = legacyOutlineDetails
     .filter(detail => detail.map.visualTheme?.backgroundAssetUrl &&
       (detail.map.visualTheme.bakedBoundary?.assetUrl !== detail.map.visualTheme.backgroundAssetUrl || !detail.map.visualTheme.bakedBoundary?.path))
@@ -625,7 +638,13 @@ function ConstellationTree({
       }
       const response = await axios.get(`/api/constellation-maps/${topicMap._id}`);
       setTopicGateway(gateway);
-      setTopicDetail({ map: response.data.map, skills: response.data.skills || [] });
+      setTopicDetail({
+        map: response.data.map,
+        skills: (response.data.skills || []).map((skill: ConstellationSkill) => ({
+          ...skill,
+          topicLevel: response.data.map.level || 1
+        }))
+      });
       setSelectedDisciplineId(sourceDetail.map._id);
       disciplineCameraRef.current = camera;
       originGatewayIdRef.current = gateway._id;
@@ -763,12 +782,16 @@ function ConstellationTree({
       offsetY?: number;
       scale?: number;
       gatewayOnly?: boolean;
+      /** Overview and Discipline views show the constellation artwork/boundary
+       * only. Quest stars become interactive in the Topic view. */
+      showStars?: boolean;
       straightLineFit?: boolean;
       focusedGatewayId?: string;
       markerId?: string;
       onNodeClick: (skill: ConstellationSkill, interaction: 'pointer' | 'keyboard', trigger: SVGGElement) => void;
     }
   ) => {
+    const showStars = options.showStars !== false;
     const skills = options.gatewayOnly
       ? topicWindowFor(detail, options.focusedGatewayId)
       : detail.skills;
@@ -823,7 +846,7 @@ function ConstellationTree({
           opacity="0.56"
           pointerEvents="none"
         />}
-        <g className="constellation-lines">
+        {showStars && <g className="constellation-lines">
           {connections.map(({ source, targetSkill, connection, sourcePoint, targetPoint }) => {
             const connectionStatus = statusForConnection(source, targetSkill);
             const route = svgGuideRoutes[`${detail.map._id}:${source._id}:${connection.targetSkillId}`];
@@ -841,8 +864,8 @@ function ConstellationTree({
             />
             );
           })}
-        </g>
-        {options.gatewayOnly && connections.map(({ source, connection, sourcePoint, targetPoint }) => (
+        </g>}
+        {showStars && options.gatewayOnly && connections.map(({ source, connection, sourcePoint, targetPoint }) => (
           <circle
             className="constellation-link-star"
             key={`marker-${source._id}-${connection.targetSkillId}`}
@@ -851,7 +874,7 @@ function ConstellationTree({
             r="5"
           />
         ))}
-        {skills.map((skill, index) => {
+        {showStars && skills.map((skill, index) => {
           const point = points.get(skill._id)!;
           const status = statusForSkill(skill);
           const isLevelGated = directMap
@@ -1009,6 +1032,7 @@ function ConstellationTree({
                             </>}
                             {renderMapLayer(topicCluster, {
                               className: 'constellation-overview-topic-layer',
+                              showStars: false,
                               markerId: `${idPrefix}-overview-arrow`,
                               onNodeClick: (skill, interaction, trigger) => onOpenSkill(skill, interaction, trigger)
                             })}
@@ -1020,6 +1044,7 @@ function ConstellationTree({
                     <g transform="translate(0 34)">
                       {renderMapLayer(detail, {
                         className: `constellation-mini-layer ${topicWindowFor(detail).length > 8 ? 'is-dense' : ''}`,
+                        showStars: false,
                         gatewayOnly: true,
                         straightLineFit: compactOverview,
                         onNodeClick: skill => {
@@ -1077,7 +1102,7 @@ function ConstellationTree({
 
   return (
     <section
-      className={`constellation-shell constellation-focus ${directMap ? 'is-main-quest-rail' : 'is-discipline-board'} ${usePackedTopicBoard ? 'is-packed-topic-board' : ''} ${isFantasyConstellation ? 'is-astral-fantasy' : ''}`}
+      className={`constellation-shell constellation-focus ${directMap ? 'is-main-quest-rail' : 'is-discipline-board'} ${topicDetail ? 'is-topic-active' : ''} ${usePackedTopicBoard ? 'is-packed-topic-board' : ''} ${isFantasyConstellation ? 'is-astral-fantasy' : ''}`}
       style={{
         '--constellation-bg': activeTheme.backgroundColor,
         '--constellation-surface': activeTheme.surfaceColor,
@@ -1125,7 +1150,7 @@ function ConstellationTree({
 
       {error && <div className="constellation-notice" role="status">{error}</div>}
       {directMap && <p className="main-quest-swipe-hint">Swipe horizontally to explore levels · Current Quest is centered automatically</p>}
-      {directMap ? <div className="constellation-canvas-wrap" ref={canvasWrapRef}>
+      {(directMap || topicDetail) ? <div className="constellation-canvas-wrap" ref={canvasWrapRef}>
         <div className="constellation-camera-controls" aria-label="Map view controls">
           <button type="button" disabled={loadingTopic} onClick={() => setCamera(current => ({ ...current, zoom: Math.min((canvasMap?.viewport.maxZoom || 3), current.zoom * 1.2) }))} title="Zoom in" aria-label="Zoom in"><ZoomIn aria-hidden="true" /></button>
           <button type="button" disabled={loadingTopic} onClick={resetCamera} title="Reset view" aria-label="Reset view"><RotateCcw aria-hidden="true" /></button>
@@ -1291,8 +1316,28 @@ function ConstellationTree({
             />
             <text className="discipline-topic-boundary__eyebrow" x={labelPoint.x} y={labelPoint.y}>TOPIC · LEVEL {group.map.level || 1}</text>
             <text className="discipline-topic-boundary__title" x={labelPoint.x} y={labelPoint.y + 31}>{group.map.name}</text>
+            {group.gateway && <path
+              className="discipline-topic-cluster-hit-target"
+              d={boundaryPath}
+              transform={bakedBoundary && detail.svgGuideBounds ? bakedBoundaryTransform(bakedBoundary, detail.svgGuideBounds) : undefined}
+              role="button"
+              tabIndex={0}
+              aria-label={`Open ${group.map.name} constellation`}
+              onPointerDown={event => event.stopPropagation()}
+              onClick={event => {
+                event.stopPropagation();
+                void openTopic(group.gateway!);
+              }}
+              onKeyDown={event => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                event.stopPropagation();
+                void openTopic(group.gateway!);
+              }}
+            />}
             {renderMapLayer(detail, {
               className: 'discipline-topic-quest-layer',
+              showStars: false,
               markerId: `${idPrefix}-discipline-arrow`,
               onNodeClick: (skill, interaction, trigger) => onOpenSkill(skill, interaction, trigger)
             })}

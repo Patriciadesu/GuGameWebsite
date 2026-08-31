@@ -1374,6 +1374,18 @@
 .is-astral-fantasy .discipline-topic-boundary__eyebrow { fill: #71ddff; stroke: #080b1d; }
 .is-astral-fantasy .discipline-topic-boundary__title { fill: #fff1cf; stroke: #080b1d; }
 .is-astral-fantasy .discipline-topic-quest-layer .constellation-map-svg-guide { opacity: .78; }
+.discipline-topic-cluster-hit-target {
+  fill: transparent;
+  stroke: transparent;
+  pointer-events: all;
+  cursor: pointer;
+}
+.discipline-topic-cluster-hit-target:focus-visible {
+  fill: rgb(83 217 255 / 7%);
+  stroke: var(--constellation-unlocked);
+  stroke-width: 4;
+  outline: none;
+}
 .is-astral-fantasy .discipline-topic-quest-layer .constellation-node-label,
 .is-astral-fantasy .constellation-topic-layer .constellation-node-label { stroke: #080b1d; }
 

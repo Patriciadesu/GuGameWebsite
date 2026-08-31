@@ -445,6 +445,7 @@ test('player constellation states render without overflow', async ({ page }) => 
     items.map(item => item.querySelectorAll('.constellation-node').length)
   );
   expect(overviewTopicCounts).toEqual([4, 4, 5]);
+  await expect(skillOverview.locator(`.constellation-overview-item[data-map-id="${gameArtMap._id}"] .constellation-overview-guide-image`)).toHaveCount(1);
   await page.screenshot({ path: '/tmp/constellation-visual/player-overview.png', fullPage: true });
 
   await page.getByRole('button', { name: /Game Art/ }).click();

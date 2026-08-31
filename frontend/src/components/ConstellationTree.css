@@ -1515,6 +1515,22 @@
   stroke: #080b1d;
 }
 
+.constellation-overview.is-astral-fantasy .constellation-overview-guide-layer {
+  pointer-events: none;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-guide-image {
+  opacity: .26;
+  filter: saturate(1.18) brightness(1.08) drop-shadow(0 0 12px rgb(83 217 255 / 12%));
+  mix-blend-mode: normal;
+  pointer-events: none;
+}
+
+.constellation-overview.is-astral-fantasy .constellation-overview-item:hover .constellation-overview-guide-image,
+.constellation-overview.is-astral-fantasy .constellation-overview-item:focus-visible .constellation-overview-guide-image {
+  opacity: .28;
+}
+
 /* System is deliberately read as a constellation silhouette at this zoom;
    its quest names stay available after opening the sky instead of colliding
    inside the overview card. */

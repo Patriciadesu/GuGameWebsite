@@ -862,6 +862,42 @@ function ConstellationTree({
     );
   };
 
+  const renderOverviewGuideLayer = (detail: MapDetail) => {
+    const guideGroups = (detail.topicGroups || []).filter(group =>
+      Boolean(group.gateway && group.map.visualTheme?.backgroundAssetUrl)
+    );
+    if (guideGroups.length === 0) return null;
+
+    const guideSize = Math.min(220, Math.max(96, 640 / guideGroups.length));
+    return (
+      <g className="constellation-overview-guide-layer" aria-hidden="true">
+        {guideGroups.map(group => {
+          const gateway = group.gateway!;
+          const gatewayIndex = detail.skills.findIndex(skill => skill._id === gateway._id);
+          const point = pointForSkill(
+            gateway,
+            Math.max(0, gatewayIndex),
+            detail.skills.length,
+            detail.map
+          );
+          return (
+            <image
+              className="constellation-overview-guide-image"
+              key={group.map._id}
+              href={group.map.visualTheme!.backgroundAssetUrl}
+              x={point.x - guideSize / 2}
+              y={point.y - guideSize / 2}
+              width={guideSize}
+              height={guideSize}
+              preserveAspectRatio="xMidYMid meet"
+              data-topic-map-id={group.map._id}
+            />
+          );
+        })}
+      </g>
+    );
+  };
+
   if (!selectedDiscipline && !directMap) {
     return (
       <section
@@ -933,6 +969,7 @@ function ConstellationTree({
                       />
                     ))}
                   </g>
+                  {detail && renderOverviewGuideLayer(detail)}
                   {detail && (
                     <g transform="translate(0 34)">
                       {renderMapLayer(detail, {
